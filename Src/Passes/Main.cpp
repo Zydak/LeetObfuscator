@@ -3,19 +3,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/Module.h"
 
-class HelloPass : public llvm::PassInfoMixin<HelloPass>
-{
-public:
-    llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager&)
-    {
-        for(auto& function : module)
-        {
-            llvm::errs() << function.getName() << "\n";
-        }
-
-        return llvm::PreservedAnalyses::all();
-    }
-};
+#include "MBAPass.h"
 
 extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo()
 {
@@ -29,7 +17,7 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
             passBuilder.registerOptimizerLastEPCallback(
                 [](llvm::ModulePassManager& passManager, llvm::OptimizationLevel, llvm::ThinOrFullLTOPhase)
                 {
-                    passManager.addPass(HelloPass());
+                    passManager.addPass(LeetObfuscator::MBAPass());
                 }
             );
         }
