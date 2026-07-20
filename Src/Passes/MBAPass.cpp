@@ -8,24 +8,13 @@ static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
 llvm::PreservedAnalyses LeetObfuscator::MBAPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     InstructionHolder createdInstructions;
-    for (size_t i = 0; i < m_MaxPassCount; i++)
-    {
-        ObfuscateModule(module, createdInstructions);
-    }
-
-    // mark all created instructions with a metadata so that they won't be obfuscated by this pass ever again
-    for (auto& instruction : createdInstructions.GetInstructions())
-    {
-        instruction->setMetadata(ARITHMETIC_TAG, llvm::MDNode::get(module.getContext(), {}));
-    }
+    ObfuscateModule(module);
 
     return llvm::PreservedAnalyses::none();
 }
 
-void LeetObfuscator::MBAPass::ObfuscateModule(llvm::Module &module, InstructionHolder &createdInstructions)
+void LeetObfuscator::MBAPass::ObfuscateModule(llvm::Module &module)
 {
-    createdInstructions.Clear();
-
     // Find all binary instructions
     std::vector<llvm::Instruction*> instructionsToObfuscate;
     for (auto& function : module)
@@ -62,31 +51,31 @@ void LeetObfuscator::MBAPass::ObfuscateModule(llvm::Module &module, InstructionH
 
     for (auto& instruction : instructionsToObfuscate)
     {
-        ObfuscateInstruction(instruction, createdInstructions);
+        ObfuscateInstruction(instruction);
     }
 }
 
-void LeetObfuscator::MBAPass::ObfuscateInstruction(llvm::Instruction *instruction, InstructionHolder &createdInstructions)
+void LeetObfuscator::MBAPass::ObfuscateInstruction(llvm::Instruction *instruction)
 {
-    if (auto* binaryOp = llvm::dyn_cast<llvm::Instruction>(instruction))
+    if (auto* binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(instruction))
     {
-        llvm::Value* newInstruction = GetObfuscatedBinaryInstruction(binaryOp, createdInstructions);
-        if (newInstruction)
-        {
-            instruction->replaceAllUsesWith(newInstruction);
-            instruction->eraseFromParent();
-        }
+        ObfuscateBinaryInstruction(binaryOp);
     }
 }
 
-llvm::Value *LeetObfuscator::MBAPass::GetObfuscatedBinaryInstruction(llvm::Instruction *instruction, InstructionHolder &createdInstructions)
+void LeetObfuscator::MBAPass::ObfuscateBinaryInstruction(llvm::Instruction *instruction, uint32_t iteration)
 {
+    if (iteration >= m_MaxPassCount)
+        return;
+
     uint32_t opcode = instruction->getOpcode();
 
     llvm::Value* x = instruction->getOperand(0);
     llvm::Value* y = instruction->getOperand(1);
 
     llvm::IRBuilder<llvm::NoFolder> b(instruction);
+
+    InstructionHolder createdInstructions;
 
     llvm::Value* result = nullptr;
     switch(opcode)
@@ -97,7 +86,6 @@ llvm::Value *LeetObfuscator::MBAPass::GetObfuscatedBinaryInstruction(llvm::Instr
             auto* orInst = createdInstructions.Add(b.CreateOr(x, y));
             auto* andInst = createdInstructions.Add(b.CreateAnd(x, y));
             result = createdInstructions.Add(b.CreateSub(orInst, andInst));
-
 
             break;
         }
@@ -158,10 +146,19 @@ llvm::Value *LeetObfuscator::MBAPass::GetObfuscatedBinaryInstruction(llvm::Instr
     if (result == nullptr)
     {
         llvm::errs() << "failed to obfuscate binary op with opcode" << instruction->getOpcodeName() << "\n";
-        return nullptr;
     }
 
-    return result;
+    instruction->replaceAllUsesWith(result);
+    instruction->eraseFromParent();
+
+    for(auto* createdInstruction : createdInstructions.GetInstructions())
+    {
+        // mark it as done for future passes
+        createdInstruction->setMetadata(ARITHMETIC_TAG, llvm::MDNode::get(createdInstruction->getContext(), {}));
+    
+        // Expand it further
+        ObfuscateBinaryInstruction(createdInstruction, iteration+1);
+    }
 }
 
 llvm::Value *LeetObfuscator::MBAPass::InstructionHolder::Add(llvm::Value *instruction)

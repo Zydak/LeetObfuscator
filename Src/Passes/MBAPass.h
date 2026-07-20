@@ -21,10 +21,10 @@ namespace LeetObfuscator
             std::vector<llvm::Instruction*> m_CreatedInstructions;
         };
 
-        void ObfuscateModule(llvm::Module& module, InstructionHolder& createdInstructions);
+        void ObfuscateModule(llvm::Module& module);
 
-        void ObfuscateInstruction(llvm::Instruction* instruction, InstructionHolder& createdInstructions);
-        llvm::Value* GetObfuscatedBinaryInstruction(llvm::Instruction* instruction, InstructionHolder& createdInstructions);
+        void ObfuscateInstruction(llvm::Instruction* instruction);
+        void ObfuscateBinaryInstruction(llvm::Instruction* instruction, uint32_t iteration = 0);
 
         uint32_t m_MaxPassCount = 2;
     };
