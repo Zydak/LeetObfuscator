@@ -9,7 +9,7 @@
 
 llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &module, llvm::ModuleAnalysisManager &)
 {
-    const int MAX_BLOCK_SIZE = 20; // TODO: config file
+    const int MAX_BLOCK_SIZE = 10; // TODO: config file
 
     std::vector<llvm::BasicBlock*> blocksToSplit;
     for (auto& function : module)
@@ -26,6 +26,7 @@ llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &mod
     while(!blocksToSplit.empty())
     {
         llvm::BasicBlock* block = blocksToSplit.back();
+        llvm::errs() << "SPLITTING: " << block->getParent()->getName() << "\n";
         blocksToSplit.pop_back();
         if (block->size() <= MAX_BLOCK_SIZE)
         {
