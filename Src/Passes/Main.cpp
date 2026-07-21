@@ -5,6 +5,7 @@
 
 #include "MBAPass.h"
 #include "StringEncryptionPass.h"
+#include "BlockSplitterPass.h"
 
 extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo()
 {
@@ -18,8 +19,9 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
             passBuilder.registerOptimizerLastEPCallback(
                 [](llvm::ModulePassManager& passManager, llvm::OptimizationLevel, llvm::ThinOrFullLTOPhase)
                 {
-                    passManager.addPass(LeetObfuscator::StringEncryptionPass());
+                    //passManager.addPass(LeetObfuscator::StringEncryptionPass());
                     passManager.addPass(LeetObfuscator::MBAPass());
+                    passManager.addPass(LeetObfuscator::BlockSplitterPass());
                 }
             );
         }
