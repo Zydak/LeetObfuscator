@@ -20,10 +20,11 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
             passBuilder.registerOptimizerLastEPCallback(
                 [](llvm::ModulePassManager& passManager, llvm::OptimizationLevel, llvm::ThinOrFullLTOPhase)
                 {
-                    //passManager.addPass(LeetObfuscator::StringEncryptionPass());
-                    passManager.addPass(LeetObfuscator::MBAPass());
+                    passManager.addPass(LeetObfuscator::StringEncryptionPass());
+                    passManager.addPass(LeetObfuscator::MBAPass(2));
                     passManager.addPass(LeetObfuscator::BlockSplitterPass());
                     passManager.addPass(LeetObfuscator::DispatcherPass());
+                    passManager.addPass(LeetObfuscator::MBAPass(1));
 
                 }
             );

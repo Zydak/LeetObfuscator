@@ -7,6 +7,8 @@ namespace LeetObfuscator
     class MBAPass : public llvm::PassInfoMixin<MBAPass>
     {
     public:
+        MBAPass(uint32_t passCount) : m_MaxPassCount(passCount) {}
+
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
     private:

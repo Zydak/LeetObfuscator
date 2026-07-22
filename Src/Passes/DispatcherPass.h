@@ -10,6 +10,8 @@ namespace LeetObfuscator
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
     private:
+        bool DoesFunctionQualify(llvm::Function* function);
+        void ReplaceTerminator(llvm::BasicBlock* block);
         void CreateDispatcherInAFunction(llvm::Function* function, llvm::ModuleAnalysisManager& mam);
     };
 }
