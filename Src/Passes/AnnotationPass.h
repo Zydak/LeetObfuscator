@@ -4,12 +4,10 @@
 
 namespace LeetObfuscator
 {
-    class DispatcherPass : public llvm::PassInfoMixin<DispatcherPass>
+    class AnnotationPass : public llvm::PassInfoMixin<AnnotationPass>
     {
     public:
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
-
     private:
-        void CreateDispatcherInAFunction(llvm::Function* function, llvm::ModuleAnalysisManager& mam);
     };
 }

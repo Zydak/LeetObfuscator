@@ -9,5 +9,6 @@ namespace LeetObfuscator
     public:
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
     private:
+        void SplitFunction(llvm::Function& function);
     };
 }

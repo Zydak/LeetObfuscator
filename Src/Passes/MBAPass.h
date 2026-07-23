@@ -7,7 +7,7 @@ namespace LeetObfuscator
     class MBAPass : public llvm::PassInfoMixin<MBAPass>
     {
     public:
-        MBAPass(uint32_t passCount) : m_MaxPassCount(passCount) {}
+        MBAPass(uint32_t passCount) : m_DefaultMaxPassCount(passCount) {}
 
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
@@ -23,11 +23,11 @@ namespace LeetObfuscator
             std::vector<llvm::Instruction*> m_CreatedInstructions;
         };
 
-        void ObfuscateModule(llvm::Module& module);
+        void ObfuscateFunction(llvm::Function& function);
 
-        void ObfuscateInstruction(llvm::Instruction* instruction);
-        void ObfuscateBinaryInstruction(llvm::Instruction* instruction, uint32_t iteration = 0);
+        void ObfuscateInstruction(llvm::Instruction* instruction, uint32_t expansionCount);
+        void ObfuscateBinaryInstruction(llvm::Instruction* instruction, uint32_t expansionCount, uint32_t iteration = 0);
 
-        uint32_t m_MaxPassCount = 2;
+        uint32_t m_DefaultMaxPassCount = 2;
     };
 }

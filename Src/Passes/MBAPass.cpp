@@ -3,42 +3,52 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/NoFolder.h"
 
+#include "SettingsParser.h"
+
 static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
 
 llvm::PreservedAnalyses LeetObfuscator::MBAPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     InstructionHolder createdInstructions;
-    ObfuscateModule(module);
+    for (auto& function : module)
+    {
+        ObfuscateFunction(function);
+    }
 
     return llvm::PreservedAnalyses::none();
 }
 
-void LeetObfuscator::MBAPass::ObfuscateModule(llvm::Module &module)
+void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
 {
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(function);
+    if (attributes.skip)
+    {
+        return;
+    }
+
+    uint32_t expansionCount = attributes.mbaExpansionCount >= 0 ? attributes.mbaExpansionCount : m_DefaultMaxPassCount;
+
     // Find all binary instructions
     std::vector<llvm::Instruction*> instructionsToObfuscate;
-    for (auto& function : module)
+    for (auto& basicBlock : function)
     {
-        for (auto& basicBlock : function)
+        for (auto& instruction : basicBlock)
         {
-            for (auto& instruction : basicBlock)
-            {
-                if (instruction.getMetadata(ARITHMETIC_TAG))
-                    continue; // Already marked as done
+            if (instruction.getMetadata(ARITHMETIC_TAG))
+                continue; // Already marked as done
                 
-                if (auto* binaryOperation = llvm::dyn_cast<llvm::BinaryOperator>(&instruction))
+            if (auto* binaryOperation = llvm::dyn_cast<llvm::BinaryOperator>(&instruction))
+            {
+                auto op = binaryOperation->getOpcode();
+                if (op == llvm::Instruction::Xor ||
+                    op == llvm::Instruction::And ||
+                    op == llvm::Instruction::Or  ||
+                    op == llvm::Instruction::Sub ||
+                    op == llvm::Instruction::Add ||
+                    op == llvm::Instruction::Mul
+                )
                 {
-                    auto op = binaryOperation->getOpcode();
-                    if (op == llvm::Instruction::Xor ||
-                        op == llvm::Instruction::And ||
-                        op == llvm::Instruction::Or  ||
-                        op == llvm::Instruction::Sub ||
-                        op == llvm::Instruction::Add ||
-                        op == llvm::Instruction::Mul
-                    )
-                    {
-                        instructionsToObfuscate.push_back(binaryOperation);
-                    }
+                    instructionsToObfuscate.push_back(binaryOperation);
                 }
             }
         }
@@ -51,21 +61,21 @@ void LeetObfuscator::MBAPass::ObfuscateModule(llvm::Module &module)
 
     for (auto& instruction : instructionsToObfuscate)
     {
-        ObfuscateInstruction(instruction);
+        ObfuscateInstruction(instruction, expansionCount);
     }
 }
 
-void LeetObfuscator::MBAPass::ObfuscateInstruction(llvm::Instruction *instruction)
+void LeetObfuscator::MBAPass::ObfuscateInstruction(llvm::Instruction *instruction, uint32_t expansionCount)
 {
     if (auto* binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(instruction))
     {
-        ObfuscateBinaryInstruction(binaryOp);
+        ObfuscateBinaryInstruction(binaryOp, expansionCount);
     }
 }
 
-void LeetObfuscator::MBAPass::ObfuscateBinaryInstruction(llvm::Instruction *instruction, uint32_t iteration)
+void LeetObfuscator::MBAPass::ObfuscateBinaryInstruction(llvm::Instruction *instruction, uint32_t expansionCount, uint32_t iteration)
 {
-    if (iteration >= m_MaxPassCount)
+    if (iteration >= expansionCount)
         return;
 
     uint32_t opcode = instruction->getOpcode();
@@ -157,7 +167,7 @@ void LeetObfuscator::MBAPass::ObfuscateBinaryInstruction(llvm::Instruction *inst
         createdInstruction->setMetadata(ARITHMETIC_TAG, llvm::MDNode::get(createdInstruction->getContext(), {}));
     
         // Expand it further
-        ObfuscateBinaryInstruction(createdInstruction, iteration+1);
+        ObfuscateBinaryInstruction(createdInstruction, expansionCount, iteration+1);
     }
 }
 

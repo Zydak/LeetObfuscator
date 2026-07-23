@@ -4,37 +4,50 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Function.h"
+#include "SettingsParser.h"
 
 #include <random>
 
 llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &module, llvm::ModuleAnalysisManager &)
 {
-    const int MAX_BLOCK_SIZE = 10; // TODO: config file
-
-    std::vector<llvm::BasicBlock*> blocksToSplit;
     for (auto& function : module)
     {
-        for (auto& block : function)
+        SplitFunction(function);
+    }
+
+    return llvm::PreservedAnalyses::none();
+}
+
+void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
+{
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(function);
+    if (attributes.skip)
+    {
+        return;
+    }
+
+    std::vector<llvm::BasicBlock*> blocksToSplit;
+    for (auto& block : function)
+    {
+        if (block.size() > attributes.maxBlockSize)
         {
-            if (block.size() > MAX_BLOCK_SIZE)
-            {
-                blocksToSplit.push_back(&block);
-            }
+            blocksToSplit.push_back(&block);
         }
     }
 
     while(!blocksToSplit.empty())
     {
         llvm::BasicBlock* block = blocksToSplit.back();
-        llvm::errs() << "SPLITTING: " << block->getParent()->getName() << "\n";
+        //llvm::errs() << "SPLITTING: " << block->getParent()->getName() << "\n";
         blocksToSplit.pop_back();
-        if (block->size() <= MAX_BLOCK_SIZE)
+        if (block->size() <= attributes.maxBlockSize)
         {
             continue;
         }
 
         auto it = block->begin();
-        std::advance(it, MAX_BLOCK_SIZE);
+        std::advance(it, attributes.maxBlockSize);
 
         llvm::BasicBlock* newBlock = block->splitBasicBlock(it);
 
@@ -42,24 +55,19 @@ llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &mod
     }
 
     // Shuffle the blocks around in memory (except for the entry block)
-    for (auto& func : module)
+    std::vector<llvm::BasicBlock*> blocksToShuffle;
+    for (auto& block : function)
     {
-        std::vector<llvm::BasicBlock*> blocksToShuffle;
-        for (auto& block : func)
+        if (&block != &function.getEntryBlock())
         {
-            if (&block != &func.getEntryBlock())
-            {
-                blocksToShuffle.push_back(&block);
-            }
-        }
-
-        std::shuffle(blocksToShuffle.begin(), blocksToShuffle.end(), std::mt19937(std::random_device{}()));
-
-        for (auto* block : blocksToShuffle)
-        {
-            block->moveAfter(&func.getEntryBlock());
+            blocksToShuffle.push_back(&block);
         }
     }
 
-    return llvm::PreservedAnalyses::none();
+    std::shuffle(blocksToShuffle.begin(), blocksToShuffle.end(), std::mt19937(std::random_device{}()));
+
+    for (auto* block : blocksToShuffle)
+    {
+        block->moveAfter(&function.getEntryBlock());
+    }
 }

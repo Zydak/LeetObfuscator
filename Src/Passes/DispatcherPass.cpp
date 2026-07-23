@@ -5,6 +5,7 @@
 #include "llvm/Transforms/Scalar/Reg2Mem.h"
 #include "llvm/IR/Verifier.h"
 #include <random>
+#include "SettingsParser.h"
 
 llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module, llvm::ModuleAnalysisManager& mam)
 {
@@ -16,29 +17,13 @@ llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module
     return llvm::PreservedAnalyses::none();
 }
 
-bool LeetObfuscator::DispatcherPass::DoesFunctionQualify(llvm::Function *function)
-{
-    // Check if function has any basic blocks to begin with
-    for (auto& basicBlock : *function)
-    {
-        if (&basicBlock != &function->getEntryBlock())
-        {
-            return true;
-        }
-    }
-
-    return false;
-    
-}
-
-void LeetObfuscator::DispatcherPass::ReplaceTerminator(llvm::BasicBlock *block)
-{
-}
-
 void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function *function, llvm::ModuleAnalysisManager &mam)
 {
-    if (!DoesFunctionQualify(function))
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(*function);
+    if (attributes.skip)
+    {
         return;
+    }
     
     llvm::Module* module = function->getParent();
     
@@ -84,8 +69,6 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     uint32_t tableSizeLog2 = static_cast<uint32_t>(std::ceil(std::log2(basicBlocks.size() * 1.3)));
     uint32_t tableSize = 1u << tableSizeLog2;
 
-    llvm::errs() << "BODY INDEX: " << tableSize << "\n";
-    llvm::errs() << "BODY INDEX: " << basicBlocks.size() << "\n";
     auto getSlotFromID = [&](uint32_t id) -> uint32_t
     {
         return (id * 2654435761u) >> (32 - tableSizeLog2);

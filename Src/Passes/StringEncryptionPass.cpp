@@ -48,7 +48,7 @@ bool LeetObfuscator::StringEncryptionPass::IsEncryptableStringGlobal(llvm::Globa
     if (!global->hasInitializer() || !global->isConstant())
         return false;
 
-    if (global->getName().starts_with("llvm."))
+    if (global->getName().starts_with("llvm.") || global->getName().starts_with("leet."))
         return false;
 
     llvm::ConstantDataArray* dataArray = llvm::dyn_cast<llvm::ConstantDataArray>(global->getInitializer());
