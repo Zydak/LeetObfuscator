@@ -36,7 +36,7 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
         {
             if (instruction.getMetadata(ARITHMETIC_TAG))
                 continue; // Already marked as done
-                
+            
             if (auto* binaryOperation = llvm::dyn_cast<llvm::BinaryOperator>(&instruction))
             {
                 auto op = binaryOperation->getOpcode();
@@ -49,6 +49,14 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
                 )
                 {
                     instructionsToObfuscate.push_back(binaryOperation);
+                }
+            }
+            if (auto* icmp = llvm::dyn_cast<llvm::ICmpInst>(&instruction))
+            {
+                llvm::CmpInst::Predicate pred = icmp->getPredicate();
+                if (pred == llvm::CmpInst::ICMP_EQ || pred == llvm::CmpInst::ICMP_NE)
+                {
+                    instructionsToObfuscate.push_back(icmp);
                 }
             }
         }
@@ -69,11 +77,15 @@ void LeetObfuscator::MBAPass::ObfuscateInstruction(llvm::Instruction *instructio
 {
     if (auto* binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(instruction))
     {
-        ObfuscateBinaryInstruction(binaryOp, expansionCount);
+        ObfuscateBinaryOperation(binaryOp, expansionCount);
+    }
+    else if (auto* icmp = llvm::dyn_cast<llvm::ICmpInst>(instruction))
+    {
+        ObfuscateCompareOperation(icmp, expansionCount);
     }
 }
 
-void LeetObfuscator::MBAPass::ObfuscateBinaryInstruction(llvm::Instruction *instruction, uint32_t expansionCount, uint32_t iteration)
+void LeetObfuscator::MBAPass::ObfuscateBinaryOperation(llvm::Instruction *instruction, uint32_t expansionCount, uint32_t iteration)
 {
     if (iteration >= expansionCount)
         return;
@@ -167,7 +179,66 @@ void LeetObfuscator::MBAPass::ObfuscateBinaryInstruction(llvm::Instruction *inst
         createdInstruction->setMetadata(ARITHMETIC_TAG, llvm::MDNode::get(createdInstruction->getContext(), {}));
     
         // Expand it further
-        ObfuscateBinaryInstruction(createdInstruction, expansionCount, iteration+1);
+        ObfuscateBinaryOperation(createdInstruction, expansionCount, iteration+1);
+    }
+}
+
+void LeetObfuscator::MBAPass::ObfuscateCompareOperation(llvm::Instruction *instruction, uint32_t expansionCount, uint32_t iteration)
+{
+    if (iteration >= expansionCount)
+        return;
+
+    llvm::Value* x = instruction->getOperand(0);
+    llvm::Value* y = instruction->getOperand(1);
+
+    if (!x->getType()->isIntOrIntVectorTy())
+        return;
+    if (!y->getType()->isIntOrIntVectorTy())
+        return;
+
+    llvm::IRBuilder<llvm::NoFolder> b(instruction);
+    InstructionHolder createdInstructions;
+    llvm::Value* result = nullptr;
+
+    switch (llvm::cast<llvm::ICmpInst>(instruction)->getPredicate())
+    {
+        case llvm::CmpInst::ICMP_EQ:
+        {
+            // a == b  <=>  (a ^ b) == 0
+            auto* xorInst = createdInstructions.Add(b.CreateXor(x, y));
+            result = createdInstructions.Add(
+                b.CreateICmpEQ(xorInst, llvm::ConstantInt::get(x->getType(), 0)));
+            break;
+        }
+        case llvm::CmpInst::ICMP_NE:
+        {
+            // a != b  <=>  (a ^ b) != 0
+            auto* xorInst = createdInstructions.Add(b.CreateXor(x, y));
+            result = createdInstructions.Add(
+                b.CreateICmpNE(xorInst, llvm::ConstantInt::get(x->getType(), 0)));
+            break;
+        }
+        default:
+            return; // not handled
+    }
+
+    instruction->replaceAllUsesWith(result);
+    instruction->eraseFromParent();
+
+    for (auto* createdInstruction : createdInstructions.GetInstructions())
+    {
+        // mark it as done for future passes
+        createdInstruction->setMetadata(ARITHMETIC_TAG, llvm::MDNode::get(createdInstruction->getContext(), {}));
+    
+        // Expand it further
+        if (auto* binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(createdInstruction))
+        {
+            ObfuscateBinaryOperation(binaryOp, expansionCount, iteration); // No +1 is intentional here
+        }
+        else if (auto* icmp = llvm::dyn_cast<llvm::ICmpInst>(createdInstruction))
+        {
+            ObfuscateCompareOperation(icmp, expansionCount, iteration + 1);
+        }
     }
 }
 

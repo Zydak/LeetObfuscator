@@ -26,7 +26,8 @@ namespace LeetObfuscator
         void ObfuscateFunction(llvm::Function& function);
 
         void ObfuscateInstruction(llvm::Instruction* instruction, uint32_t expansionCount);
-        void ObfuscateBinaryInstruction(llvm::Instruction* instruction, uint32_t expansionCount, uint32_t iteration = 0);
+        void ObfuscateBinaryOperation(llvm::Instruction* instruction, uint32_t expansionCount, uint32_t iteration = 0);
+        void ObfuscateCompareOperation(llvm::Instruction* instruction, uint32_t expansionCount, uint32_t iteration = 0);
 
         uint32_t m_DefaultMaxPassCount = 2;
     };

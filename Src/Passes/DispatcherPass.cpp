@@ -19,6 +19,27 @@ llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module
 
 void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function *function, llvm::ModuleAnalysisManager &mam)
 {
+    // Skip functions with exception handling
+    if (function->hasPersonalityFn())
+    {
+        llvm::errs() << "Function '" << function->getName() << "' has a personality function, skipping dispatcher creation.\n";
+        return;
+    }
+
+    bool hasAnyBlocks = false;
+    for (auto& block : *function)
+    {
+        if (&block != &function->getEntryBlock())
+        {
+            hasAnyBlocks = true;
+            break;
+        }
+    }
+    if (!hasAnyBlocks)
+    {
+        return; // nothing to do
+    }
+
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(*function);
     if (attributes.skip)
     {
@@ -164,6 +185,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     {
         indirectBr->addDestination(basicBlock);
     }
+    indirectBr->addDestination(trapBlock);
 
     // TEST SWITCH STATEMENT FOR DEBUGGING OUTPUT
     //

@@ -13,25 +13,13 @@ LeetObfuscator::SettingsParser::FunctionAttributes LeetObfuscator::SettingsParse
     functionSettings.maxBlockSize = globalSettings.maxBlockSize; // Default to global max block
     functionSettings.mbaExpansionCount = -1; // This will default to whatever was in the global settings for given MBA pass
 
-    // Check if it has any blocks
-    bool hasAnyBlocks = false;
-    for (auto& block : function)
-    {
-        if (block.isEntryBlock())
-        {
-            hasAnyBlocks = true;
-            break;
-        }
-    }
-    functionSettings.skip = functionSettings.skip && hasAnyBlocks; // If it has no blocks, skip it regardless of the global parse mode
-
     if (function.hasFnAttribute("leet.skip"))
     {
         functionSettings.skip = true;
     }
     else if (function.hasFnAttribute("leet.parse"))
     {
-        functionSettings.skip = hasAnyBlocks; // If it has no blocks, skip it regardless of the parse annotation
+        functionSettings.skip = false;
     }
 
     if (function.hasFnAttribute("leet.maxBlockSize"))
