@@ -1,8 +1,21 @@
 # LeetObfuscator
+```text
+██╗     ███████╗███████╗████████╗
+██║     ██╔════╝██╔════╝╚══██╔══╝
+██║     █████╗  █████╗     ██║
+██║     ██╔══╝  ██╔══╝     ██║
+███████╗███████╗███████╗   ██║
+╚══════╝╚══════╝╚══════╝   ╚═╝
+
+ ██████╗ ██████╗ ███████╗██╗   ██╗███████╗ ██████╗ █████╗ ████████╗ ██████╗ ██████╗
+██╔═══██╗██╔══██╗██╔════╝██║   ██║██╔════╝██╔════╝██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗
+██║   ██║██████╔╝█████╗  ██║   ██║███████╗██║     ███████║   ██║   ██║   ██║██████╔╝
+██║   ██║██╔══██╗██╔══╝  ██║   ██║╚════██║██║     ██╔══██║   ██║   ██║   ██║██╔══██╗
+╚██████╔╝██████╔╝██║     ╚██████╔╝███████║╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║
+ ╚═════╝ ╚═════╝ ╚═╝      ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
 A simple obfuscator for binaries made in c++ and LLVM.
-
----
+```
 
 ## Features
 
@@ -66,7 +79,7 @@ As you can see there's simply no way to see what was the original operation, and
   - Transforms function control flow into a dispatcher state machine with a jump table containing all block addresses.
   - Destroys the control flow.
 
-Definitely the strongest and most usefull pass, it collects all the blocks inside a function and makes one giant state machine out of theme, it creates a jump table at the begining of the function and places all the block pointers inside it.
+Definitely the strongest and most usefull pass, it collects all the blocks inside a function and makes one giant state machine out of them, it creates a jump table at the begining of the function and places all the block pointers inside it.
 
 <table>
   <tr>
@@ -81,7 +94,7 @@ Definitely the strongest and most usefull pass, it collects all the blocks insid
   </tr>
 </table>
 
-As you can see if the take our previous hello world function it completely destroys it's control flow. The only thing we see is an entry block with an indirect jump to the dispatcher which IDA pro can't seem resolve, you can't even tell what is this function supposed to do anymore. Here's how the control flow actually looks because IDA won't show us:
+As you can see if the take our previous hello world function it completely destroys it's control flow. The only thing we see is an entry block with an indirect jump to the dispatcher which IDA pro can't seem to resolve, you can't even tell what is this function supposed to do anymore. Here's how the control flow actually looks because IDA won't show us:
 
 <table>
   <tr>
@@ -98,7 +111,6 @@ As you can see if the take our previous hello world function it completely destr
 
 As you can see before the pass graph looks 1:1 like what we've seen in IDA pro. But after the pass it's as flat as my butt, it just constantly jumps between the dispatcher and blocks with no clear idea what's going on. You can't tell what exactly is happening and which block even executes first because all indices into the jump table are hashed and unhashed at runtime.
 
-Btw everything in this section was compiled with `-O2` flag and verified through all three decompilers (IDA pro, Binary Ninja, Ghidra) the decompilation results were the same in each one.
 
 ---
 
@@ -107,6 +119,8 @@ Of course if you combine every pass you can completely destroy the dreams of a c
 
 <img alt="FooAll" src="https://github.com/user-attachments/assets/0e9ade44-c8f8-4c64-8437-17c1dd5346ae" />
 
+(Btw everything in this section was compiled with `-O2` flag and verified through all three decompilers (IDA pro, Binary Ninja, Ghidra) the decompilation results were the same in each one.)
+
 Of course this example is blown out of proportion, if you're gonna obfuscate every simple operation to this magnitude your application will be slow as hell and big as hell. You can tune the obfuscator up and down however you like. After running it for the first time it will prompt to create a `leet.conf` file with default settings used for everything, you can also overwrite these settings for each function using annotations.
 
 Currently supported ones are:
@@ -114,7 +128,7 @@ Currently supported ones are:
 ```
 LEET_SKIP_FUNCTION - Completely skips obfuscation for this function
 LEET_PARSE_FUNCTION - Forces obfuscation for this function
-LEET_MAX_BLOCK_SIZE(size) - Sets max block size, everything above size will be split into smaller blocks inside the dispatcher
+LEET_MAX_BLOCK_SIZE(size) - Sets max block size, every block above this size will be split into smaller blocks inside the dispatcher
 LEET_MBA_EXPANSION_COUNT(count) - How many times to expand the instruction recursively
 ```
 
