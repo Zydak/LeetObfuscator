@@ -43,7 +43,7 @@ Here a simple `Hello World!` function:
   </tr>
 </table>
         
-As you can see the constant got replaced by `leet_decrypt_string` function, that function will decrypt the string from memory and store it in a variable. Real contents sit encrypted in the rodata section, so it's impossible to simply search for strings in a binary now. Also the encryption key is unique for each string, so even if you find out how the decryption works, every string has it's own function.
+As you can see the constant got replaced by `leet_decrypt_string` function, that function will decrypt the string from memory and store it in a variable. Real contents sit encrypted in the rodata section, so it's impossible to simply search for strings in a binary now. Also the encryption key is unique for each string, so even if you find out how the decryption works, every string has it's own function. Of course you can just place a breakpoint on this function and see the contents clearly after decryption, but the point of this is not some cryptographics safety but preventing people from dumping and searching strings in the binary.
 
 <img alt="Data" src="https://github.com/user-attachments/assets/92b2ac7c-f74c-4599-8292-29ce51a4be7c" />
 
