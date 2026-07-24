@@ -94,7 +94,7 @@ Definitely the strongest and most usefull pass, it collects all the blocks insid
   </tr>
 </table>
 
-As you can see if the take our previous hello world function it completely destroys it's control flow. The only thing we see is an entry block with an indirect jump to the dispatcher which IDA pro can't seem to resolve, you can't even tell what is this function supposed to do anymore. Here's how the control flow actually looks because IDA won't show us:
+If we take our previous hello world function it completely destroys it's control flow. The only thing we see is an entry block with an indirect jump to the dispatcher which IDA pro can't seem to resolve, you can't even tell what was this function supposed to do. Here's how the control flow actually looks because IDA won't show us:
 
 <table>
   <tr>
@@ -109,7 +109,7 @@ As you can see if the take our previous hello world function it completely destr
   </tr>
 </table>
 
-As you can see before the pass graph looks 1:1 like what we've seen in IDA pro. But after the pass it's as flat as my butt, it just constantly jumps between the dispatcher and blocks with no clear idea what's going on. You can't tell what exactly is happening and which block even executes first because all indices into the jump table are hashed and unhashed at runtime.
+As you can see before the pass graph looks 1:1 like what we've seen in IDA pro. But after the pass it's as flat as my butt, it just constantly jumps between the dispatcher and blocks with nobody having a clear idea what's going on. You can't even tell which block executes first because all indices into the jump table are hashed at compiled time and unhashed at runtime.
 
 
 ---
@@ -117,11 +117,21 @@ As you can see before the pass graph looks 1:1 like what we've seen in IDA pro. 
 **Combining Every Pass**
 Of course if you combine every pass you can completely destroy the dreams of a casual reverse engineer, because the big three (IDA pro, Binary Ninja, Ghidra) are completely unable to tell what's going. Figuring this out is virtually impossible with just a decompiler. Here's the previous function with `(x^y)*10`, it's a lot larger this time because of all the passes, and nobody is able to tell what's going on in there.
 
-<img alt="FooAll" src="https://github.com/user-attachments/assets/0e9ade44-c8f8-4c64-8437-17c1dd5346ae" />
+<img alt="FooAll" src="https://github.com/user-attachments/assets/dfb59b66-d281-4054-8f5f-b3f22b63a247" />
 
-(Btw everything in this section was compiled with `-O2` flag and verified through all three decompilers (IDA pro, Binary Ninja, Ghidra) the decompilation results were the same in each one.)
 
-Of course this example is blown out of proportion, if you're gonna obfuscate every simple operation to this magnitude your application will be slow as hell and big as hell. You can tune the obfuscator up and down however you like. After running it for the first time it will prompt to create a `leet.conf` file with default settings used for everything, you can also overwrite these settings for each function using annotations.
+(Btw everything in this section was compiled with `-O2` flag and verified through all of the three big boy decompilers (IDA pro, Binary Ninja, Ghidra), the decompilation results were the same in each one.)
+
+Of course this example is blown out of proportion, if you're gonna obfuscate every simple operation to this magnitude your application will be slow as hell and big as hell. If we run this little monster through a small stress test it's around 3.5 times slower than running without any obfuscation.
+
+<img alt="Stresstest" src="https://github.com/user-attachments/assets/c18098fe-94fd-4179-9660-78ed063708eb" />
+
+`clang++ -fpass-plugin=./LeetObfuscator.so ./test.cpp -o testProj -O2 -fno-exceptions` - 3500ms
+
+`clang++ ./test.cpp -o testProj -O2 -fno-exceptions` - 950ms
+
+
+That's why you can tune the obfuscator up and down however you like. After running it for the first time it will prompt to create a `leet.conf` file with default settings used for everything, you can also overwrite these settings for each function using annotations.
 
 Currently supported ones are:
 
@@ -140,6 +150,8 @@ int Foo(int x, int y)
     return (x ^ y) * 10;
 }
 ```
+
+So if you have any performance heavy function and there is no point in obfuscating it, just slap the skip annotation on it and be a happier person.
 
 ---
 
@@ -177,6 +189,5 @@ clang++ -fpass-plugin=./LeetObfuscator.so ./test.cpp -o test -fno-exceptions
 ## Current Limitations
 
 - Has to be compiled with -fno-exceptions flag, so obviously no exceptions in the compiled code
-- Not every LLVM IR construct is supported.
-- Complex C++ templates may fail.
-- Basically work in progress, don't expect it to work on larger binaries. But I think It's sufficient for simple programs or crackmes.
+- Not every single operation is supported, so it might skip obfuscating some code paths to avoid crashing.
+- So basically work in progress, don't expect it to work on larger binaries. But I think It's sufficient for simple programs or crackmes. It's a small project, please don't expect much, if you encounter any issues or crashes please create an issue.
