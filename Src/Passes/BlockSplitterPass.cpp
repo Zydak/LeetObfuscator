@@ -5,6 +5,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Verifier.h"
 #include "SettingsParser.h"
 
 #include <random>
@@ -69,5 +70,27 @@ void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
     for (auto* block : blocksToShuffle)
     {
         block->moveAfter(&function.getEntryBlock());
+    }
+
+    // Verify the function at the end
+    if (llvm::verifyFunction(function, &llvm::errs()))
+    {
+        llvm::errs() << "[ERROR] BlockSplitterPass: Function '" << function.getName() << "' verification failed after transformation!\n";
+
+        // Dump the function IR and terminate
+        llvm::errs() << "BlockSplitterPass: Function IR:\n";
+        std::error_code ec;
+        llvm::raw_fd_ostream logFile("error_log.txt", ec);
+        if (!ec)
+        {
+            function.print(logFile);
+            logFile.close();
+            llvm::errs() << "BlockSplitterPass: Function IR dumped to error_log.txt\n";
+        }
+        else
+        {
+            llvm::errs() << "BlockSplitterPass: Failed to open error_log.txt for writing: " << ec.message() << "\n";
+        }
+        exit(1);
     }
 }

@@ -256,11 +256,22 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     // Verify the function at the end
     if (llvm::verifyFunction(*function, &llvm::errs()))
     {
-        llvm::errs() << "DispatcherPass: Function '" << function->getName() << "' verification failed after transformation!\n";
+        llvm::errs() << "[ERROR] DispatcherPass: Function '" << function->getName() << "' verification failed after transformation!\n";
 
         // Dump the function IR and terminate
         llvm::errs() << "DispatcherPass: Function IR:\n";
-        llvm::errs() << *function << "\n";
+        std::error_code ec;
+        llvm::raw_fd_ostream logFile("error_log.txt", ec);
+        if (!ec)
+        {
+            function->print(logFile);
+            logFile.close();
+            llvm::errs() << "DispatcherPass: Function IR dumped to error_log.txt\n";
+        }
+        else
+        {
+            llvm::errs() << "DispatcherPass: Failed to open error_log.txt for writing: " << ec.message() << "\n";
+        }
         exit(1);
     }
 

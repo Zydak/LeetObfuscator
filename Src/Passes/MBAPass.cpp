@@ -3,6 +3,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/NoFolder.h"
 
+#include "llvm/IR/Verifier.h"
 #include "SettingsParser.h"
 
 static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
@@ -70,6 +71,28 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
     for (auto& instruction : instructionsToObfuscate)
     {
         ObfuscateInstruction(instruction, expansionCount);
+    }
+
+    // Verify the function at the end
+    if (llvm::verifyFunction(function, &llvm::errs()))
+    {
+        llvm::errs() << "[ERROR] MBAPass: Function '" << function.getName() << "' verification failed after transformation!\n";
+
+        // Dump the function IR and terminate
+        llvm::errs() << "MBAPass: Function IR:\n";
+        std::error_code ec;
+        llvm::raw_fd_ostream logFile("error_log.txt", ec);
+        if (!ec)
+        {
+            function.print(logFile);
+            logFile.close();
+            llvm::errs() << "MBAPass: Function IR dumped to error_log.txt\n";
+        }
+        else
+        {
+            llvm::errs() << "MBAPass: Failed to open error_log.txt for writing: " << ec.message() << "\n";
+        }
+        exit(1);
     }
 }
 
