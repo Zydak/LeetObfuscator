@@ -14,7 +14,7 @@
 ╚██████╔╝██████╔╝██║     ╚██████╔╝███████║╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║
  ╚═════╝ ╚═════╝ ╚═╝      ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
-A simple obfuscator for binaries made in c++ and LLVM.
+A simple obfuscator for binaries made in C++ and LLVM.
 ```
 
 ## Features
@@ -43,8 +43,6 @@ As you can see the constant got replaced by `leet_decrypt_string` function, that
 
 <img alt="Data" src="https://github.com/user-attachments/assets/92b2ac7c-f74c-4599-8292-29ce51a4be7c" />
 
----
-
 ### Mixed Boolean Arithmetic (MBA)
 Replaces arithmetic operations with their MBA equivalents. It's basically impossible to see what the original operation did unless you run it through an MBA deobfuscator first.
   
@@ -66,9 +64,6 @@ A simple Foo function:
 </table>
 
 As you can see there's simply no way to see what the original operation was, and this is the result after running Goomba plugin.
-
-
----
 
 ### Control Flow Flattening
 Definitely the strongest and most useful pass, it collects all the blocks inside a function and makes one giant state machine out of them, it creates a jump table at the beginning of the function and places all the block pointers inside it.
@@ -103,10 +98,12 @@ If we take our previous hello world function it completely destroys it's control
 
 As you can see before the pass graph looks 1:1 like what we've seen in IDA pro. But after the pass it's as flat as my butt, it just constantly jumps between the dispatcher and blocks with nobody having a clear idea what's going on. You can't even tell which block executes first because all indices into the jump table are encoded at compile time and decoded at runtime.
 
+Also note that in some cases on windows IDA pro is able to see which blocks does the jump table contain, but it's still not able to see any control flow. It will only show a couple of the blocks in the graph view (not all of them for some reason) and sometimes a jump to the dispatcher.
 
----
+<img alt="WindowsFlow" src="https://github.com/user-attachments/assets/82e6a071-f23a-4b27-816f-ea0262183baf" />
 
-**Combining Every Pass**
+### Combining Every Pass
+
 Of course if you combine every pass you can completely destroy the dreams of a casual reverse engineer, because the big three (IDA pro, Binary Ninja, Ghidra) are completely unable to see anything. Figuring this out is virtually impossible with just a decompiler. Here's the previous function with `(x^y)*10`, it's a lot larger this time because of all the passes, and nobody is able to tell what's going on in there.
 
 <img alt="FooAll" src="https://github.com/user-attachments/assets/dfb59b66-d281-4054-8f5f-b3f22b63a247" />
@@ -145,8 +142,6 @@ int Foo(int x, int y)
 
 So if you have any performance heavy function and there is no point in obfuscating it, just slap the skip annotation on it and be a happier person.
 
----
-
 ## Building
 
 ### Linux
@@ -169,7 +164,7 @@ Requirements:
 - C++17 compiler
 
 ### Windows
-I'm not gonna lie I do not know how to build this on windows, the cmake technically does support it, but after building every single LLVM function would instantly crash on my PC, I do not know why. If you want you can try building it by downloading llvm binaries from [releases on their github](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) and then running:
+I'm not gonna lie I do not know how to build this on windows, the cmake technically does support it, but after building every single LLVM function would instantly crash on my PC, I do not know why. This is on my TODO list for now. If you know what you're doing and want to give it a shot you can try building it by downloading llvm binaries from [releases on their github](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) and then running:
 
 ```
 git clone https://github.com/<yourname>/LeetObfuscator.git
@@ -187,8 +182,6 @@ then open the generated solution in visual studio, build, and try running with
 
 But most likely you'll get the same errors as I did, so it's probably easier to run this in WSL and just cross compile your binary to windows.
 
----
-
 ## Usage
 
 Example:
@@ -196,8 +189,6 @@ Example:
 ```bash
 clang++ -fpass-plugin=./LeetObfuscator.so ./test.cpp -o test -fno-exceptions
 ```
-
----
 
 ## Current Limitations
 
