@@ -103,8 +103,18 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
         llvm::IRBuilder<> builder(&parentFunction->getEntryBlock(), parentFunction->getEntryBlock().getFirstInsertionPt());
         llvm::AllocaInst* stackBuffer = builder.CreateAlloca(builder.getInt8Ty(), builder.getInt32(bytesCount));
 
-        llvm::IRBuilder<> callBuilder(instruction);
-        llvm::Value* decryptCall = callBuilder.CreateCall(decryptFunction, { globalVar, stackBuffer, builder.getInt32(bytesCount) }); 
+        // If this use feeds a PHI node, the decrypt call must be inserted at the
+        // end of the corresponding predecessor block (before its terminator),
+        // not before the PHI itself. Fuck phi nodes.
+        llvm::Instruction* insertBefore = instruction;
+        if (auto* phi = llvm::dyn_cast<llvm::PHINode>(instruction))
+        {
+            llvm::BasicBlock* incomingBlock = phi->getIncomingBlock(*use);
+            insertBefore = incomingBlock->getTerminator();
+        }
+
+        llvm::IRBuilder<> callBuilder(insertBefore);
+        llvm::Value* decryptCall = callBuilder.CreateCall(decryptFunction, { globalVar, stackBuffer, builder.getInt32(bytesCount) });
         use->set(decryptCall);
     }
 }
