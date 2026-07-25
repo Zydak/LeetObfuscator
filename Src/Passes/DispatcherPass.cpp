@@ -9,6 +9,8 @@
 
 llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module, llvm::ModuleAnalysisManager& mam)
 {
+    llvm::errs() << "Running DispatcherPass\n";
+
     for (auto& function : module)
     {
         CreateDispatcherInAFunction(&function, mam);
@@ -47,6 +49,32 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     }
     
     llvm::Module* module = function->getParent();
+
+    // Lifetime intrinsics require their pointer operand to trace directly to an
+    // alloca. Once we demote across the dispatcher's shuffled blocks, that
+    // breaks since the RegToMem pass spills the alloca pointer itself into another
+    // slot. And since it's an llvm instrisic used only for optimization, just purge
+    // all these fuckers from existence, begone
+    std::vector<llvm::CallInst*> lifetimeCalls;
+    for (auto& block : *function)
+    {
+        for (auto& inst : block)
+        {
+            if (auto* call = llvm::dyn_cast<llvm::CallInst>(&inst))
+            {
+                if (auto* callee = call->getCalledFunction())
+                {
+                    if (callee->getIntrinsicID() == llvm::Intrinsic::lifetime_start ||
+                        callee->getIntrinsicID() == llvm::Intrinsic::lifetime_end)
+                    {
+                        lifetimeCalls.push_back(call);
+                    }
+                }
+            }
+        }
+    }
+    for (auto* call : lifetimeCalls)
+        call->eraseFromParent();
     
     // The code will technically be valid but the verifier will still complain about uses before initialization
     // so demote everything to stack first. You could call MemToRegPass after everything is done but it will

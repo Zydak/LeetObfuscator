@@ -10,6 +10,8 @@
 
 llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
+    llvm::errs() << "Running StringEncryptionPass\n";
+
     EmittedTemplate templates = GetTemplateFunctions(module);
 
     if (!templates.decryptFunction || !templates.getKeyFunction || !templates.module)

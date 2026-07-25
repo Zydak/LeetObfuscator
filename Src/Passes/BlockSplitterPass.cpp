@@ -12,6 +12,8 @@
 
 llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &module, llvm::ModuleAnalysisManager &)
 {
+    llvm::errs() << "Running BlockSplitterPass\n";
+
     for (auto& function : module)
     {
         SplitFunction(function);

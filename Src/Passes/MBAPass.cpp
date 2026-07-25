@@ -10,6 +10,8 @@ static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
 
 llvm::PreservedAnalyses LeetObfuscator::MBAPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
+    llvm::errs() << "Running MBAPass\n";
+
     InstructionHolder createdInstructions;
     for (auto& function : module)
     {

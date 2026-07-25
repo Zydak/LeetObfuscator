@@ -19,12 +19,8 @@ A simple obfuscator for binaries made in c++ and LLVM.
 
 ## Features
 
----
-
-- **String Encryption**
-  - Encrypts string literals at compile time.
-  - Decrypts them only when needed at runtime.
-  - Makes static string extraction a lot more difficult.
+### String Encryption
+Encrypts strings at compile time and inserts a decrypt function at every use of the encrypted string.
 
 Here a simple `Hello World!` function:
 
@@ -43,17 +39,16 @@ Here a simple `Hello World!` function:
   </tr>
 </table>
         
-As you can see the constant got replaced by `leet_decrypt_string` function, that function will decrypt the string from memory and store it in a variable. Real contents sit encrypted in the rodata section, so it's impossible to simply search for strings in a binary now. Also the encryption key is unique for each string, so even if you find out how the decryption works, every string has it's own function. Of course you can just place a breakpoint on this function and see the contents clearly after decryption, but the point of this is not some cryptographics safety but preventing people from dumping and searching strings in the binary.
+As you can see the constant got replaced by `leet_decrypt_string` function, that function will decrypt the string from memory and store it in a variable. Real contents sit encrypted in the rodata section, so it's impossible to simply search for strings in a binary now. Also the encryption key is unique for each string, so even if you find out how the decryption works, every string has its own function. Of course you can just place a breakpoint on this function and see the contents clearly after decryption, but the point of this is not some cryptographics safety but preventing people from dumping and searching strings in the binary.
 
 <img alt="Data" src="https://github.com/user-attachments/assets/92b2ac7c-f74c-4599-8292-29ce51a4be7c" />
 
 ---
 
-- **Mixed Boolean Arithmetic (MBA)**
-  - Replaces arithmetic expressions with equivalent MBA identities.
-  - It's pretty annoying to read stuff obfuscated by this.
+### Mixed Boolean Arithmetic (MBA)
+Replaces arithmetic operations with their MBA equivalents. It's basically impossible to see what the original operation did unless you run it through an MBA deobfuscator first.
   
-  A simple Foo Function:
+A simple Foo function:
 
 <img alt="Xor" src="https://github.com/user-attachments/assets/9cb2185e-6545-4f0b-bc88-53e675ce5521" />
 
@@ -70,16 +65,13 @@ As you can see the constant got replaced by `leet_decrypt_string` function, that
   </tr>
 </table>
 
-As you can see there's simply no way to see what was the original operation, and this is the result after running Goomba plugin.
+As you can see there's simply no way to see what the original operation was, and this is the result after running Goomba plugin.
 
 
 ---
 
-- **Control Flow Flattening**
-  - Transforms function control flow into a dispatcher state machine with a jump table containing all block addresses.
-  - Destroys the control flow.
-
-Definitely the strongest and most usefull pass, it collects all the blocks inside a function and makes one giant state machine out of them, it creates a jump table at the begining of the function and places all the block pointers inside it.
+### Control Flow Flattening
+Definitely the strongest and most useful pass, it collects all the blocks inside a function and makes one giant state machine out of them, it creates a jump table at the beginning of the function and places all the block pointers inside it.
 
 <table>
   <tr>
@@ -94,7 +86,7 @@ Definitely the strongest and most usefull pass, it collects all the blocks insid
   </tr>
 </table>
 
-If we take our previous hello world function it completely destroys it's control flow. The only thing we see is an entry block with an indirect jump to the dispatcher which IDA pro can't seem to resolve, you can't even tell what was this function supposed to do. Here's how the control flow actually looks because IDA won't show us:
+If we take our previous hello world function it completely destroys it's control flow. The only thing we see is an entry block with an indirect jump to the dispatcher which IDA pro can't seem to resolve, you can't even tell what this function was supposed to do. Here's how the control flow actually looks because IDA won't show us:
 
 <table>
   <tr>
@@ -109,18 +101,18 @@ If we take our previous hello world function it completely destroys it's control
   </tr>
 </table>
 
-As you can see before the pass graph looks 1:1 like what we've seen in IDA pro. But after the pass it's as flat as my butt, it just constantly jumps between the dispatcher and blocks with nobody having a clear idea what's going on. You can't even tell which block executes first because all indices into the jump table are hashed at compiled time and unhashed at runtime.
+As you can see before the pass graph looks 1:1 like what we've seen in IDA pro. But after the pass it's as flat as my butt, it just constantly jumps between the dispatcher and blocks with nobody having a clear idea what's going on. You can't even tell which block executes first because all indices into the jump table are encoded at compile time and decoded at runtime.
 
 
 ---
 
 **Combining Every Pass**
-Of course if you combine every pass you can completely destroy the dreams of a casual reverse engineer, because the big three (IDA pro, Binary Ninja, Ghidra) are completely unable to tell what's going. Figuring this out is virtually impossible with just a decompiler. Here's the previous function with `(x^y)*10`, it's a lot larger this time because of all the passes, and nobody is able to tell what's going on in there.
+Of course if you combine every pass you can completely destroy the dreams of a casual reverse engineer, because the big three (IDA pro, Binary Ninja, Ghidra) are completely unable to see anything. Figuring this out is virtually impossible with just a decompiler. Here's the previous function with `(x^y)*10`, it's a lot larger this time because of all the passes, and nobody is able to tell what's going on in there.
 
 <img alt="FooAll" src="https://github.com/user-attachments/assets/dfb59b66-d281-4054-8f5f-b3f22b63a247" />
 
 
-(Btw everything in this section was compiled with `-O2` flag and verified through all of the three big boy decompilers (IDA pro, Binary Ninja, Ghidra), the decompilation results were the same in each one.)
+(Btw everything in this section was compiled with `-O2` flag and verified with all of the three big boy decompilers (IDA pro, Binary Ninja, Ghidra), the decompilation results were the same in each one.)
 
 Of course this example is blown out of proportion, if you're gonna obfuscate every simple operation to this magnitude your application will be slow as hell and big as hell. If we run this little monster through a small stress test it's around 3.5 times slower than running without any obfuscation.
 
@@ -157,6 +149,7 @@ So if you have any performance heavy function and there is no point in obfuscati
 
 ## Building
 
+### Linux
 ```bash
 git clone https://github.com/<yourname>/LeetObfuscator.git
 cd LeetObfuscator
@@ -168,11 +161,31 @@ cmake ..
 make
 ```
 
+
 Requirements:
 
 - LLVM
 - CMake
 - C++17 compiler
+
+### Windows
+I'm not gonna lie I do not know how to build this on windows, the cmake technically does support it, but after building every single LLVM function would instantly crash on my PC, I do not know why. If you want you can try building it by downloading llvm binaries from [releases on their github](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) and then running:
+
+```
+git clone https://github.com/<yourname>/LeetObfuscator.git
+cd LeetObfuscator
+
+mkdir build
+cd build
+
+cmake .. -DLLVM_DIR="C:\Dev\LLVM\lib\cmake\llvm" # Your path where you downloaded the binaries
+```
+
+then open the generated solution in visual studio, build, and try running with
+
+`clang++ -fpass-plugin=./LeetObfuscator.dll ./test.cpp -o test.exe -fno-exceptions`
+
+But most likely you'll get the same errors as I did, so it's probably easier to run this in WSL and just cross compile your binary to windows.
 
 ---
 

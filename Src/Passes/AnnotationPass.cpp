@@ -6,6 +6,8 @@
 
 llvm::PreservedAnalyses LeetObfuscator::AnnotationPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
+    llvm::errs() << "Running AnnotationPass\n";
+
     llvm::GlobalVariable* globalVar = module.getGlobalVariable("llvm.global.annotations");
     if (!globalVar)
         return llvm::PreservedAnalyses::all();

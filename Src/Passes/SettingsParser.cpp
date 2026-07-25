@@ -155,15 +155,11 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
             size_t end = value.find(',');
             while (end != std::string::npos)
             {
-                llvm::errs() << "PASS: " << value.substr(start, end - start) << "\n";
-
                 std::string passStr = value.substr(start, end - start);
                 settings.passes.push_back(ParsePassString(passStr));
                 start = end + 1;
                 end = value.find(',', start);
             }
-            // Add the last pass
-            llvm::errs() << "PASS: " << value.substr(start) << "\n";
             std::string passStr = value.substr(start);
             settings.passes.push_back(ParsePassString(passStr));
         }

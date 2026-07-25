@@ -53,18 +53,20 @@ if (LeetBuildLLVMPass)
         add_library(LeetObfuscator MODULE ${LeetLLVMPassSources})
         add_dependencies(LeetObfuscator LeetRuntimeBitcode)
 
-        llvm_map_components_to_libnames(LeetLLVMLibs
-            core
-            support
-            irreader
-            bitreader
-            linker
-            transformutils
-            analysis
-            passes
-        )
 
-        target_link_libraries(LeetObfuscator PRIVATE ${LeetLLVMLibs})
+        if (MSVC)
+            llvm_map_components_to_libnames(LeetLLVMLibs
+                core
+                support
+                irreader
+                bitreader
+                linker
+                transformutils
+                analysis
+                passes
+            )
+            target_link_libraries(LeetObfuscator PRIVATE ${LeetLLVMLibs})
+        endif()
 
         target_include_directories(LeetObfuscator SYSTEM PRIVATE
             ${LLVM_INCLUDE_DIRS}
