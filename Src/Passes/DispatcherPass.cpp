@@ -118,7 +118,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     auto it = std::find(basicBlocks.begin(), basicBlocks.end(), bodyBlock);
     uint32_t bodyIndex = it - basicBlocks.begin();
 
-    uint32_t tableSizeLog2 = static_cast<uint32_t>(std::ceil(std::log2(basicBlocks.size() * 1.3)));
+    uint32_t tableSizeLog2 = static_cast<uint32_t>(std::ceil(std::log2((basicBlocks.size() + 1) * 1.3)));
     uint32_t tableSize = 1u << tableSizeLog2;
 
     auto getSlotFromID = [&](uint32_t id) -> uint32_t
@@ -142,6 +142,15 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         slotOwner[slot] = (int)i;
         blockIds[i] = randomID;
     }
+
+    // Roll ID for dispatcher block
+    uint32_t dispatcherID;
+    uint32_t dispatcherSlot;
+    do
+    {
+        dispatcherID = rng();
+        dispatcherSlot = getSlotFromID(dispatcherID);
+    } while (slotOwner[dispatcherSlot] != -1);
     
     // Allocate jump table with all the addresses
     llvm::IRBuilder<> entryBeginBuilder(entryBlock, entryBlock->begin());
@@ -166,6 +175,9 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         }
     }
 
+    // Create block for the dispatcher and make entry jump to it
+    llvm::BasicBlock* dispatcherBlock = llvm::BasicBlock::Create(context, "dispatcher", function);
+
     for (size_t i = 0; i < basicBlocks.size(); i++)
     {
         llvm::Value* blockAddress = entryBeginBuilder.CreateInBoundsGEP(
@@ -177,15 +189,32 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         entryBeginBuilder.CreateStore(llvm::BlockAddress::get(basicBlocks[i]), blockAddress);
     }
 
+    // Also store dispatcher block in the table
+    llvm::Value* dispatcherBlockAddress = entryBeginBuilder.CreateInBoundsGEP(
+        jumpTableType,
+        jumpTable,
+        {entryBeginBuilder.getInt32(0), entryBeginBuilder.getInt32(dispatcherSlot)}
+    );
+    entryBeginBuilder.CreateStore(llvm::BlockAddress::get(dispatcherBlock), dispatcherBlockAddress);
+
     // Allocate dispatcher state
     llvm::AllocaInst* dispatcherState = entryBeginBuilder.CreateAlloca(entryBeginBuilder.getInt32Ty());
-
-    // Create block for the dispatcher and make entry jump to it
-    llvm::BasicBlock* dispatcherBlock = llvm::BasicBlock::Create(context, "dispatcher", function);
     entryBlock->getTerminator()->eraseFromParent();
     llvm::IRBuilder<> entryEndBuilder(entryBlock, entryBlock->end());
     entryEndBuilder.CreateStore(entryEndBuilder.getInt32(blockIds[bodyIndex]), dispatcherState);
-    entryEndBuilder.CreateBr(dispatcherBlock);
+
+    {
+        // Get dispatcher block from the jump table
+        llvm::Value* dispatcherBlockGEP = entryEndBuilder.CreateInBoundsGEP(
+            jumpTableType,
+            jumpTable,
+            {entryEndBuilder.getInt32(0), entryEndBuilder.getInt32(dispatcherSlot)}
+        );
+        llvm::Value* dispatcherBlockAddress = entryEndBuilder.CreateLoad(entryEndBuilder.getPtrTy(), dispatcherBlockGEP, true);
+
+        llvm::IndirectBrInst* entryEndIndirectBr = entryEndBuilder.CreateIndirectBr(dispatcherBlockAddress, 1);
+        entryEndIndirectBr->addDestination(dispatcherBlock);
+}
 
     // Create dispatcher
     llvm::IRBuilder<> dispatcherBuilder(dispatcherBlock);
@@ -234,17 +263,29 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     // We only rewrite successors that stay within the dispatcher-managed block set; external exits are left intact.
     auto rewriteToDispatcher = [&](llvm::Instruction* terminator, llvm::Value* nextIndex)
     {
+        llvm::Function* barrierFnBlock = llvm::Function::Create(barrierFnType, llvm::GlobalValue::InternalLinkage, "dispatcher_barrier", module);
+        barrierFnBlock->addFnAttr(llvm::Attribute::NoDuplicate);
+        barrierFnBlock->addFnAttr(llvm::Attribute::Convergent);
+        barrierFnBlock->addFnAttr(llvm::Attribute::NoInline);
+        barrierFnBlock->addFnAttr(llvm::Attribute::OptimizeNone);
+
+        llvm::BasicBlock* blockBarrierBlock = llvm::BasicBlock::Create(context, "barrier", barrierFnBlock);
+        llvm::IRBuilder<> barrierBuilderBlock(blockBarrierBlock);
+        barrierBuilderBlock.CreateRetVoid();
+
         llvm::IRBuilder<> terminatorBuilder(terminator);
         terminatorBuilder.CreateStore(nextIndex, dispatcherState, true);
-        // terminatorBuilder.CreateBr(dispatcherBlock);
-        llvm::BlockAddress* dispatcherBlockAddress = llvm::BlockAddress::get(dispatcherBlock);
+
+        // Get dispatcher block from the jump table
+        llvm::Value* dispatcherBlockGEP = terminatorBuilder.CreateInBoundsGEP(
+            jumpTableType,
+            jumpTable,
+            {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(dispatcherSlot)}
+        );
+        llvm::Value* dispatcherBlockAddress = terminatorBuilder.CreateLoad(terminatorBuilder.getPtrTy(), dispatcherBlockGEP, true);
+
+        terminatorBuilder.CreateCall(barrierFnBlock);
         llvm::IndirectBrInst* indirectBr = terminatorBuilder.CreateIndirectBr(dispatcherBlockAddress, 1);
-        // for (auto* basicBlock : basicBlocks)
-        // {
-        //     if (terminator->getParent() == basicBlock)
-        //         continue; // Don't add self as successor, it will cause infinite loop
-        //     indirectBr->addDestination(basicBlock);
-        // }
         indirectBr->addDestination(dispatcherBlock);
 
         terminator->eraseFromParent();
