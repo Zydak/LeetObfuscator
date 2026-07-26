@@ -75,13 +75,13 @@ Definitely the strongest and most useful pass, it collects all the blocks inside
       <b>Before the pass
     </td>
     <td align="center">
-      <img alt="After" src="https://github.com/user-attachments/assets/c4d1f012-b680-483d-804b-799fb2561946" /><br>
+      <img alt="After" src="https://github.com/user-attachments/assets/fa0444af-9454-4f9f-9fa9-3b73454fe8e0" />
       <b>After
     </td>
   </tr>
 </table>
 
-If we take our previous hello world function it completely destroys it's control flow. The only thing we see is an entry block with an indirect jump to the dispatcher which IDA pro can't seem to resolve, you can't even tell what this function was supposed to do. Here's how the control flow actually looks because IDA won't show us:
+If we take our previous hello world function it completely destroys it's control flow. The only thing we see is an entry block with an indirect jump to the dispatcher which IDA pro can't seem to resolve, you can't even tell what was this function supposed to do. Here's how the control flow actually looks because IDA won't show us:
 
 <table>
   <tr>
@@ -90,7 +90,7 @@ If we take our previous hello world function it completely destroys it's control
       <b>Before the pass
     </td>
     <td align="center">
-      <img alt="FooObf" src="https://github.com/user-attachments/assets/3281bd4f-6ae1-455c-a268-ff94a3eb2855" /><br>
+      <img alt="FooObf" src="https://github.com/user-attachments/assets/15202227-5620-4406-a692-2c573aed9cb9" /><br>
       <b>After
     </td>
   </tr>
@@ -98,24 +98,20 @@ If we take our previous hello world function it completely destroys it's control
 
 As you can see before the pass graph looks 1:1 like what we've seen in IDA pro. But after the pass it's as flat as my butt, it just constantly jumps between the dispatcher and blocks with nobody having a clear idea what's going on. You can't even tell which block executes first because all indices into the jump table are encoded at compile time and decoded at runtime.
 
-Also note that in some cases on windows IDA pro is able to see which blocks does the jump table contain, but it's still not able to see any control flow. It will only show a couple of the blocks in the graph view (not all of them for some reason) and sometimes a jump to the dispatcher.
-
-<img alt="WindowsFlow" src="https://github.com/user-attachments/assets/82e6a071-f23a-4b27-816f-ea0262183baf" />
-
 ### Combining Every Pass
 
 Of course if you combine every pass you can completely destroy the dreams of a casual reverse engineer, because the big three (IDA pro, Binary Ninja, Ghidra) are completely unable to see anything. Figuring this out is virtually impossible with just a decompiler. Here's the previous function with `(x^y)*10`, it's a lot larger this time because of all the passes, and nobody is able to tell what's going on in there.
 
-<img alt="FooAll" src="https://github.com/user-attachments/assets/dfb59b66-d281-4054-8f5f-b3f22b63a247" />
+<img alt="FooAll" src="https://github.com/user-attachments/assets/fcc4c218-604c-4fc0-bfc1-345b0fd31853" />
+
+(Btw everything in this section was compiled with `-O3` flag and verified with all of the three big boy decompilers (IDA pro, Binary Ninja, Ghidra), the decompilation results were the same in each one.)
+
+Of course this example is blown out of proportion, if you're gonna obfuscate every simple operation to this magnitude your application will be slow as hell and big as hell. If we run this little monster through a small stress test it's around 5 times slower than running without any obfuscation.
+
+<img alt="StressTest" src="https://github.com/user-attachments/assets/361f0d98-90d2-4b76-bc91-e0815d4e1f39" />
 
 
-(Btw everything in this section was compiled with `-O2` flag and verified with all of the three big boy decompilers (IDA pro, Binary Ninja, Ghidra), the decompilation results were the same in each one.)
-
-Of course this example is blown out of proportion, if you're gonna obfuscate every simple operation to this magnitude your application will be slow as hell and big as hell. If we run this little monster through a small stress test it's around 3.5 times slower than running without any obfuscation.
-
-<img alt="Stresstest" src="https://github.com/user-attachments/assets/c18098fe-94fd-4179-9660-78ed063708eb" />
-
-`clang++ -fpass-plugin=./LeetObfuscator.so ./test.cpp -o testProj -O2 -fno-exceptions` - 3500ms
+`clang++ -fpass-plugin=./LeetObfuscator.so ./test.cpp -o testProj -O2 -fno-exceptions` - 5000ms
 
 `clang++ ./test.cpp -o testProj -O2 -fno-exceptions` - 950ms
 
@@ -141,6 +137,13 @@ int Foo(int x, int y)
 ```
 
 So if you have any performance heavy function and there is no point in obfuscating it, just slap the skip annotation on it and be a happier person.
+
+You'll gain the biggest performance gain by lowering the block split count, for the stress test max block count of 20 was used and this is how main function looks:
+
+<img alt="Main" src="https://github.com/user-attachments/assets/801116e3-8876-4aa8-85c6-98040ee60beb" />
+
+If you do default max block size of 100 then there should be close to no performance downside, but again, if you need to squize out every cycle out of a function just disable obfuscation for it.
+
 
 ## Building
 
