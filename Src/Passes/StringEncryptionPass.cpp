@@ -5,6 +5,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Module.h"
+#include "SettingsParser.h"
 
 #include "leet_string_obf_runtime_bc.inc" // template bitcode
 
@@ -76,6 +77,18 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
             llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
                          << "' - has a non-instruction use ("
                          << *use.getUser() << ") that can't be patched\n";
+            return;
+        }
+
+        // Check the function attirbutes of the user instruction's function, if it has "leet.skip" then we can't patch this use
+        llvm::Instruction* userInst = llvm::cast<llvm::Instruction>(use.getUser());
+        llvm::Function* userFunction = userInst->getFunction();
+        SettingsParser::FunctionAttributes userFunctionAttributes = SettingsParser::ParseFunctionAttributes(*userFunction);
+        if (userFunctionAttributes.skip)
+        {
+            llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
+                         << "' - has a use in function '" << userFunction->getName()
+                         << "' that has 'leet.skip' attribute, can't patch this use\n";
             return;
         }
 

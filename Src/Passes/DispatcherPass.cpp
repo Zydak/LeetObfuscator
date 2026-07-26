@@ -2,10 +2,13 @@
 
 #include "llvm/IR/Module.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/Transforms/Scalar/Reg2Mem.h"
 #include "llvm/IR/Verifier.h"
+#include <algorithm>
 #include <random>
 #include "SettingsParser.h"
+#include "llvm/IR/NoFolder.h"
 
 llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module, llvm::ModuleAnalysisManager& mam)
 {
@@ -177,27 +180,32 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     // Allocate dispatcher state
     llvm::AllocaInst* dispatcherState = entryBeginBuilder.CreateAlloca(entryBeginBuilder.getInt32Ty());
 
-    // Alocate seed for XOR
-    llvm::AllocaInst* seedState = entryBeginBuilder.CreateAlloca(entryBeginBuilder.getInt32Ty());
-    llvm::Value* runtimePtr = entryBeginBuilder.CreatePtrToInt(dispatcherState, entryBeginBuilder.getInt64Ty());
-    llvm::Value* seed = entryBeginBuilder.CreateTrunc(runtimePtr, entryBeginBuilder.getInt32Ty());
-    entryBeginBuilder.CreateStore(seed, seedState);
-
     // Create block for the dispatcher and make entry jump to it
     llvm::BasicBlock* dispatcherBlock = llvm::BasicBlock::Create(context, "dispatcher", function);
     entryBlock->getTerminator()->eraseFromParent();
     llvm::IRBuilder<> entryEndBuilder(entryBlock, entryBlock->end());
-    llvm::Value* initialState = entryEndBuilder.CreateXor(entryEndBuilder.getInt32(blockIds[bodyIndex]), seed);
-    entryEndBuilder.CreateStore(initialState, dispatcherState);
+    entryEndBuilder.CreateStore(entryEndBuilder.getInt32(blockIds[bodyIndex]), dispatcherState);
     entryEndBuilder.CreateBr(dispatcherBlock);
 
     // Create dispatcher
     llvm::IRBuilder<> dispatcherBuilder(dispatcherBlock);
-    llvm::Value* dispatcherStateLoad = dispatcherBuilder.CreateLoad(dispatcherBuilder.getInt32Ty(), dispatcherState);
-    llvm::Value* seedLoad = dispatcherBuilder.CreateLoad(dispatcherBuilder.getInt32Ty(), seedState);
-    llvm::Value* dispatcherStateXored = dispatcherBuilder.CreateXor(seedLoad, dispatcherStateLoad);
 
-    llvm::Value* hashed = dispatcherBuilder.CreateMul(dispatcherStateXored, dispatcherBuilder.getInt32(2654435761u));
+    // Create an empty barrier function to prevent optimization of the dispatcher block
+    llvm::FunctionType* barrierFnType = llvm::FunctionType::get(dispatcherBuilder.getVoidTy(), false);
+    llvm::Function* barrierFn = llvm::Function::Create(barrierFnType, llvm::GlobalValue::InternalLinkage, "dispatcher_barrier", module);
+    barrierFn->addFnAttr(llvm::Attribute::NoDuplicate);
+    barrierFn->addFnAttr(llvm::Attribute::Convergent);
+    barrierFn->addFnAttr(llvm::Attribute::NoInline);
+    barrierFn->addFnAttr(llvm::Attribute::OptimizeNone);
+
+    llvm::BasicBlock* barrierBlock = llvm::BasicBlock::Create(context, "barrier", barrierFn);
+    llvm::IRBuilder<> barrierBuilder(barrierBlock);
+    barrierBuilder.CreateRetVoid();
+
+    dispatcherBuilder.CreateCall(barrierFn);
+
+    llvm::Value* dispatcherStateLoad = dispatcherBuilder.CreateLoad(dispatcherBuilder.getInt32Ty(), dispatcherState, true);
+    llvm::Value* hashed = dispatcherBuilder.CreateMul(dispatcherStateLoad, dispatcherBuilder.getInt32(2654435761u));
     llvm::Value* slot = dispatcherBuilder.CreateLShr(hashed, dispatcherBuilder.getInt32(32 - tableSizeLog2));
 
     // PROPER INDIRECT JUMPS
@@ -207,7 +215,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         jumpTable,
         {dispatcherBuilder.getInt32(0), slot}
     );
-    llvm::Value* nextBlockAddress = dispatcherBuilder.CreateLoad(dispatcherBuilder.getPtrTy(), nextBlockGEP);
+    llvm::Value* nextBlockAddress = dispatcherBuilder.CreateLoad(dispatcherBuilder.getPtrTy(), nextBlockGEP, true);
     llvm::IndirectBrInst* indirectBr = dispatcherBuilder.CreateIndirectBr(nextBlockAddress, basicBlocks.size());
     for (auto* basicBlock : basicBlocks)
     {
@@ -215,70 +223,145 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     }
     indirectBr->addDestination(trapBlock);
 
-    // TEST SWITCH STATEMENT FOR DEBUGGING OUTPUT
-    //
-    // llvm::BasicBlock* trapBlock = llvm::BasicBlock::Create(context, "dispatcher.trap", function);
-    // llvm::IRBuilder<>(trapBlock).CreateUnreachable();
-    // llvm::SwitchInst* sw = dispatcherBuilder.CreateSwitch(dispatcherStateLoad, trapBlock, basicBlocks.size());
+    // // Not indirect branches for debugging
+    // llvm::SwitchInst* sw = dispatcherBuilder.CreateSwitch(dispatcherStateXored, trapBlock, basicBlocks.size());
     // for (size_t i = 0; i < basicBlocks.size(); i++)
-    //     sw->addCase(dispatcherBuilder.getInt32(i), basicBlocks[i]);
+    // {
+    //     sw->addCase(dispatcherBuilder.getInt32(blockIds[i]), basicBlocks[i]);
+    // }
 
-    // Rewrite every blocks' terminator to change dispatcher state to the next block and jump back to dispatcher block
+    // Rewrite every block terminator to change dispatcher state to the next block and jump back to dispatcher block.
+    // We only rewrite successors that stay within the dispatcher-managed block set; external exits are left intact.
+    auto rewriteToDispatcher = [&](llvm::Instruction* terminator, llvm::Value* nextIndex)
+    {
+        llvm::IRBuilder<> terminatorBuilder(terminator);
+        terminatorBuilder.CreateStore(nextIndex, dispatcherState, true);
+        // terminatorBuilder.CreateBr(dispatcherBlock);
+        llvm::BlockAddress* dispatcherBlockAddress = llvm::BlockAddress::get(dispatcherBlock);
+        llvm::IndirectBrInst* indirectBr = terminatorBuilder.CreateIndirectBr(dispatcherBlockAddress, 1);
+        // for (auto* basicBlock : basicBlocks)
+        // {
+        //     if (terminator->getParent() == basicBlock)
+        //         continue; // Don't add self as successor, it will cause infinite loop
+        //     indirectBr->addDestination(basicBlock);
+        // }
+        indirectBr->addDestination(dispatcherBlock);
+
+        terminator->eraseFromParent();
+    };
+
     for (auto* basicBlock : basicBlocks)
     {
-        llvm::BranchInst* originalTerminator = llvm::dyn_cast<llvm::BranchInst>(basicBlock->getTerminator());
-
-        // if the block has no branch terminator it means it's the last block in the function
-        // so leave it alone and let it return from the function
-        if (!originalTerminator)
+        llvm::Instruction* terminator = basicBlock->getTerminator();
+        if (!terminator)
             continue;
 
-        if (originalTerminator->isUnconditional())
+        if (auto* branch = llvm::dyn_cast<llvm::BranchInst>(terminator))
         {
-            llvm::BasicBlock* successor = originalTerminator->getSuccessor(0);
+            if (branch->isUnconditional())
+            {
+                llvm::BasicBlock* successor = branch->getSuccessor(0);
+                auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
+                if (it == basicBlocks.end())
+                    continue;
+
+                uint32_t successorIndex = blockIds[it - basicBlocks.begin()];
+                llvm::IRBuilder<> terminatorBuilder(branch);
+                rewriteToDispatcher(branch, terminatorBuilder.getInt32(successorIndex));
+            }
+            else if (branch->isConditional())
+            {
+                llvm::BasicBlock* trueSuccessor = branch->getSuccessor(0);
+                llvm::BasicBlock* falseSuccessor = branch->getSuccessor(1);
+                auto itTrue = std::find(basicBlocks.begin(), basicBlocks.end(), trueSuccessor);
+                auto itFalse = std::find(basicBlocks.begin(), basicBlocks.end(), falseSuccessor);
+                if (itTrue == basicBlocks.end() || itFalse == basicBlocks.end())
+                    continue;
+
+                uint32_t trueSuccessorIndex = blockIds[itTrue - basicBlocks.begin()];
+                uint32_t falseSuccessorIndex = blockIds[itFalse - basicBlocks.begin()];
+                llvm::IRBuilder<> terminatorBuilder(branch);
+                llvm::Value* nextIndex = terminatorBuilder.CreateSelect(
+                    branch->getCondition(),
+                    terminatorBuilder.getInt32(trueSuccessorIndex),
+                    terminatorBuilder.getInt32(falseSuccessorIndex)
+                );
+
+                rewriteToDispatcher(branch, nextIndex);
+            }
+            continue;
+        }
+
+        if (auto* switchInst = llvm::dyn_cast<llvm::SwitchInst>(terminator))
+        {
+            llvm::BasicBlock* defaultDest = switchInst->getDefaultDest();
+            auto defaultIt = std::find(basicBlocks.begin(), basicBlocks.end(), defaultDest);
+            if (defaultIt == basicBlocks.end())
+                continue;
+
+            llvm::IRBuilder<> terminatorBuilder(switchInst);
+            llvm::Value* nextIndex = terminatorBuilder.getInt32(blockIds[defaultIt - basicBlocks.begin()]);
+            for (auto caseIt = switchInst->case_begin(); caseIt != switchInst->case_end(); ++caseIt)
+            {
+                llvm::BasicBlock* caseSuccessor = caseIt->getCaseSuccessor();
+                auto caseSuccessorIt = std::find(basicBlocks.begin(), basicBlocks.end(), caseSuccessor);
+                if (caseSuccessorIt == basicBlocks.end())
+                    continue;
+
+                llvm::Value* caseIndex = terminatorBuilder.getInt32(blockIds[caseSuccessorIt - basicBlocks.begin()]);
+                llvm::Value* condition = terminatorBuilder.CreateICmpEQ(
+                    switchInst->getCondition(),
+                    caseIt->getCaseValue()
+                );
+                nextIndex = terminatorBuilder.CreateSelect(condition, caseIndex, nextIndex);
+            }
+
+            rewriteToDispatcher(switchInst, nextIndex);
+        }
+
+        if (auto* indirectBr = llvm::dyn_cast<llvm::IndirectBrInst>(terminator))
+        {
+            llvm::IRBuilder<> terminatorBuilder(indirectBr);
+            llvm::Value* nextIndex = nullptr;
+            for (unsigned i = 0; i < indirectBr->getNumSuccessors(); ++i)
+            {
+                llvm::BasicBlock* successor = indirectBr->getSuccessor(i);
+                auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
+                if (it == basicBlocks.end())
+                    continue;
+
+                llvm::Value* successorIndex = terminatorBuilder.getInt32(blockIds[it - basicBlocks.begin()]);
+                if (!nextIndex)
+                {
+                    nextIndex = successorIndex;
+                    continue;
+                }
+
+                llvm::Value* condition = terminatorBuilder.CreateICmpEQ(
+                    indirectBr->getAddress(),
+                    llvm::BlockAddress::get(successor)
+                );
+                nextIndex = terminatorBuilder.CreateSelect(condition, successorIndex, nextIndex);
+            }
+
+            if (nextIndex)
+                rewriteToDispatcher(indirectBr, nextIndex);
+        }
+
+        if (auto* callBr = llvm::dyn_cast<llvm::CallBrInst>(terminator))
+        {
+            if (callBr->getNumSuccessors() != 1)
+                continue;
+
+            llvm::BasicBlock* successor = callBr->getSuccessor(0);
             auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
             if (it == basicBlocks.end())
-            {
-                llvm::errs() << "Couldn't find basic block successor? Should never happen.\n";
-                return;
-            }
+                continue;
 
-            uint32_t successorIndex = blockIds[it - basicBlocks.begin()];
-            llvm::IRBuilder<> terminatorBuilder(originalTerminator);
-            llvm::Value* seedLoad = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), seedState);
-            llvm::Value* xoredIndex = terminatorBuilder.CreateXor(seedLoad, successorIndex);
-            terminatorBuilder.CreateStore(xoredIndex, dispatcherState);
-            terminatorBuilder.CreateBr(dispatcherBlock);
-            originalTerminator->eraseFromParent();
+            llvm::IRBuilder<> terminatorBuilder(callBr);
+            llvm::Value* nextIndex = terminatorBuilder.getInt32(blockIds[it - basicBlocks.begin()]);
+            rewriteToDispatcher(callBr, nextIndex);
         }
-        if (originalTerminator->isConditional())
-        {
-            llvm::BasicBlock* trueSuccessor = originalTerminator->getSuccessor(0);
-            llvm::BasicBlock* falseSuccessor = originalTerminator->getSuccessor(1);
-            auto itTrue = std::find(basicBlocks.begin(), basicBlocks.end(), trueSuccessor);
-            auto itFalse = std::find(basicBlocks.begin(), basicBlocks.end(), falseSuccessor);
-            if (itTrue == basicBlocks.end() || itFalse == basicBlocks.end())
-            {
-                llvm::errs() << "Couldn't find basic block successor? Should never happen.\n";
-                return;
-            }
-
-            uint32_t trueSuccessorIndex     = blockIds[itTrue - basicBlocks.begin()];
-            uint32_t falseSuccessorIndex    = blockIds[itFalse - basicBlocks.begin()];
-            llvm::IRBuilder<> terminatorBuilder(originalTerminator);
-            llvm::Value* nextIndex = terminatorBuilder.CreateSelect(
-                originalTerminator->getCondition(),
-                terminatorBuilder.getInt32(trueSuccessorIndex),
-                terminatorBuilder.getInt32(falseSuccessorIndex)
-            );
-
-            llvm::Value* seedLoad = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), seedState);
-            llvm::Value* xoredIndex = terminatorBuilder.CreateXor(seedLoad, nextIndex);
-            terminatorBuilder.CreateStore(xoredIndex, dispatcherState);
-            terminatorBuilder.CreateBr(dispatcherBlock);
-            originalTerminator->eraseFromParent();
-        }
-        // TODO: possibly handle SwitchInst here?
     }
 
     // Verify the function at the end
