@@ -39,7 +39,11 @@ LeetObfuscator::SettingsParser::FunctionAttributes LeetObfuscator::SettingsParse
 
 LeetObfuscator::SettingsParser::Pass LeetObfuscator::SettingsParser::ParsePassString(const std::string &passStr)
 {
-    if (passStr.find("MBAPass") != std::string::npos)
+    if (passStr == "AAMBAPass")
+    {
+        return {PassType::AAMBAPass, 0};
+    }
+    else if (passStr.find("MBAPass") != std::string::npos)
     {
         size_t openParen = passStr.find('(');
         size_t closeParen = passStr.find(')');
@@ -63,7 +67,7 @@ LeetObfuscator::SettingsParser::Pass LeetObfuscator::SettingsParser::ParsePassSt
     }
 
     // Default return value if no match is found
-    return {PassType::StringEncryptionPass, 0};
+    return {PassType::INVALID, 0};
 }
 
 LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser::ParseGlobalAttributes()

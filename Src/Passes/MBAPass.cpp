@@ -12,7 +12,6 @@ llvm::PreservedAnalyses LeetObfuscator::MBAPass::run(llvm::Module &module, llvm:
 {
     llvm::errs() << "Running MBAPass\n";
 
-    InstructionHolder createdInstructions;
     for (auto& function : module)
     {
         ObfuscateFunction(function);
@@ -81,7 +80,7 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
         llvm::errs() << "[ERROR] MBAPass: Function '" << function.getName() << "' verification failed after transformation!\n";
 
         // Dump the function IR and terminate
-        llvm::errs() << "MBAPass: Function IR:\n";
+        
         std::error_code ec;
         llvm::raw_fd_ostream logFile("error_log.txt", ec);
         if (!ec)
@@ -117,13 +116,12 @@ void LeetObfuscator::MBAPass::ObfuscateBinaryOperation(llvm::Instruction *instru
 
     uint32_t opcode = instruction->getOpcode();
 
+    llvm::IRBuilder<llvm::NoFolder> b(instruction);
+    
     llvm::Value* x = instruction->getOperand(0);
     llvm::Value* y = instruction->getOperand(1);
 
-    llvm::IRBuilder<llvm::NoFolder> b(instruction);
-
     InstructionHolder createdInstructions;
-
     llvm::Value* result = nullptr;
     switch(opcode)
     {

@@ -17,10 +17,12 @@ namespace LeetObfuscator
 
         enum class PassType
         {
+            INVALID,
             StringEncryptionPass,
             MBAPass,
             BlockSplitterPass,
-            DispatcherPass
+            DispatcherPass,
+            AAMBAPass
         };
 
         struct Pass

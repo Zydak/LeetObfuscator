@@ -8,6 +8,7 @@
 #include "BlockSplitterPass.h"
 #include "DispatcherPass.h"
 #include "AnnotationPass.h"
+#include "AAMBAPass.h"
 
 #include "SettingsParser.h"
 
@@ -44,6 +45,11 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
                             case LeetObfuscator::SettingsParser::PassType::DispatcherPass:
                                 passManager.addPass(LeetObfuscator::DispatcherPass());
                                 break;
+                            case LeetObfuscator::SettingsParser::PassType::AAMBAPass:
+                                passManager.addPass(LeetObfuscator::AAMBAPass());
+                                break;
+                            default:
+                                llvm::errs() << "INVALID PASS WAS FOUND\n";
                         }
                     }
 
