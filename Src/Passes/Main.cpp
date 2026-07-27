@@ -9,8 +9,11 @@
 #include "DispatcherPass.h"
 #include "AnnotationPass.h"
 #include "AAMBAPass.h"
+#include "AntiAnalysisPass.h"
 
 #include "SettingsParser.h"
+
+#include <iostream>
 
 extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo()
 {
@@ -21,6 +24,7 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
         "0.0.1",
         [](llvm::PassBuilder& passBuilder)
         {
+
             passBuilder.registerOptimizerLastEPCallback(
                 [](llvm::ModulePassManager& passManager, llvm::OptimizationLevel, llvm::ThinOrFullLTOPhase)
                 {
@@ -48,11 +52,13 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
                             case LeetObfuscator::SettingsParser::PassType::AAMBAPass:
                                 passManager.addPass(LeetObfuscator::AAMBAPass());
                                 break;
+                            case LeetObfuscator::SettingsParser::PassType::AntiAnalysisPass:
+                                passManager.addPass(LeetObfuscator::AntiAnalysisPass());
+                                break;
                             default:
                                 llvm::errs() << "INVALID PASS WAS FOUND\n";
                         }
                     }
-
                 }
             );
         }

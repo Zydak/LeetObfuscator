@@ -22,7 +22,8 @@ namespace LeetObfuscator
             MBAPass,
             BlockSplitterPass,
             DispatcherPass,
-            AAMBAPass
+            AAMBAPass,
+            AntiAnalysisPass
         };
 
         struct Pass

@@ -92,7 +92,7 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
         llvm::Type* vType = (*value)->getType();
         llvm::FunctionType *FTy = llvm::FunctionType::get(vType, {vType}, false);
 
-        enum class ArchPrimitive : uint32_t { ADC = 0, SBB = 1, RCL = 2, RCR = 3 };
+        enum class ArchPrimitive : uint32_t { ADC = 0, SBB = 1 };
         ArchPrimitive primitive = static_cast<ArchPrimitive>(dist(rng));
 
         const char *AsmText = nullptr;
@@ -101,14 +101,6 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
         {
             case ArchPrimitive::ADC:
             {
-                llvm::errs() << "ADC X IN FUNCTION: " << instruction->getFunction()->getName() << "\n";
-
-                llvm::InlineAsm *Asm = llvm::InlineAsm::get(
-                    FTy, AsmText, "=r,r,~{rcx},~{cc}",
-                    /*hasSideEffects=*/true, /*isAlignStack=*/false,
-                    llvm::InlineAsm::AD_ATT
-                );
-
                 const char *Asm32 = R"(
                     mov $1, $0
                     setc %cl
@@ -133,8 +125,6 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
 
             case ArchPrimitive::SBB:
             {
-                llvm::errs() << "SBB X IN FUNCTION: " << instruction->getFunction()->getName() << "\n";
-
                 const char *Asm32 = R"(
                     mov $1, $0
                     setc %cl

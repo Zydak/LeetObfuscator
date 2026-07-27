@@ -65,6 +65,10 @@ LeetObfuscator::SettingsParser::Pass LeetObfuscator::SettingsParser::ParsePassSt
     {
         return {PassType::DispatcherPass, 0};
     }
+    else if (passStr == "AntiAnalysisPass")
+    {
+        return {PassType::AntiAnalysisPass, 0};
+    }
 
     // Default return value if no match is found
     return {PassType::INVALID, 0};
@@ -108,7 +112,9 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
             newSettingsFile << "# - MBAPass(x) - x being the amount of expansions that will happen for each operation\n";
             newSettingsFile << "# - BlockSplitterPass\n";
             newSettingsFile << "# - DispatcherPass\n";
-            newSettingsFile << "passes=StringEncryptionPass,MBAPass(2),BlockSplitterPass,DispatcherPass,MBAPass(1)\n";
+            newSettingsFile << "# - AAMBAPass\n";
+            newSettingsFile << "# - AntiAnalysisPass\n";
+            newSettingsFile << "passes=StringEncryptionPass,MBAPass(2),BlockSplitterPass,DispatcherPass,MBAPass(1),AAMBAPass,AntiAnalysisPass\n";
             newSettingsFile.close();
         }
         else

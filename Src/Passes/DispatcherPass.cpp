@@ -220,6 +220,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     llvm::IRBuilder<> dispatcherBuilder(dispatcherBlock);
 
     // Create an empty barrier function to prevent optimization of the dispatcher block
+    // Without the barriers optimizer will just delete it completely and chain the blocks together
     llvm::FunctionType* barrierFnType = llvm::FunctionType::get(dispatcherBuilder.getVoidTy(), false);
     llvm::Function* barrierFn = llvm::Function::Create(barrierFnType, llvm::GlobalValue::InternalLinkage, "dispatcher_barrier", module);
     barrierFn->addFnAttr(llvm::Attribute::NoDuplicate);
@@ -263,6 +264,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     // We only rewrite successors that stay within the dispatcher-managed block set; external exits are left intact.
     auto rewriteToDispatcher = [&](llvm::Instruction* terminator, llvm::Value* nextIndex)
     {
+        // Create a barrier function, without it optimizers like to inline this block into other functions
         llvm::Function* barrierFnBlock = llvm::Function::Create(barrierFnType, llvm::GlobalValue::InternalLinkage, "dispatcher_barrier", module);
         barrierFnBlock->addFnAttr(llvm::Attribute::NoDuplicate);
         barrierFnBlock->addFnAttr(llvm::Attribute::Convergent);
