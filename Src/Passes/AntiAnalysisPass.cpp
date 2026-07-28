@@ -192,8 +192,6 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
     else
     {
         insertIt = block->getFirstInsertionPt();
-
-        insertIt++;
     }
 
     llvm::Function* function = block->getParent();
@@ -251,7 +249,6 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
         "0xF7",
         "0xFE",
         "0x6B",
-        "0x0F,0x3A"
     };
 
     std::uniform_int_distribution<uint32_t> asmDist(0, asmOptions.size() - 1);
