@@ -3,6 +3,8 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/BasicBlock.h"
 
+#include "llvm/IR/Dominators.h"
+
 namespace LeetObfuscator
 {
     class AntiAnalysisPass : public llvm::PassInfoMixin<AntiAnalysisPass>
@@ -11,6 +13,6 @@ namespace LeetObfuscator
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
     private:
         void ObfuscateFunction(llvm::Function& function);
-        bool ObfuscateBlock(llvm::BasicBlock* block, bool randomPos = false);
+        bool ObfuscateBlock(llvm::BasicBlock* block, llvm::DominatorTree& tree, bool randomPos = false);
     };
 }

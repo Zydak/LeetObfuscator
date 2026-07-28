@@ -4,7 +4,6 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Verifier.h"
 
 #include <random>
@@ -29,6 +28,14 @@ static int RankValue(llvm::Value* V)
 {
     if (!V || llvm::isa<llvm::InlineAsm>(V))
         return -1;
+
+    // Reject intrinsic functions like llvm.x86.rdtsc.
+    // They cannot be used as ordinary values / addresses for whatever reason
+    if (auto *F = llvm::dyn_cast<llvm::Function>(V)) {
+        if (F->isIntrinsic())
+            return -1;
+    }
+
     llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(V);
     if (CI)
     {
@@ -46,20 +53,36 @@ static int RankValue(llvm::Value* V)
     return -1;
 }
 
-// Check every instruction and operand before insertIt
-static llvm::Value* FindUsableInput(llvm::BasicBlock* block, llvm::BasicBlock::iterator insertIt)
+// Check every instruction and operand before insertIt.
+// DT must be a DominatorTree for insertIt's function, up to date with the
+// current CFG (i.e. recomputed since the last CFG-mutating transform).
+static llvm::Value* FindUsableInput(llvm::DominatorTree& DT, llvm::BasicBlock* block, llvm::BasicBlock::iterator insertIt)
 {
     llvm::Value* best = nullptr;
     int bestRank = INT_MAX;
 
+    // insertIt is always a real instruction here (callers check insertIt != block->end()
+    // before calling FindUsableInput), so this is safe to dereference.
+    llvm::Instruction* insertPointInst = &*insertIt;
+
     auto consider = [&](llvm::Value* V)
     {
         int r = RankValue(V);
-        if (r >= 0 && r < bestRank)
+        if (r < 0 || r >= bestRank)
+            return;
+
+        // A candidate is only safe to reuse at insertIt if it actually
+        // dominates that point so check with with a tree
+        if (auto* I = llvm::dyn_cast<llvm::Instruction>(V))
         {
-            bestRank = r;
-            best = V;
+            if (!DT.dominates(I, insertPointInst))
+                return;
         }
+        // Function arguments dominate every instruction in the function,
+        // so no check is needed for those.
+
+        bestRank = r;
+        best = V;
     };
 
     bool isInsertPoint = true; // insertIt's own result hasn't executed yet so skip it
@@ -113,7 +136,8 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
 
         for (llvm::BasicBlock* block : blocksToObfuscate)
         {
-            ObfuscateBlock(block);
+            llvm::DominatorTree tree(function);
+            ObfuscateBlock(block, tree);
         }
     }
 
@@ -137,7 +161,8 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
 
         for (llvm::BasicBlock* block : blocksToObfuscate)
         {
-            ObfuscateBlock(block, true);
+            llvm::DominatorTree tree(function);
+            ObfuscateBlock(block, tree, true);
         }
     }
 
@@ -164,7 +189,7 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
     }
 }
 
-bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, bool randomPos)
+bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, llvm::DominatorTree& DT, bool randomPos)
 {
     llvm::BasicBlock::iterator insertIt;
     std::mt19937 rng(std::random_device{}());
@@ -172,7 +197,7 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
     if (randomPos)
     {
         unsigned count = 0;
-        for (llvm::Instruction& instruction : *block)
+        for (auto it = block->getFirstInsertionPt(); it != block->end(); it++)
         {
             count++;
         }
@@ -201,7 +226,7 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
         return false;
     }
 
-    llvm::Value* input = FindUsableInput(&*block, insertIt);
+    llvm::Value* input = FindUsableInput(DT, &*block, insertIt);
     if (!input)
     {
         return false;

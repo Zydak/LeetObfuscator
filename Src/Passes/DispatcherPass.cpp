@@ -10,13 +10,18 @@
 #include "SettingsParser.h"
 #include "llvm/IR/NoFolder.h"
 
+#include "llvm/IR/IntrinsicsX86.h"
+
+llvm::Function *EmitLeetPermutationWithDeps(llvm::Module &M);
+
 llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module, llvm::ModuleAnalysisManager& mam)
 {
     llvm::errs() << "Running DispatcherPass\n";
 
     for (auto& function : module)
     {
-        CreateDispatcherInAFunction(&function, mam);
+        if (function.getName() != "__leet_split_mix_64" && function.getName() != "__leet_permutation")
+            CreateDispatcherInAFunction(&function, mam);
     }
 
     return llvm::PreservedAnalyses::none();
@@ -78,7 +83,9 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     }
     for (auto* call : lifetimeCalls)
         call->eraseFromParent();
-    
+
+    //llvm::errs() << "RUNNING IN: " << function->getName() << "\n";
+
     // The code will technically be valid but the verifier will still complain about uses before initialization
     // so demote everything to stack first. You could call MemToRegPass after everything is done but it will
     // generate insane amount of instructions because blocks will be jumping between demoting to memory and promoting
@@ -118,82 +125,65 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     auto it = std::find(basicBlocks.begin(), basicBlocks.end(), bodyBlock);
     uint32_t bodyIndex = it - basicBlocks.begin();
 
-    uint32_t tableSizeLog2 = static_cast<uint32_t>(std::ceil(std::log2((basicBlocks.size() + 1) * 1.3)));
-    uint32_t tableSize = 1u << tableSizeLog2;
-
-    auto getSlotFromID = [&](uint32_t id) -> uint32_t
-    {
-        return (id * 2654435761u) >> (32 - tableSizeLog2);
-    };
-
-    // Generate random block IDs
-    std::vector<uint32_t> blockIds(basicBlocks.size(), -1);
-    std::vector<int> slotOwner(tableSize, -1); 
-    for (size_t i = 0; i < basicBlocks.size(); i++)
-    {
-        uint32_t slot;
-        uint32_t randomID;
-        do
-        {
-            randomID = rng();
-            slot = getSlotFromID(randomID);
-        } while (slotOwner[slot] != -1);
-
-        slotOwner[slot] = (int)i;
-        blockIds[i] = randomID;
-    }
-
-    // Roll ID for dispatcher block
-    uint32_t dispatcherID;
-    uint32_t dispatcherSlot;
-    do
-    {
-        dispatcherID = rng();
-        dispatcherSlot = getSlotFromID(dispatcherID);
-    } while (slotOwner[dispatcherSlot] != -1);
+    uint32_t tableSize = basicBlocks.size() + 1; // 1 for dispatcher
     
     // Allocate jump table with all the addresses
     llvm::IRBuilder<> entryBeginBuilder(entryBlock, entryBlock->begin());
     llvm::ArrayType* jumpTableType = llvm::ArrayType::get(entryBeginBuilder.getPtrTy(), tableSize);
     llvm::AllocaInst* jumpTable = entryBeginBuilder.CreateAlloca(jumpTableType);
+    llvm::ArrayType* permutationTableType = llvm::ArrayType::get(entryBeginBuilder.getInt32Ty(), tableSize);
+    llvm::AllocaInst* permutationTable = entryBeginBuilder.CreateAlloca(permutationTableType);
 
-    // Because of the hashing some slots will be unoccupied, so just insert a dead block there just in case
-    // TODO: make some bogus blocks with random ass logic
-    llvm::BasicBlock* trapBlock = llvm::BasicBlock::Create(context, "", function);
-    llvm::IRBuilder<>(trapBlock).CreateUnreachable();
-    for (uint32_t i = 0; i < tableSize; i++)
+    // Fill the permTable with indices
+    llvm::Function* permFunction = module->getFunction("__leet_permutation");
+
+    if (!permFunction)
     {
-        if (slotOwner[i] == -1)
+        permFunction = EmitLeetPermutationWithDeps(*module);
+        if (!permFunction)
         {
-            llvm::Value* blockAddress = entryBeginBuilder.CreateInBoundsGEP(
-                jumpTableType,
-                jumpTable,
-                {entryBeginBuilder.getInt32(0), entryBeginBuilder.getInt32(i)}
-            );
-
-            entryBeginBuilder.CreateStore(llvm::BlockAddress::get(trapBlock), blockAddress);
+            llvm::errs() << "Can't find nor emit LLVM permutation func\n";
+            exit(1);
         }
     }
+
+    // Populate perm table
+    entryBeginBuilder.CreateCall(permFunction, {permutationTable, entryBeginBuilder.getInt32(tableSize)});
 
     // Create block for the dispatcher and make entry jump to it
     llvm::BasicBlock* dispatcherBlock = llvm::BasicBlock::Create(context, "dispatcher", function);
 
     for (size_t i = 0; i < basicBlocks.size(); i++)
     {
+        // Load index from perm table
+
+        llvm::Value* blockIndexGEP = entryBeginBuilder.CreateInBoundsGEP(
+            permutationTableType,
+            permutationTable,
+            {entryBeginBuilder.getInt32(0), entryBeginBuilder.getInt32(i)}
+        );
+        llvm::Value* blockIndex = entryBeginBuilder.CreateLoad(entryBeginBuilder.getInt32Ty(), blockIndexGEP);
+
         llvm::Value* blockAddress = entryBeginBuilder.CreateInBoundsGEP(
             jumpTableType,
             jumpTable,
-            {entryBeginBuilder.getInt32(0), entryBeginBuilder.getInt32(getSlotFromID(blockIds[i]))}
+            {entryBeginBuilder.getInt32(0), blockIndex}
         );
 
         entryBeginBuilder.CreateStore(llvm::BlockAddress::get(basicBlocks[i]), blockAddress);
     }
 
     // Also store dispatcher block in the table
+    llvm::Value* dispatcherBlockIndexGEP = entryBeginBuilder.CreateInBoundsGEP(
+        permutationTableType,
+        permutationTable,
+        {entryBeginBuilder.getInt32(0), entryBeginBuilder.getInt32(tableSize - 1)} // Dispatcher is always last
+    );
+    llvm::Value* dispatcherBlockIndex = entryBeginBuilder.CreateLoad(entryBeginBuilder.getInt32Ty(), dispatcherBlockIndexGEP);
     llvm::Value* dispatcherBlockAddress = entryBeginBuilder.CreateInBoundsGEP(
         jumpTableType,
         jumpTable,
-        {entryBeginBuilder.getInt32(0), entryBeginBuilder.getInt32(dispatcherSlot)}
+        {entryBeginBuilder.getInt32(0), dispatcherBlockIndex}
     );
     entryBeginBuilder.CreateStore(llvm::BlockAddress::get(dispatcherBlock), dispatcherBlockAddress);
 
@@ -201,20 +191,26 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     llvm::AllocaInst* dispatcherState = entryBeginBuilder.CreateAlloca(entryBeginBuilder.getInt32Ty());
     entryBlock->getTerminator()->eraseFromParent();
     llvm::IRBuilder<> entryEndBuilder(entryBlock, entryBlock->end());
-    entryEndBuilder.CreateStore(entryEndBuilder.getInt32(blockIds[bodyIndex]), dispatcherState);
+    llvm::Value* bodyBlockIndexGEP = entryEndBuilder.CreateInBoundsGEP(
+        permutationTableType,
+        permutationTable,
+        {entryEndBuilder.getInt32(0), entryEndBuilder.getInt32(bodyIndex)}
+    );
+    llvm::Value* bodyBlockIndex = entryEndBuilder.CreateLoad(entryEndBuilder.getInt32Ty(), bodyBlockIndexGEP);
+    entryEndBuilder.CreateStore(bodyBlockIndex, dispatcherState);
 
     {
         // Get dispatcher block from the jump table
         llvm::Value* dispatcherBlockGEP = entryEndBuilder.CreateInBoundsGEP(
             jumpTableType,
             jumpTable,
-            {entryEndBuilder.getInt32(0), entryEndBuilder.getInt32(dispatcherSlot)}
+            {entryEndBuilder.getInt32(0), dispatcherBlockIndex}
         );
         llvm::Value* dispatcherBlockAddress = entryEndBuilder.CreateLoad(entryEndBuilder.getPtrTy(), dispatcherBlockGEP, true);
 
         llvm::IndirectBrInst* entryEndIndirectBr = entryEndBuilder.CreateIndirectBr(dispatcherBlockAddress, 1);
         entryEndIndirectBr->addDestination(dispatcherBlock);
-}
+    }
 
     // Create dispatcher
     llvm::IRBuilder<> dispatcherBuilder(dispatcherBlock);
@@ -235,15 +231,13 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     dispatcherBuilder.CreateCall(barrierFn);
 
     llvm::Value* dispatcherStateLoad = dispatcherBuilder.CreateLoad(dispatcherBuilder.getInt32Ty(), dispatcherState, true);
-    llvm::Value* hashed = dispatcherBuilder.CreateMul(dispatcherStateLoad, dispatcherBuilder.getInt32(2654435761u));
-    llvm::Value* slot = dispatcherBuilder.CreateLShr(hashed, dispatcherBuilder.getInt32(32 - tableSizeLog2));
 
     // PROPER INDIRECT JUMPS
     //
     llvm::Value* nextBlockGEP = dispatcherBuilder.CreateInBoundsGEP(
         jumpTableType,
         jumpTable,
-        {dispatcherBuilder.getInt32(0), slot}
+        {dispatcherBuilder.getInt32(0), dispatcherStateLoad}
     );
     llvm::Value* nextBlockAddress = dispatcherBuilder.CreateLoad(dispatcherBuilder.getPtrTy(), nextBlockGEP, true);
     llvm::IndirectBrInst* indirectBr = dispatcherBuilder.CreateIndirectBr(nextBlockAddress, basicBlocks.size());
@@ -251,7 +245,6 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     {
         indirectBr->addDestination(basicBlock);
     }
-    indirectBr->addDestination(trapBlock);
 
     // // Not indirect branches for debugging
     // llvm::SwitchInst* sw = dispatcherBuilder.CreateSwitch(dispatcherStateXored, trapBlock, basicBlocks.size());
@@ -282,7 +275,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         llvm::Value* dispatcherBlockGEP = terminatorBuilder.CreateInBoundsGEP(
             jumpTableType,
             jumpTable,
-            {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(dispatcherSlot)}
+            {terminatorBuilder.getInt32(0), dispatcherBlockIndex}
         );
         llvm::Value* dispatcherBlockAddress = terminatorBuilder.CreateLoad(terminatorBuilder.getPtrTy(), dispatcherBlockGEP, true);
 
@@ -307,10 +300,17 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
                 auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
                 if (it == basicBlocks.end())
                     continue;
-
-                uint32_t successorIndex = blockIds[it - basicBlocks.begin()];
+                    
                 llvm::IRBuilder<> terminatorBuilder(branch);
-                rewriteToDispatcher(branch, terminatorBuilder.getInt32(successorIndex));
+                uint32_t compileTimeIndex = it - basicBlocks.begin();
+                llvm::Value* realIndexGEP = terminatorBuilder.CreateInBoundsGEP(
+                    permutationTableType,
+                    permutationTable,
+                    {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndex)}
+                );
+                llvm::Value* realIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), realIndexGEP);
+                
+                rewriteToDispatcher(branch, realIndex);
             }
             else if (branch->isConditional())
             {
@@ -321,13 +321,26 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
                 if (itTrue == basicBlocks.end() || itFalse == basicBlocks.end())
                     continue;
 
-                uint32_t trueSuccessorIndex = blockIds[itTrue - basicBlocks.begin()];
-                uint32_t falseSuccessorIndex = blockIds[itFalse - basicBlocks.begin()];
                 llvm::IRBuilder<> terminatorBuilder(branch);
+                uint32_t compileTimeIndexTrue = itTrue - basicBlocks.begin();
+                llvm::Value* realIndexTrueGEP = terminatorBuilder.CreateInBoundsGEP(
+                    permutationTableType,
+                    permutationTable,
+                    {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndexTrue)}
+                );
+                llvm::Value* realIndexTrue = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), realIndexTrueGEP);
+                uint32_t compileTimeIndexFalse = itFalse - basicBlocks.begin();
+                llvm::Value* realIndexFalseGEP = terminatorBuilder.CreateInBoundsGEP(
+                    permutationTableType,
+                    permutationTable,
+                    {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndexFalse)}
+                );
+                llvm::Value* realIndexFalse = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), realIndexFalseGEP);
+
                 llvm::Value* nextIndex = terminatorBuilder.CreateSelect(
                     branch->getCondition(),
-                    terminatorBuilder.getInt32(trueSuccessorIndex),
-                    terminatorBuilder.getInt32(falseSuccessorIndex)
+                    realIndexTrue,
+                    realIndexFalse
                 );
 
                 rewriteToDispatcher(branch, nextIndex);
@@ -343,7 +356,14 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
                 continue;
 
             llvm::IRBuilder<> terminatorBuilder(switchInst);
-            llvm::Value* nextIndex = terminatorBuilder.getInt32(blockIds[defaultIt - basicBlocks.begin()]);
+            uint32_t compileTimeIndex = defaultIt - basicBlocks.begin();
+            llvm::Value* nextIndexGEP = terminatorBuilder.CreateInBoundsGEP(
+                permutationTableType,
+                permutationTable,
+                {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndex)}
+            );
+            llvm::Value* nextIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), nextIndexGEP);
+            
             for (auto caseIt = switchInst->case_begin(); caseIt != switchInst->case_end(); ++caseIt)
             {
                 llvm::BasicBlock* caseSuccessor = caseIt->getCaseSuccessor();
@@ -351,7 +371,13 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
                 if (caseSuccessorIt == basicBlocks.end())
                     continue;
 
-                llvm::Value* caseIndex = terminatorBuilder.getInt32(blockIds[caseSuccessorIt - basicBlocks.begin()]);
+                uint32_t compileTimeIndexCase = caseSuccessorIt - basicBlocks.begin();
+                llvm::Value* caseIndexGEP = terminatorBuilder.CreateInBoundsGEP(
+                    permutationTableType,
+                    permutationTable,
+                    {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndexCase)}
+                );
+                llvm::Value* caseIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), caseIndexGEP);
                 llvm::Value* condition = terminatorBuilder.CreateICmpEQ(
                     switchInst->getCondition(),
                     caseIt->getCaseValue()
@@ -373,7 +399,13 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
                 if (it == basicBlocks.end())
                     continue;
 
-                llvm::Value* successorIndex = terminatorBuilder.getInt32(blockIds[it - basicBlocks.begin()]);
+                uint32_t compileTimeIndex = it - basicBlocks.begin();
+                llvm::Value* successorIndexGEP = terminatorBuilder.CreateInBoundsGEP(
+                    permutationTableType,
+                    permutationTable,
+                    {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndex)}
+                );
+                llvm::Value* successorIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), successorIndexGEP);
                 if (!nextIndex)
                 {
                     nextIndex = successorIndex;
@@ -402,7 +434,14 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
                 continue;
 
             llvm::IRBuilder<> terminatorBuilder(callBr);
-            llvm::Value* nextIndex = terminatorBuilder.getInt32(blockIds[it - basicBlocks.begin()]);
+            uint32_t compileTimeIndex = it - basicBlocks.begin();
+            llvm::Value* nextIndexGEP = terminatorBuilder.CreateInBoundsGEP(
+                permutationTableType,
+                permutationTable,
+                {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndex)}
+            );
+            llvm::Value* nextIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), nextIndexGEP);
+
             rewriteToDispatcher(callBr, nextIndex);
         }
     }
@@ -428,5 +467,172 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         }
         exit(1);
     }
+}
 
+
+//
+// -------------------------------- HELPER --------------------------------
+//
+// Emits IR equivalent to:
+//
+//   uint64_t splitmix64_next(uint64_t *state) {
+//       uint64_t z = (*state += 0x9E3779B97F4A7C15ULL);
+//       z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+//       z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+//       return z ^ (z >> 31);
+//   }
+//
+//   extern "C" void __leet_permutation(uint32_t* table, uint32_t size)
+//   {
+//       uint64_t state = __rdtsc();
+//       for (uint32_t i = 0; i < size; i++)
+//           table[i] = i;
+//       for (int i = size - 1; i > 0; i--) {
+//           uint64_t z = splitmix64_next(&state);
+//           int j = z % (i + 1);
+//           uint32_t tmp = table[i];
+//           table[i] = table[j];
+//           table[j] = tmp;
+//       }
+//   }
+
+// Emits `uint64_t splitmix64_next(uint64_t *state)` into the module and returns it
+static llvm::Function* EmitSplitmix64Next(llvm::Module &module)
+{
+    llvm::LLVMContext& context = module.getContext();
+    llvm::IRBuilder<> builder(context);
+
+    llvm::FunctionType* functionType = llvm::FunctionType::get(builder.getInt64Ty(), {builder.getPtrTy()}, false);
+    llvm::Function* function = llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, "__leet_split_mix_64", &module);
+    function->arg_begin()->setName("state");
+    llvm::Argument* statePtr = function->arg_begin();
+
+    llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(context, "entry", function);
+    builder.SetInsertPoint(entryBlock);
+
+    const uint64_t k1 = 0x9E3779B97F4A7C15ULL;
+    const uint64_t k2 = 0xBF58476D1CE4E5B9ULL;
+    const uint64_t k3 = 0x94D049BB133111EBULL;
+
+    // z = (*state += k1);
+    llvm::Value* oldState = builder.CreateLoad(builder.getInt64Ty(), statePtr, "old");
+    llvm::Value* newState = builder.CreateAdd(oldState, builder.getInt64(k1), "z");
+    builder.CreateStore(newState, statePtr);
+
+    // z = (z ^ (z >> 30)) * k2;
+    llvm::Value* shr1 = builder.CreateLShr(newState, builder.getInt64(30), "shr1");
+    llvm::Value* xor1 = builder.CreateXor(newState, shr1, "xor1");
+    llvm::Value* mul1 = builder.CreateMul(xor1, builder.getInt64(k2), "mul1");
+
+    // z = (z ^ (z >> 27)) * k3;
+    llvm::Value* shr2 = builder.CreateLShr(mul1, builder.getInt64(27), "shr2");
+    llvm::Value* xor2 = builder.CreateXor(mul1, shr2, "xor2");
+    llvm::Value* mul2 = builder.CreateMul(xor2, builder.getInt64(k3), "mul2");
+
+    // return z ^ (z >> 31);
+    llvm::Value* shr3 = builder.CreateLShr(mul2, builder.getInt64(31), "shr3");
+    llvm::Value* retVal = builder.CreateXor(mul2, shr3, "xor3");
+
+    builder.CreateRet(retVal);
+
+    llvm::verifyFunction(*function);
+    return function;
+}
+
+// Emits `void __leet_permutation(uint32_t* table, uint32_t size)` into the module, calling the provided splitmix64_next
+llvm::Function* EmitLeetPermutation(llvm::Module &module, llvm::Function* splitmix64Next)
+{
+    llvm::LLVMContext& context = module.getContext();
+    llvm::IRBuilder<> builder(context);
+
+    llvm::FunctionType* functionType = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy(), builder.getInt32Ty()}, false);
+    llvm::Function* function = llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, "__leet_permutation", &module);
+
+    auto argIt = function->arg_begin();
+    llvm::Argument* tablePtr = &*argIt++;
+    llvm::Argument* size = &*argIt++;
+    tablePtr->setName("table");
+    size->setName("size");
+
+    llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(context, "entry", function);
+    llvm::BasicBlock* loop1Cond = llvm::BasicBlock::Create(context, "loop1.cond", function);
+    llvm::BasicBlock* loop1Body = llvm::BasicBlock::Create(context, "loop1.body", function);
+    llvm::BasicBlock* loop1End = llvm::BasicBlock::Create(context, "loop1.end", function);
+    llvm::BasicBlock* loop2Cond = llvm::BasicBlock::Create(context, "loop2.cond", function);
+    llvm::BasicBlock* loop2Body = llvm::BasicBlock::Create(context, "loop2.body", function);
+    llvm::BasicBlock* loop2End = llvm::BasicBlock::Create(context, "loop2.end", function);
+
+    // entry: state = __rdtsc();
+    builder.SetInsertPoint(entryBlock);
+    llvm::AllocaInst* stateAlloca = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "state");
+
+    llvm::Function* rdtscIntr = llvm::Intrinsic::getOrInsertDeclaration(&module, llvm::Intrinsic::x86_rdtsc);
+    llvm::Value* rdtsc = builder.CreateCall(rdtscIntr, {}, "rdtsc");
+
+    builder.CreateStore(rdtsc, stateAlloca);
+    builder.CreateBr(loop1Cond);
+
+    // loop1.cond: for (i = 0; i < size; i++)
+    builder.SetInsertPoint(loop1Cond);
+    llvm::PHINode* i1 = builder.CreatePHI(builder.getInt32Ty(), 2, "i1");
+    i1->addIncoming(builder.getInt32(0), entryBlock);
+    llvm::Value* cmp1 = builder.CreateICmpULT(i1, size, "cmp1");
+    builder.CreateCondBr(cmp1, loop1Body, loop1End);
+
+    // loop1.body: table[i] = i;
+    builder.SetInsertPoint(loop1Body);
+    llvm::Value* gep1 = builder.CreateInBoundsGEP(builder.getInt32Ty(), tablePtr, i1, "gep1");
+    builder.CreateStore(i1, gep1);
+    llvm::Value* i1Next = builder.CreateAdd(i1, builder.getInt32(1), "i1.next");
+    builder.CreateBr(loop1Cond);
+    i1->addIncoming(i1Next, loop1Body);
+
+    // loop1.end: int i = size - 1;
+    builder.SetInsertPoint(loop1End);
+    llvm::Value* init2 = builder.CreateSub(size, builder.getInt32(1), "init2");
+    builder.CreateBr(loop2Cond);
+
+    // loop2.cond: for (; i > 0; i--)
+    builder.SetInsertPoint(loop2Cond);
+    llvm::PHINode* i2 = builder.CreatePHI(builder.getInt32Ty(), 2, "i2");
+    i2->addIncoming(init2, loop1End);
+    llvm::Value* cmp2 = builder.CreateICmpSGT(i2, builder.getInt32(0), "cmp2");
+    builder.CreateCondBr(cmp2, loop2Body, loop2End);
+
+    // loop2.body: Fisher-Yates swap
+    builder.SetInsertPoint(loop2Body);
+    llvm::Value* z = builder.CreateCall(splitmix64Next, {stateAlloca}, "z");
+
+    llvm::Value* iPlus1 = builder.CreateAdd(i2, builder.getInt32(1), "ip1");
+    llvm::Value* iPlus164 = builder.CreateSExt(iPlus1, builder.getInt64Ty(), "ip1.64"); // i>0 so i+1 > 0
+    llvm::Value* j64 = builder.CreateURem(z, iPlus164, "j64");
+    llvm::Value* j = builder.CreateTrunc(j64, builder.getInt32Ty(), "j");
+
+    llvm::Value* gepI = builder.CreateInBoundsGEP(builder.getInt32Ty(), tablePtr, i2, "gepi");
+    llvm::Value* tmp = builder.CreateLoad(builder.getInt32Ty(), gepI, "tmp");
+    llvm::Value* gepJ = builder.CreateInBoundsGEP(builder.getInt32Ty(), tablePtr, j, "gepj");
+    llvm::Value* tableJ = builder.CreateLoad(builder.getInt32Ty(), gepJ, "tablej");
+
+    builder.CreateStore(tableJ, gepI);
+    builder.CreateStore(tmp, gepJ);
+
+    llvm::Value* i2Next = builder.CreateSub(i2, builder.getInt32(1), "i2.next");
+    builder.CreateBr(loop2Cond);
+    i2->addIncoming(i2Next, loop2Body);
+
+    // loop2.end: return;
+    builder.SetInsertPoint(loop2End);
+    builder.CreateRetVoid();
+
+    llvm::verifyFunction(*function);
+    return function;
+}
+
+// Convenience entry point: emits both functions and returns __leet_permutation's llvm::Function*
+llvm::Function* EmitLeetPermutationWithDeps(llvm::Module &module)
+{
+    llvm::Function* splitmix64Next = EmitSplitmix64Next(module);
+    llvm::Function* permFunc = EmitLeetPermutation(module, splitmix64Next);
+
+    return permFunc;
 }
