@@ -10,6 +10,7 @@
 #include "AnnotationPass.h"
 #include "AAMBAPass.h"
 #include "AntiAnalysisPass.h"
+#include "AntiAliasingPass.h"
 
 #include "SettingsParser.h"
 
@@ -54,6 +55,9 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
                                 break;
                             case LeetObfuscator::SettingsParser::PassType::AntiAnalysisPass:
                                 passManager.addPass(LeetObfuscator::AntiAnalysisPass());
+                                break;
+                            case LeetObfuscator::SettingsParser::PassType::AntiAliasingPass:
+                                passManager.addPass(LeetObfuscator::AntiAliasingPass());
                                 break;
                             default:
                                 llvm::errs() << "INVALID PASS WAS FOUND\n";
