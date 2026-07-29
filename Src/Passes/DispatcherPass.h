@@ -2,6 +2,8 @@
 
 #include "llvm/IR/PassManager.h"
 
+#include "llvm/IR/BasicBlock.h"
+
 namespace LeetObfuscator
 {
     class DispatcherPass : public llvm::PassInfoMixin<DispatcherPass>

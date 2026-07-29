@@ -10,9 +10,17 @@ namespace LeetObfuscator
     class AntiAnalysisPass : public llvm::PassInfoMixin<AntiAnalysisPass>
     {
     public:
-        llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
-    private:
-        void ObfuscateFunction(llvm::Function& function);
-        bool ObfuscateBlock(llvm::BasicBlock* block, llvm::DominatorTree& tree, bool randomPos = false);
+            llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
+
+            static llvm::BasicBlock* CreateInvalidBogusBlock(llvm::Function* function);
+            static llvm::BasicBlock* ChainBogusIntoBlock(llvm::BasicBlock* block, llvm::BasicBlock* bogusBlock, bool randomPos);
+            static llvm::BasicBlock* ChainBogusIntoBlockRdtsc(llvm::BasicBlock* block, llvm::BasicBlock* bogusBlock, bool randomPos);
+        private:
+            void ObfuscateFunction(llvm::Function& function);
+            bool ObfuscateBlock(llvm::BasicBlock* block, bool randomPos = false, bool rdtsc = false);
+
+            static llvm::Value* FindUsableInput(llvm::DominatorTree& DT, llvm::BasicBlock* block, llvm::BasicBlock::iterator insertIt);
+            static int RankValue(llvm::Value* value);
+            static bool IsSafeToTimeAcross(llvm::Instruction &I);
     };
 }

@@ -9,4 +9,4 @@ clang++ -fpass-plugin=./LeetObfuscator.so ../Src/Tests/Test.cpp -o test -O3 -fno
 drawing:
 clang++ -S -emit-llvm -fpass-plugin=./LeetObfuscator.so ../Src/Tests/Test.cpp -o test.il -O3 -fno-exceptions -static -s
 opt -passes=dot-cfg test.il -disable-output
-dot -Tpng .main.dot -o main.png
+dot -Tpng .Foo.dot -o Foo.png
