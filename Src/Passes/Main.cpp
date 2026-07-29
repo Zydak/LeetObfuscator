@@ -39,25 +39,25 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
                         switch (pass.type)
                         {
                             case LeetObfuscator::SettingsParser::PassType::StringEncryptionPass:
-                                passManager.addPass(LeetObfuscator::StringEncryptionPass());
+                                passManager.addPass(LeetObfuscator::StringEncryptionPass(pass.parameters));
                                 break;
                             case LeetObfuscator::SettingsParser::PassType::MBAPass:
-                                passManager.addPass(LeetObfuscator::MBAPass(pass.expansionCount));
+                                passManager.addPass(LeetObfuscator::MBAPass(pass.parameters));
                                 break;
                             case LeetObfuscator::SettingsParser::PassType::BlockSplitterPass:
-                                passManager.addPass(LeetObfuscator::BlockSplitterPass());
+                                passManager.addPass(LeetObfuscator::BlockSplitterPass(pass.parameters));
                                 break;
                             case LeetObfuscator::SettingsParser::PassType::DispatcherPass:
-                                passManager.addPass(LeetObfuscator::DispatcherPass());
+                                passManager.addPass(LeetObfuscator::DispatcherPass(pass.parameters));
                                 break;
                             case LeetObfuscator::SettingsParser::PassType::AAMBAPass:
-                                passManager.addPass(LeetObfuscator::AAMBAPass());
+                                passManager.addPass(LeetObfuscator::AAMBAPass(pass.parameters));
                                 break;
                             case LeetObfuscator::SettingsParser::PassType::AntiAnalysisPass:
-                                passManager.addPass(LeetObfuscator::AntiAnalysisPass());
+                                passManager.addPass(LeetObfuscator::AntiAnalysisPass(pass.parameters));
                                 break;
                             case LeetObfuscator::SettingsParser::PassType::AntiAliasingPass:
-                                passManager.addPass(LeetObfuscator::AntiAliasingPass());
+                                passManager.addPass(LeetObfuscator::AntiAliasingPass(pass.parameters));
                                 break;
                             default:
                                 llvm::errs() << "INVALID PASS WAS FOUND\n";

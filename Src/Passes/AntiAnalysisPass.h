@@ -1,6 +1,7 @@
 #pragma once
 
 #include "llvm/IR/PassManager.h"
+#include "SettingsParser.h"
 #include "llvm/IR/BasicBlock.h"
 
 #include "llvm/IR/Dominators.h"
@@ -10,6 +11,7 @@ namespace LeetObfuscator
     class AntiAnalysisPass : public llvm::PassInfoMixin<AntiAnalysisPass>
     {
     public:
+            explicit AntiAnalysisPass(SettingsParser::PassArguments arguments) : m_Arguments(std::move(arguments)) {}
             llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
             static llvm::BasicBlock* CreateInvalidBogusBlock(llvm::Function* function);
@@ -22,5 +24,6 @@ namespace LeetObfuscator
             static llvm::Value* FindUsableInput(llvm::DominatorTree& DT, llvm::BasicBlock* block, llvm::BasicBlock::iterator insertIt);
             static int RankValue(llvm::Value* value);
             static bool IsSafeToTimeAcross(llvm::Instruction &I);
+            SettingsParser::PassArguments m_Arguments;
     };
 }

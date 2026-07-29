@@ -7,6 +7,7 @@
 #include "llvm/IR/Verifier.h"
 
 #include "PermutationHelper.h"
+#include "SettingsParser.h"
 
 #include <vector>
 #include <algorithm>
@@ -101,6 +102,11 @@ llvm::PreservedAnalyses LeetObfuscator::AntiAliasingPass::run(llvm::Module &modu
 
 void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &function)
 {
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
+        function, SettingsParser::PassType::AntiAliasingPass, m_Arguments);
+    if (attributes.skip)
+        return;
+
     llvm::Module* module = function.getParent();
 
     llvm::Function* permFunction = GetOrEmitLeetPermutationWithDeps(*module);

@@ -26,7 +26,8 @@ llvm::PreservedAnalyses LeetObfuscator::AAMBAPass::run(llvm::Module &module, llv
 
 void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
 {
-    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(function);
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
+        function, SettingsParser::PassType::AAMBAPass, m_Arguments);
     if (attributes.skip)
     {
         return;

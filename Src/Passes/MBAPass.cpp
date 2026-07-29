@@ -5,6 +5,8 @@
 
 #include "llvm/IR/Verifier.h"
 #include "SettingsParser.h"
+#include "iostream"
+#include "llvm/IR/InstIterator.h"
 
 static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
 
@@ -22,13 +24,23 @@ llvm::PreservedAnalyses LeetObfuscator::MBAPass::run(llvm::Module &module, llvm:
 
 void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
 {
-    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(function);
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
+        function,
+        SettingsParser::PassType::MBAPass,
+        m_Arguments
+    );
     if (attributes.skip)
     {
         return;
     }
 
-    uint32_t expansionCount = attributes.mbaExpansionCount >= 0 ? attributes.mbaExpansionCount : m_DefaultMaxPassCount;
+    size_t instructionCount = std::distance(llvm::inst_begin(function), llvm::inst_end(function));
+    if ((attributes.maxFunctionSize != 0 && instructionCount > attributes.maxFunctionSize) ||
+        (attributes.minFunctionSize != 0 && instructionCount < attributes.minFunctionSize)
+    )
+    {
+        return;
+    }
 
     // Find all binary instructions
     std::vector<llvm::Instruction*> instructionsToObfuscate;
@@ -71,7 +83,7 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
 
     for (auto& instruction : instructionsToObfuscate)
     {
-        ObfuscateInstruction(instruction, expansionCount);
+        ObfuscateInstruction(instruction, attributes.mbaExpansionCount);
     }
 
     // Verify the function at the end

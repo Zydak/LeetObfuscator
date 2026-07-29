@@ -6,6 +6,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/IntrinsicsX86.h"
+#include "SettingsParser.h"
 
 #include <random>
 #include <algorithm>
@@ -27,6 +28,11 @@ llvm::PreservedAnalyses LeetObfuscator::AntiAnalysisPass::run(llvm::Module &modu
 
 void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &function)
 {
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
+        function, SettingsParser::PassType::AntiAnalysisPass, m_Arguments);
+    if (attributes.skip)
+        return;
+
     std::mt19937 rng(std::random_device{}());
     std::uniform_int_distribution<uint32_t> distBlock(0, 100);
 
@@ -236,7 +242,6 @@ llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockRdtsc(llv
     {
         uint32_t t = dist(rng);
         std::advance(startIt, t);
-        llvm::errs() << t << " | " << instructionCount << " | " << block->getParent()->getName() << "\n";
     }
 
     uint32_t secondTimerStep = 0;

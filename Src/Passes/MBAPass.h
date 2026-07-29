@@ -1,13 +1,14 @@
 #pragma once
 
 #include "llvm/Passes/PassBuilder.h"
+#include "SettingsParser.h"
 
 namespace LeetObfuscator
 {
     class MBAPass : public llvm::PassInfoMixin<MBAPass>
     {
     public:
-        MBAPass(uint32_t passCount) : m_DefaultMaxPassCount(passCount) {}
+        explicit MBAPass(SettingsParser::PassArguments arguments) : m_Arguments(std::move(arguments)) {}
 
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
@@ -29,6 +30,6 @@ namespace LeetObfuscator
         void ObfuscateBinaryOperation(llvm::Instruction* instruction, uint32_t expansionCount, uint32_t iteration = 0);
         void ObfuscateCompareOperation(llvm::Instruction* instruction, uint32_t expansionCount, uint32_t iteration = 0);
 
-        uint32_t m_DefaultMaxPassCount = 2;
+        SettingsParser::PassArguments m_Arguments;
     };
 }

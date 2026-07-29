@@ -279,7 +279,8 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         return; // nothing to do
     }
 
-    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(*function);
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
+        *function, SettingsParser::PassType::DispatcherPass, m_Arguments);
     if (attributes.skip)
     {
         return;

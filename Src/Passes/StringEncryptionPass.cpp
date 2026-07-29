@@ -83,8 +83,9 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
         // Check the function attirbutes of the user instruction's function, if it has "leet.skip" then we can't patch this use
         llvm::Instruction* userInst = llvm::cast<llvm::Instruction>(use.getUser());
         llvm::Function* userFunction = userInst->getFunction();
-        SettingsParser::FunctionAttributes userFunctionAttributes = SettingsParser::ParseFunctionAttributes(*userFunction);
-        if (userFunctionAttributes.skip)
+        SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
+            *userFunction, SettingsParser::PassType::StringEncryptionPass, m_Arguments);
+        if (attributes.skip)
         {
             llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
                          << "' - has a use in function '" << userFunction->getName()

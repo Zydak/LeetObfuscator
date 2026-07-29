@@ -1,12 +1,14 @@
 #pragma once
 
 #include "llvm/Passes/PassBuilder.h"
+#include "SettingsParser.h"
 
 namespace LeetObfuscator
 {
     class StringEncryptionPass : public llvm::PassInfoMixin<StringEncryptionPass>
     {
     public:
+        explicit StringEncryptionPass(SettingsParser::PassArguments arguments) : m_Arguments(std::move(arguments)) {}
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
     private:
@@ -28,5 +30,6 @@ namespace LeetObfuscator
         llvm::Function* GetDecryptFunction(llvm::Module& module, uint32_t key, const EmittedTemplate& templates);
 
         EmittedTemplate GetTemplateFunctions(llvm::Module& module);
+        SettingsParser::PassArguments m_Arguments;
     };
 }

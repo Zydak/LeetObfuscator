@@ -24,7 +24,8 @@ llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &mod
 
 void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
 {
-    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(function);
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
+        function, SettingsParser::PassType::BlockSplitterPass, m_Arguments);
     if (attributes.skip)
     {
         return;
