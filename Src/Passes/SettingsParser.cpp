@@ -121,10 +121,10 @@ static bool ParseEnumArgument(
 
 static uint64_t GenerateRuntimeSeed()
 {
-    std::random_device randomDevice;
-    std::mt19937_64 generator(
-        (static_cast<uint64_t>(randomDevice()) << 32) ^ randomDevice());
-    return generator();
+    static std::random_device randomDevice;
+    static std::mt19937_64 generator((uint64_t(randomDevice()) << 32) ^ randomDevice());
+    static uint64_t seed = generator();
+    return seed;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,15 +220,13 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
     static const std::vector<Option> stringEncryptionOptions = {
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
-        {"runtimeSeed", ApplyRuntimeSeed},
-        {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
-        {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
-        {"probability", UnsignedOption(&FA::stringEncryptionProbability, 100u)},
     };
     static const std::vector<Option> mbaOptions = {
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
+        {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
+        {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"expansionCount", UnsignedOption(&FA::mbaExpansionCount)},
@@ -239,6 +237,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
+        {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"maxBlockSize", UnsignedOption(&FA::maxBlockSize)},
@@ -257,6 +256,8 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
+        {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
+        {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"bogusBlockCount", EnumOption<SettingsParser::BogusBlockCount>(&FA::bogusBlockCount, {
@@ -272,6 +273,8 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
+        {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
+        {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"probability", UnsignedOption(&FA::aambaProbability, 100u)},
@@ -473,7 +476,11 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
             << "# minimum instruction count of a function for it to qualify for obfuscation (0 = all qualify)\n"
             << "minFunctionSize=10\n"
             << "# maximum instruction count of a function for it to qualify for obfuscation (0 = all qualify)\n"
-            << "maxFunctionSize=0\n\n"
+            << "maxFunctionSize=0\n"
+            << "# minimum instruction count of a block for it to qualify for obfuscation (0 = all qualify)\n"
+            << "minBlockSize=5\n"
+            << "# maximum instruction count of a block for it to qualify for obfuscation (0 = all qualify)\n"
+            << "maxBlockSize=0\n\n"
             << "# Passes available right now:\n"
             << "# \t- StringEncryptionPass\n"
             << "# \t- MBAPass\n"
@@ -538,7 +545,18 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
             else if (value == "none") settings.defaultParseMode = GlobalParseMode::None;
             SetArgument(settings.parameters, "defaultParseMode", {value.str()});
         }
-        else if (key == "runtimeSeed" || key == "minFunctionSize" || key == "maxFunctionSize")
+        if (key == "runtimeSeed")
+        {
+            if (value == "auto")
+                settings.defaultRuntimeSeed = GenerateRuntimeSeed();
+            SetArgument(settings.parameters, key, {value.str()});
+        }
+        if (key == "stringEncryptionProbability")
+        {
+            settings.stringEncryptionProbability = (uint32_t)std::stoi(value.str());
+            SetArgument(settings.parameters, key, {value.str()});
+        }
+        else if (key == "runtimeSeed" || key == "minFunctionSize" || key == "maxFunctionSize" || key == "maxBlockSize" || key == "minBlockSize")
         {
             SetArgument(settings.parameters, key, ParseValues(value));
         }

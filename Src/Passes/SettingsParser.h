@@ -40,6 +40,8 @@ namespace LeetObfuscator
         struct GlobalAttributes
         {
             GlobalParseMode defaultParseMode = GlobalParseMode::All;
+            uint64_t defaultRuntimeSeed = 0;
+            uint32_t stringEncryptionProbability;
             PassArguments parameters;
             std::vector<Pass> passes;
         };
@@ -57,10 +59,10 @@ namespace LeetObfuscator
             uint32_t stringEncryptionProbability = 100;
 
             uint32_t mbaExpansionCount = 2;
-            std::vector<std::string> mbaInstructionSet;
+            std::vector<std::string> mbaInstructionSet; // Unused for now
             uint32_t mbaProbability = 100;
 
-            uint32_t maxBlockSize = 20;
+            uint32_t maxBlockSize = 50;
             uint32_t minBlockSize = 1;
             uint32_t blockSplitterProbability = 100;
 

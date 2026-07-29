@@ -15,7 +15,7 @@
 constexpr uint64_t s_MinCandidateSize = 1;
 constexpr uint64_t s_MaxCandidateSize = 8; // Don't store any complex types, 8 bytes for a 64bit is enoguh
 
-constexpr uint32_t s_MinSlotsToBother = 2;
+constexpr uint32_t s_MinSlotsToBother = 2; // doing 1 slot is completely pointless
 
 bool TryGetAllocaTotalSize(llvm::AllocaInst* allocaInst, const llvm::DataLayout& dataLayout, uint64_t& outSize)
 {

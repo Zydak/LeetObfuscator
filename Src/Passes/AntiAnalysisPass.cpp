@@ -40,13 +40,6 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
         std::vector<llvm::BasicBlock*> blocksToObfuscate;
         for (auto& block : function)
         {
-            // Check if it hasn't been split already
-            llvm::Instruction* terminator = block.getTerminator();
-            if (terminator->getMetadata(ANTI_ANALYSIS_TAG))
-            {
-                continue; // This was already split
-            }
-
             blocksToObfuscate.push_back(&block);
         }
 
@@ -95,12 +88,6 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
         bogus->eraseFromParent();
         return false;
     }
-
-    bogus->getTerminator()->setMetadata(ANTI_ANALYSIS_TAG, llvm::MDNode::get(bogus->getContext(), {}));
-    if (newSplitBlock->size() > block->size())
-        block->getTerminator()->setMetadata(ANTI_ANALYSIS_TAG, llvm::MDNode::get(block->getContext(), {}));
-    else
-        newSplitBlock->getTerminator()->setMetadata(ANTI_ANALYSIS_TAG, llvm::MDNode::get(newSplitBlock->getContext(), {}));
 
     return true;
 }

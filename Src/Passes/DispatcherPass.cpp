@@ -9,6 +9,7 @@
 #include <random>
 #include "SettingsParser.h"
 #include "llvm/IR/NoFolder.h"
+#include "RandomNumberGenerator.h"
 
 #include "llvm/IR/IntrinsicsX86.h"
 

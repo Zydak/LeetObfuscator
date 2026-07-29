@@ -13,6 +13,7 @@
 #include "AntiAliasingPass.h"
 
 #include "SettingsParser.h"
+#include "RandomNumberGenerator.h"
 
 #include <iostream>
 
@@ -33,6 +34,7 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
                     passManager.addPass(LeetObfuscator::AnnotationPass());
 
                     LeetObfuscator::SettingsParser::GlobalAttributes globalSettings = LeetObfuscator::SettingsParser::ParseGlobalAttributes();
+                    LeetObfuscator::RandomNumberGenerator::CreateGlobalRandomNumberGenerator(globalSettings.defaultRuntimeSeed);
                     // add passes according to the config
                     for (auto& pass : globalSettings.passes)
                     {

@@ -8,6 +8,8 @@
 #include "llvm/IR/Verifier.h"
 #include "SettingsParser.h"
 
+#include "RandomNumberGenerator.h"
+
 #include <random>
 
 llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &module, llvm::ModuleAnalysisManager &)
@@ -31,11 +33,18 @@ void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
         return;
     }
 
+    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
+    if (generator->GetSeed() != attributes.runtimeSeed)
+        generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
+
     std::vector<llvm::BasicBlock*> blocksToSplit;
     for (auto& block : function)
     {
         if (block.size() > attributes.maxBlockSize)
         {
+            if (generator->DrawRange(0u, 100u) > attributes.blockSplitterProbability)
+                continue;
+            
             blocksToSplit.push_back(&block);
         }
     }

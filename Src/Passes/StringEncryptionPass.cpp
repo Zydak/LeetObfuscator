@@ -6,6 +6,7 @@
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Module.h"
 #include "SettingsParser.h"
+#include "RandomNumberGenerator.h"
 
 #include "leet_string_obf_runtime_bc.inc" // template bitcode
 
@@ -27,7 +28,13 @@ llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &
     {
         if (IsEncryptableStringGlobal(&global))
         {
-            uint32_t key = rand();
+            SettingsParser::GlobalAttributes globalAttributes = SettingsParser::ParseGlobalAttributes();
+            std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
+
+            if (generator->DrawRange(0u, 100u) > globalAttributes.stringEncryptionProbability)
+                continue;
+
+            uint32_t key = generator->DrawRange(0u, std::numeric_limits<uint32_t>::max());
             stringGlobals.push_back({&global, key});
         }
     }
@@ -84,7 +91,8 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
         llvm::Instruction* userInst = llvm::cast<llvm::Instruction>(use.getUser());
         llvm::Function* userFunction = userInst->getFunction();
         SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
-            *userFunction, SettingsParser::PassType::StringEncryptionPass, m_Arguments);
+            *userFunction, SettingsParser::PassType::StringEncryptionPass, m_Arguments
+        );
         if (attributes.skip)
         {
             llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
@@ -92,7 +100,6 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
                          << "' that has 'leet.skip' attribute, can't patch this use\n";
             return;
         }
-
         usesToPatch.push_back(&use);
     }
 

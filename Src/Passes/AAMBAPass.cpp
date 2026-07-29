@@ -9,6 +9,7 @@
 #include "SettingsParser.h"
 
 #include <random>
+#include "RandomNumberGenerator.h"
 
 static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
 
@@ -33,6 +34,10 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
         return;
     }
 
+    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
+    if (generator->GetSeed() != attributes.runtimeSeed)
+        generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
+
     // Find all binary instructions
     std::vector<llvm::Instruction*> instructionsToObfuscate;
     for (auto& basicBlock : function)
@@ -41,6 +46,9 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
         {
             if (instruction.getMetadata(ARITHMETIC_TAG))
             {
+                if (generator->DrawRange(0u, 100u) > attributes.aambaProbability)
+                    continue;
+                
                 instructionsToObfuscate.push_back(&instruction); // Obfuscate only prev MBA pass
             }
         }
@@ -50,7 +58,6 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
     {
         ObfuscateInstruction(instruction);
     }
-
 
     // Verify the function at the end
     if (llvm::verifyFunction(function, &llvm::errs()))
@@ -159,19 +166,15 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
         *value = result;
     };
     
-    int random = rand(); // TODO: proepr distribution with settings
-    if (random % 2 == 0)
+    uint32_t random = rand(); // rand should be fine here
+    if (random % 2 == 0 && (x->getType() == llvm::Type::getInt32Ty(context) || x->getType() == llvm::Type::getInt64Ty(context)))
     {
-        random = rand();
-        if (random % 2 == 0 && (x->getType() == llvm::Type::getInt32Ty(context) || x->getType() == llvm::Type::getInt64Ty(context)))
-        {
-            AAMBA(&x);
-            instruction->setOperand(0, x);
-        }
-        if (random % 2 != 0 && (y->getType() == llvm::Type::getInt32Ty(context) || y->getType() == llvm::Type::getInt64Ty(context)))
-        {
-            AAMBA(&y);
-            instruction->setOperand(1, y);
-        }
+        AAMBA(&x);
+        instruction->setOperand(0, x);
+    }
+    if (random % 2 != 0 && (y->getType() == llvm::Type::getInt32Ty(context) || y->getType() == llvm::Type::getInt64Ty(context)))
+    {
+        AAMBA(&y);
+        instruction->setOperand(1, y);
     }
 }

@@ -7,6 +7,7 @@
 #include "SettingsParser.h"
 #include "iostream"
 #include "llvm/IR/InstIterator.h"
+#include "RandomNumberGenerator.h"
 
 static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
 
@@ -42,10 +43,23 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
         return;
     }
 
+    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
+    if (generator->GetSeed() != attributes.runtimeSeed)
+        generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
+
     // Find all binary instructions
     std::vector<llvm::Instruction*> instructionsToObfuscate;
     for (auto& basicBlock : function)
     {
+        if ((attributes.maxBlockSize != 0 && basicBlock.size() > attributes.maxBlockSize) ||
+            (attributes.minBlockSize != 0 && basicBlock.size() < attributes.minBlockSize)
+        )
+        {
+            continue;
+        }
+
+        std::cout << basicBlock.size() << " | " << attributes.minBlockSize << std::endl;
+
         for (auto& instruction : basicBlock)
         {
             if (instruction.getMetadata(ARITHMETIC_TAG))
@@ -83,6 +97,9 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
 
     for (auto& instruction : instructionsToObfuscate)
     {
+        if (generator->DrawRange(0u, 100u) > attributes.mbaProbability)
+            continue;
+        
         ObfuscateInstruction(instruction, attributes.mbaExpansionCount);
     }
 
