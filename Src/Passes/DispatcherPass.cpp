@@ -280,12 +280,15 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         return; // nothing to do
     }
 
-    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
-        *function, SettingsParser::PassType::DispatcherPass, m_Arguments);
-    if (attributes.skip)
-    {
+    SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(*function, SettingsParser::PassType::DispatcherPass, m_Arguments);
+    
+    if (SettingsParser::ShouldSkipFunction(function, attributes))
         return;
-    }
+
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
+
+    if (generator->DrawRange(0u, 100u) > attributes.dispatcherProbability)
+        return;
 
     llvm::Module* module = function->getParent();
 
@@ -333,8 +336,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     entryBlock->setName("leet.entry.block");
 
     // shuffle the blocks so the table is less obvious
-    std::mt19937 rng(std::random_device{}());
-    std::shuffle(basicBlocks.begin(), basicBlocks.end(), rng);
+    generator->Shuffle(basicBlocks.begin(), basicBlocks.end());
     auto it = std::find(basicBlocks.begin(), basicBlocks.end(), bodyBlock);
     uint32_t bodyIndex = it - basicBlocks.begin();
 

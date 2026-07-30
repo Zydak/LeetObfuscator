@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "RandomNumberGenerator.h"
 
 namespace LeetObfuscator
 {
@@ -17,7 +18,7 @@ namespace LeetObfuscator
         using PassArguments = std::vector<std::pair<std::string, std::vector<std::string>>>;
 
         enum class GlobalParseMode { All, None };
-        enum class BogusBlockCount { Max, Half, Random, Constant };
+        enum class BogusInsertPosition { Random, Start };
 
         enum class PassType
         {
@@ -62,15 +63,20 @@ namespace LeetObfuscator
             std::vector<std::string> mbaInstructionSet; // Unused for now
             uint32_t mbaProbability = 100;
 
-            uint32_t maxBlockSize = 50;
+            uint32_t maxBlockSize = 0;
             uint32_t minBlockSize = 1;
             uint32_t blockSplitterProbability = 100;
+            uint32_t blockSplitSize = 50;
 
             uint32_t dispatcherProbability = 100;
 
-            BogusBlockCount bogusBlockCount = BogusBlockCount::Max;
-            uint32_t validBogusBlocksProbability = 0;
-            uint32_t invalidBogusBlocksProbability = 100;
+            uint32_t antiAnalysisProbability = 100;
+            BogusInsertPosition antiAnalysisInsertPosition = BogusInsertPosition::Random;
+            uint32_t antiAnalysisRdtscProbability = 50;
+            uint32_t validBogusBlocksProbability = 0; // Unused for now
+            uint32_t invalidBogusBlocksProbability = 100; // Unused for now
+
+            uint32_t antiAliasingProbability = 100;
 
             uint32_t aambaProbability = 100;
             std::vector<std::string> aambaTargetOps;
@@ -80,6 +86,10 @@ namespace LeetObfuscator
             llvm::Function& function, PassType passType, const PassArguments& passArguments);
         static GlobalAttributes ParseGlobalAttributes();
         static Pass ParsePassString(const std::string& passStr);
+
+        static bool ShouldSkipFunction(llvm::Function* function, const FunctionAttributes& attributes);
+        static bool ShouldSkipBlock(llvm::BasicBlock* block, const FunctionAttributes& attributes);
+        static std::shared_ptr<RandomNumberGenerator> GetGenerator(const FunctionAttributes& attributes);
 
     private:
         static inline std::unique_ptr<GlobalAttributes> m_GlobalSettings = nullptr;

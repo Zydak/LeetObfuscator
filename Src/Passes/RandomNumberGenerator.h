@@ -4,6 +4,7 @@
 #include <memory>
 #include <type_traits>
 #include <cstdint>
+#include <algorithm>
 
 namespace LeetObfuscator
 {
@@ -35,6 +36,12 @@ namespace LeetObfuscator
             }
         }
 
+        template <typename RandomIt>
+        void Shuffle(RandomIt first, RandomIt last)
+        {
+            std::shuffle(first, last, m_RandomEngine);
+        }
+
         static void CreateGlobalRandomNumberGenerator(uint64_t seed)
         {
             s_GlobalRandomNumberGen = std::make_shared<RandomNumberGenerator>(seed);
@@ -50,6 +57,6 @@ namespace LeetObfuscator
 
         static inline std::shared_ptr<RandomNumberGenerator> s_GlobalRandomNumberGen;
         uint64_t m_Seed;
-        std::mt19937 m_RandomEngine;
+        std::mt19937_64 m_RandomEngine;
     };
 }

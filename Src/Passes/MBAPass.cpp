@@ -6,7 +6,6 @@
 #include "llvm/IR/Verifier.h"
 #include "SettingsParser.h"
 #include "iostream"
-#include "llvm/IR/InstIterator.h"
 #include "RandomNumberGenerator.h"
 
 static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
@@ -30,35 +29,18 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
         SettingsParser::PassType::MBAPass,
         m_Arguments
     );
-    if (attributes.skip)
-    {
-        return;
-    }
 
-    size_t instructionCount = std::distance(llvm::inst_begin(function), llvm::inst_end(function));
-    if ((attributes.maxFunctionSize != 0 && instructionCount > attributes.maxFunctionSize) ||
-        (attributes.minFunctionSize != 0 && instructionCount < attributes.minFunctionSize)
-    )
-    {
+    if(SettingsParser::ShouldSkipFunction(&function, attributes))
         return;
-    }
 
-    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
-    if (generator->GetSeed() != attributes.runtimeSeed)
-        generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
     // Find all binary instructions
     std::vector<llvm::Instruction*> instructionsToObfuscate;
     for (auto& basicBlock : function)
     {
-        if ((attributes.maxBlockSize != 0 && basicBlock.size() > attributes.maxBlockSize) ||
-            (attributes.minBlockSize != 0 && basicBlock.size() < attributes.minBlockSize)
-        )
-        {
+        if (SettingsParser::ShouldSkipBlock(&basicBlock, attributes))
             continue;
-        }
-
-        std::cout << basicBlock.size() << " | " << attributes.minBlockSize << std::endl;
 
         for (auto& instruction : basicBlock)
         {

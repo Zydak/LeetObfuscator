@@ -35,6 +35,8 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
 
                     LeetObfuscator::SettingsParser::GlobalAttributes globalSettings = LeetObfuscator::SettingsParser::ParseGlobalAttributes();
                     LeetObfuscator::RandomNumberGenerator::CreateGlobalRandomNumberGenerator(globalSettings.defaultRuntimeSeed);
+                    std::cout << "RUNTIME SEED: " << globalSettings.defaultRuntimeSeed << std::endl;
+
                     // add passes according to the config
                     for (auto& pass : globalSettings.passes)
                     {

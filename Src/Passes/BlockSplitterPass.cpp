@@ -27,20 +27,19 @@ llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &mod
 void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
 {
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
-        function, SettingsParser::PassType::BlockSplitterPass, m_Arguments);
-    if (attributes.skip)
+        function, SettingsParser::PassType::BlockSplitterPass, m_Arguments
+    );
+    if (SettingsParser::ShouldSkipFunction(&function, attributes))
     {
         return;
     }
 
-    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
-    if (generator->GetSeed() != attributes.runtimeSeed)
-        generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
     std::vector<llvm::BasicBlock*> blocksToSplit;
     for (auto& block : function)
     {
-        if (block.size() > attributes.maxBlockSize)
+        if (block.size() > attributes.blockSplitSize)
         {
             if (generator->DrawRange(0u, 100u) > attributes.blockSplitterProbability)
                 continue;
@@ -54,13 +53,13 @@ void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
         llvm::BasicBlock* block = blocksToSplit.back();
         //llvm::errs() << "SPLITTING: " << block->getParent()->getName() << "\n";
         blocksToSplit.pop_back();
-        if (block->size() <= attributes.maxBlockSize)
+        if (block->size() <= attributes.blockSplitSize)
         {
             continue;
         }
 
         auto it = block->begin();
-        std::advance(it, attributes.maxBlockSize);
+        std::advance(it, attributes.blockSplitSize);
 
         llvm::BasicBlock* newBlock = block->splitBasicBlock(it);
 
@@ -77,7 +76,7 @@ void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
         }
     }
 
-    std::shuffle(blocksToShuffle.begin(), blocksToShuffle.end(), std::mt19937(std::random_device{}()));
+    generator->Shuffle(blocksToShuffle.begin(), blocksToShuffle.end());
 
     for (auto* block : blocksToShuffle)
     {

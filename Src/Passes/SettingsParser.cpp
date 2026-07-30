@@ -7,6 +7,7 @@
 #include <iostream>
 #include <limits>
 #include <random>
+#include "llvm/IR/InstIterator.h"
 
 namespace LeetObfuscator
 {
@@ -243,6 +244,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"maxBlockSize", UnsignedOption(&FA::maxBlockSize)},
         {"minBlockSize", UnsignedOption(&FA::minBlockSize)},
         {"probability", UnsignedOption(&FA::blockSplitterProbability, 100u)},
+        {"blockSplitSize", UnsignedOption(&FA::blockSplitSize)},
     };
     static const std::vector<Option> dispatcherOptions = {
         {"skip", ApplySkip},
@@ -260,12 +262,12 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
-        {"bogusBlockCount", EnumOption<SettingsParser::BogusBlockCount>(&FA::bogusBlockCount, {
-            {"max", SettingsParser::BogusBlockCount::Max},
-            {"half", SettingsParser::BogusBlockCount::Half},
-            {"random", SettingsParser::BogusBlockCount::Random},
-            {"constant", SettingsParser::BogusBlockCount::Constant},
-        }, "expected max, half, random, or constant")},
+        {"probability", UnsignedOption(&FA::antiAnalysisProbability, 100u)},
+        {"bogusInsertPosition", EnumOption<SettingsParser::BogusInsertPosition>(&FA::antiAnalysisInsertPosition, {
+            {"start", SettingsParser::BogusInsertPosition::Start},
+            {"random", SettingsParser::BogusInsertPosition::Random},
+        }, "expected start or random")},
+        {"rdtscProbability", UnsignedOption(&FunctionAttributes::antiAnalysisRdtscProbability, 100u)},
         {"validBogusBlocksProbability", UnsignedOption(&FA::validBogusBlocksProbability, 100u)},
         {"invalidBogusBlocksProbability", UnsignedOption(&FA::invalidBogusBlocksProbability, 100u)},
     };
@@ -280,7 +282,14 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"probability", UnsignedOption(&FA::aambaProbability, 100u)},
         {"targetOps", StringListOption(&FA::aambaTargetOps)},
     };
-    // AntiAliasingPass has no per-function options beyond the common ones.
+    static const std::vector<Option> antiAliasingOptions = {
+        {"skip", ApplySkip},
+        {"forcePass", ApplyForcePass},
+        {"runtimeSeed", ApplyRuntimeSeed},
+        {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
+        {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
+        {"probability", UnsignedOption(&FA::antiAliasingProbability, 100u)},
+    };
     static const std::vector<Option> noOptions;
 
     switch (passType)
@@ -291,6 +300,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         case SettingsParser::PassType::DispatcherPass: return dispatcherOptions;
         case SettingsParser::PassType::AntiAnalysisPass: return antiAnalysisOptions;
         case SettingsParser::PassType::AAMBAPass: return aambaOptions;
+        case SettingsParser::PassType::AntiAliasingPass: return antiAliasingOptions;
         default: return noOptions;
     }
 }
@@ -407,12 +417,11 @@ LeetObfuscator::SettingsParser::ParseFunctionAttributes(llvm::Function& function
         result.minFunctionSize = 0;
         result.maxFunctionSize = 0;
     }
-    if (passType == PassType::BlockSplitterPass &&
-        (result.maxBlockSize == 0 || result.minBlockSize == 0 || result.minBlockSize > result.maxBlockSize))
+    if (result.maxFunctionSize != 0 && result.minBlockSize > result.maxBlockSize)
     {
-        ReportInvalidArgument(function, "minBlockSize/maxBlockSize", "sizes must be non-zero and minimum cannot exceed maximum");
-        result.maxBlockSize = 20;
-        result.minBlockSize = 1;
+        ReportInvalidArgument(function, "minBlockSize/maxBlockSize", "minimum cannot exceed maximum");
+        result.maxBlockSize = 0;
+        result.minBlockSize = 0;
     }
 
     return result;
@@ -443,6 +452,42 @@ LeetObfuscator::SettingsParser::Pass LeetObfuscator::SettingsParser::ParsePassSt
         parameterText = parameter.second;
     }
     return pass;
+}
+
+bool LeetObfuscator::SettingsParser::ShouldSkipFunction(llvm::Function *function, const FunctionAttributes& attributes)
+{
+    size_t instructionCount = std::distance(llvm::inst_begin(function), llvm::inst_end(function));
+    if ((attributes.maxFunctionSize != 0 && instructionCount > attributes.maxFunctionSize) ||
+        (attributes.minFunctionSize != 0 && instructionCount < attributes.minFunctionSize) ||
+        attributes.skip
+    )
+    {
+        return true;
+    }
+    return false;
+}
+
+bool LeetObfuscator::SettingsParser::ShouldSkipBlock(llvm::BasicBlock *block, const FunctionAttributes& attributes)
+{
+    if ((attributes.maxBlockSize != 0 && block->size() > attributes.maxBlockSize) ||
+        (attributes.minBlockSize != 0 && block->size() < attributes.minBlockSize)
+    )
+    {
+        return true;
+    }
+    return false;
+}
+
+std::shared_ptr<LeetObfuscator::RandomNumberGenerator> LeetObfuscator::SettingsParser::GetGenerator(const FunctionAttributes &attributes)
+{
+    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
+    if (generator->GetSeed() != attributes.runtimeSeed)
+    {
+        generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
+        std::cout << "UNIQUE SEED" << std::endl;
+    }
+
+    return generator;
 }
 
 LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser::ParseGlobalAttributes()
@@ -549,6 +594,8 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
         {
             if (value == "auto")
                 settings.defaultRuntimeSeed = GenerateRuntimeSeed();
+            else
+                settings.defaultRuntimeSeed = std::stoull(value.str());
             SetArgument(settings.parameters, key, {value.str()});
         }
         if (key == "stringEncryptionProbability")

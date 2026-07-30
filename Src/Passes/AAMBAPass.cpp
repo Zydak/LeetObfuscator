@@ -28,20 +28,20 @@ llvm::PreservedAnalyses LeetObfuscator::AAMBAPass::run(llvm::Module &module, llv
 void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
 {
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
-        function, SettingsParser::PassType::AAMBAPass, m_Arguments);
-    if (attributes.skip)
-    {
-        return;
-    }
+        function, SettingsParser::PassType::AAMBAPass, m_Arguments
+    );
 
-    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
-    if (generator->GetSeed() != attributes.runtimeSeed)
-        generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
+    SettingsParser::ShouldSkipFunction(&function, attributes);
+
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
     // Find all binary instructions
     std::vector<llvm::Instruction*> instructionsToObfuscate;
     for (auto& basicBlock : function)
     {
+        if (SettingsParser::ShouldSkipBlock(&basicBlock, attributes))
+            continue;
+        
         for (auto& instruction : basicBlock)
         {
             if (instruction.getMetadata(ARITHMETIC_TAG))
@@ -56,7 +56,7 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
 
     for (auto& instruction : instructionsToObfuscate)
     {
-        ObfuscateInstruction(instruction);
+        ObfuscateInstruction(instruction, generator);
     }
 
     // Verify the function at the end
@@ -83,7 +83,7 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
 
 }
 
-void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruction)
+void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruction, std::shared_ptr<RandomNumberGenerator> generator)
 {
     llvm::LLVMContext& context = instruction->getContext();
 
@@ -92,16 +92,13 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
     llvm::Value* x = instruction->getOperand(0);
     llvm::Value* y = instruction->getOperand(1);
 
-    std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> dist(0, 1);
-
     auto AAMBA = [&](llvm::Value** value)
     {
         llvm::Type* vType = (*value)->getType();
         llvm::FunctionType *FTy = llvm::FunctionType::get(vType, {vType}, false);
 
         enum class ArchPrimitive : uint32_t { ADC = 0, SBB = 1 };
-        ArchPrimitive primitive = static_cast<ArchPrimitive>(dist(rng));
+        ArchPrimitive primitive = static_cast<ArchPrimitive>(generator->DrawRange<uint32_t>(0, 1));
 
         const char *AsmText = nullptr;
 
@@ -166,7 +163,7 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
         *value = result;
     };
     
-    uint32_t random = rand(); // rand should be fine here
+    uint32_t random = generator->DrawRange(0u, 1u);
     if (random % 2 == 0 && (x->getType() == llvm::Type::getInt32Ty(context) || x->getType() == llvm::Type::getInt64Ty(context)))
     {
         AAMBA(&x);

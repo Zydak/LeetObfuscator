@@ -13,7 +13,7 @@ namespace LeetObfuscator
 
     private:
         void ObfuscateFunction(llvm::Function& function);
-        void ObfuscateInstruction(llvm::Instruction* instruction);
+        void ObfuscateInstruction(llvm::Instruction* instruction, std::shared_ptr<RandomNumberGenerator> generator);
         SettingsParser::PassArguments m_Arguments;
     };
 }

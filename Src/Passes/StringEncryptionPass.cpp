@@ -93,7 +93,7 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
         SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
             *userFunction, SettingsParser::PassType::StringEncryptionPass, m_Arguments
         );
-        if (attributes.skip)
+        if (SettingsParser::ShouldSkipFunction(userFunction, attributes))
         {
             llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
                          << "' - has a use in function '" << userFunction->getName()

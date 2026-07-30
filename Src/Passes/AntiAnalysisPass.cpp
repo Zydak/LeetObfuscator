@@ -29,24 +29,37 @@ llvm::PreservedAnalyses LeetObfuscator::AntiAnalysisPass::run(llvm::Module &modu
 void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &function)
 {
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
-        function, SettingsParser::PassType::AntiAnalysisPass, m_Arguments);
-    if (attributes.skip)
+        function, SettingsParser::PassType::AntiAnalysisPass, m_Arguments
+    );
+    
+    if (SettingsParser::ShouldSkipFunction(&function, attributes))
         return;
 
-    std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> distBlock(0, 100);
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
     {
         std::vector<llvm::BasicBlock*> blocksToObfuscate;
         for (auto& block : function)
         {
+            if (generator->DrawRange(0u, 100u) > attributes.antiAnalysisProbability)
+                continue;
+            
             blocksToObfuscate.push_back(&block);
         }
 
         for (llvm::BasicBlock* block : blocksToObfuscate)
         {
-            if (!ObfuscateBlock(block, true, true))
-                ObfuscateBlock(block, false, true);
+            bool rdtsc = false;
+            if (generator->DrawRange(0u, 100u) <= attributes.antiAnalysisRdtscProbability)
+                rdtsc = true;
+            
+            if (attributes.antiAnalysisInsertPosition == SettingsParser::BogusInsertPosition::Start)
+                ObfuscateBlock(block, false, generator, rdtsc);
+            else
+            {
+                if (!ObfuscateBlock(block, true, generator, rdtsc))
+                    ObfuscateBlock(block, true, generator, rdtsc); // Try one reroll
+            }
         }
     }
 
@@ -73,15 +86,15 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
     }
 }
 
-bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, bool randomPos, bool rdtsc)
+bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator, bool rdtsc)
 {
-    llvm::BasicBlock* bogus = CreateInvalidBogusBlock(block->getParent());
+    llvm::BasicBlock* bogus = CreateInvalidBogusBlock(block->getParent(), generator);
     llvm::BasicBlock* newSplitBlock = nullptr;
 
     if (rdtsc)
-        newSplitBlock = ChainBogusIntoBlockRdtsc(block, bogus, randomPos);
+        newSplitBlock = ChainBogusIntoBlockRdtsc(block, bogus, randomPos, generator);
     else
-        newSplitBlock = ChainBogusIntoBlock(block, bogus, randomPos);
+        newSplitBlock = ChainBogusIntoBlock(block, bogus, randomPos, generator);
 
     if (!newSplitBlock || !bogus)
     {
@@ -93,7 +106,7 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
 }
 
 
-llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::CreateInvalidBogusBlock(llvm::Function* function)
+llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::CreateInvalidBogusBlock(llvm::Function* function, std::shared_ptr<RandomNumberGenerator> generator)
 {
     llvm::LLVMContext& context = function->getContext();
     llvm::BasicBlock* bogusBlock = llvm::BasicBlock::Create(context, "leet.invalid.bogus", function, function->getEntryBlock().getNextNode()); // TODO random pos in func
@@ -113,10 +126,7 @@ llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::CreateInvalidBogusBlock(llvm
         "0x6B",
     };
 
-    std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> asmDist(0, asmOptions.size() - 1);
-
-    const char* selectedAsm = asmOptions[asmDist(rng)];
+    const char* selectedAsm = asmOptions[generator->DrawRange(0u, (uint32_t)asmOptions.size() - 1)];
 
     llvm::InlineAsm* inAsm = llvm::InlineAsm::get(
         llvm::FunctionType::get(bogusBuilder.getVoidTy(), false),
@@ -130,7 +140,7 @@ llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::CreateInvalidBogusBlock(llvm
     return bogusBlock;
 }
 
-llvm::BasicBlock* LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlock(llvm::BasicBlock *block, llvm::BasicBlock *bogusBlock, bool randomPos)
+llvm::BasicBlock* LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlock(llvm::BasicBlock *block, llvm::BasicBlock *bogusBlock, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator)
 {
     llvm::Function* function = block->getParent();
 
@@ -141,14 +151,11 @@ llvm::BasicBlock* LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlock(llvm::Ba
     {
         instructionCount++;
     }
-    std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> dist(0, instructionCount-1);
 
     if(randomPos)
     {
-        uint32_t insertRand = dist(rng);
-
-        std::advance(insertPoint, insertRand);
+        uint32_t t = generator->DrawRange(0u, (uint32_t)std::max(int(instructionCount)-1, 0));
+        std::advance(insertPoint, t);
     }
 
     if (insertPoint == block->end())
@@ -206,7 +213,7 @@ bool LeetObfuscator::AntiAnalysisPass::IsSafeToTimeAcross(llvm::Instruction &I)
     return true;
 }
 
-llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockRdtsc(llvm::BasicBlock *block, llvm::BasicBlock *bogusBlock, bool randomPos)
+llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockRdtsc(llvm::BasicBlock *block, llvm::BasicBlock *bogusBlock, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator)
 {
     // Instead of inserting a normal check that is always true insert an rdtsc check, this will also prevent any debugging
 
@@ -221,13 +228,10 @@ llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockRdtsc(llv
     if (instructionCount < 3)
         return nullptr;
 
-    std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> dist(0, std::max(int(instructionCount)-5, 0));
-
     auto startIt = block->getFirstNonPHIOrDbgOrAlloca();
     if (randomPos)
     {
-        uint32_t t = dist(rng);
+        uint32_t t = generator->DrawRange(0u, (uint32_t)std::max(int(instructionCount)-5, 0));
         std::advance(startIt, t);
     }
 

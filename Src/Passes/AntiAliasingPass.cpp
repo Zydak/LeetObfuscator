@@ -103,9 +103,13 @@ llvm::PreservedAnalyses LeetObfuscator::AntiAliasingPass::run(llvm::Module &modu
 void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &function)
 {
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
-        function, SettingsParser::PassType::AntiAliasingPass, m_Arguments);
-    if (attributes.skip)
+        function, SettingsParser::PassType::AntiAliasingPass, m_Arguments
+    );
+    
+    if (SettingsParser::ShouldSkipFunction(&function, attributes))
         return;
+
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
     llvm::Module* module = function.getParent();
 
@@ -124,6 +128,9 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
     {
         if (auto* allocaInst = llvm::dyn_cast<llvm::AllocaInst>(&inst))
         {
+            if (generator->DrawRange(0u, 100u) > attributes.antiAliasingProbability)
+                continue;
+            
             if (IsEligibleAlloca(allocaInst, dataLayout))
                 candidates.push_back(allocaInst);
         }
