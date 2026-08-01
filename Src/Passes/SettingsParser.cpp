@@ -82,7 +82,7 @@ static bool ParseUnsignedArgument(llvm::Function& function, const std::vector<st
         ReportInvalidArgument(function, key, "expected an unsigned integer in range");
         return false;
     }
-    output = static_cast<T>(parsed);
+    output = (T)parsed;
     return true;
 }
 
@@ -290,6 +290,12 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"probability", UnsignedOption(&FA::antiAliasingProbability, 100u)},
     };
+    static const std::vector<Option> nanomitesOptions = {
+        {"skip", ApplySkip},
+        {"forcePass", ApplyForcePass},
+        {"runtimeSeed", ApplyRuntimeSeed},
+        {"probability", UnsignedOption(&FA::antiAliasingProbability, 100u)},
+    };
     static const std::vector<Option> noOptions;
 
     switch (passType)
@@ -301,6 +307,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         case SettingsParser::PassType::AntiAnalysisPass: return antiAnalysisOptions;
         case SettingsParser::PassType::AAMBAPass: return aambaOptions;
         case SettingsParser::PassType::AntiAliasingPass: return antiAliasingOptions;
+        case SettingsParser::PassType::NanomitesPass: return nanomitesOptions;
         default: return noOptions;
     }
 }
@@ -372,6 +379,7 @@ LeetObfuscator::SettingsParser::PassType LeetObfuscator::SettingsParser::ParsePa
     if (passName == "AAMBAPass") return PassType::AAMBAPass;
     if (passName == "AntiAnalysisPass") return PassType::AntiAnalysisPass;
     if (passName == "AntiAliasingPass") return PassType::AntiAliasingPass;
+    if (passName == "NanomitesPass") return PassType::NanomitesPass;
     return PassType::INVALID;
 }
 
@@ -533,6 +541,7 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
             << "# \t- DispatcherPass\n"
             << "# \t- AntiAnalysisPass\n"
             << "# \t- AntiAliasingPass\n"
+            << "# \t- NanomitesPass\n"
             << "# \t- AAMBAPass\n"
             << "# Each pass needs to be on a separate line. Separate pass parameters with ',' and multi-values with '|'.\n"
             << "passes=\n"
@@ -544,7 +553,8 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
             << "    MBAPass(expansionCount=1),\n"
             << "    AAMBAPass(),\n"
             << "    AntiAliasingPass(),\n"
-            << "    AntiAnalysisPass();\n";
+            << "    AntiAnalysisPass(),\n"
+            << "    NanomitesPass();\n";
     }
 
     std::ifstream file("Leet.conf");

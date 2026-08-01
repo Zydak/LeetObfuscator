@@ -11,6 +11,8 @@
 #include "llvm/IR/NoFolder.h"
 #include "RandomNumberGenerator.h"
 
+#include <iostream>
+
 #include "llvm/IR/IntrinsicsX86.h"
 
 #include "PermutationHelper.h"
@@ -47,7 +49,7 @@ llvm::Function* CreateBarrierFunction(llvm::Module* module, llvm::LLVMContext& c
     barrierFn->addFnAttr(llvm::Attribute::NoInline);
     barrierFn->addFnAttr(llvm::Attribute::OptimizeNone);
 
-    llvm::BasicBlock* barrierBlock = llvm::BasicBlock::Create(context, "barrier", barrierFn);
+    llvm::BasicBlock* barrierBlock = llvm::BasicBlock::Create(context, "__leet_dispatcher_barrier", barrierFn);
     llvm::IRBuilder<> barrierBuilder(barrierBlock);
     barrierBuilder.CreateRetVoid();
 
@@ -56,7 +58,7 @@ llvm::Function* CreateBarrierFunction(llvm::Module* module, llvm::LLVMContext& c
 
 void RewriteTerminatorToDispatcher(llvm::Instruction* terminator, llvm::Value* nextIndex, llvm::AllocaInst* dispatcherState, llvm::ArrayType* jumpTableType, llvm::AllocaInst* jumpTable, llvm::Value* dispatcherBlockIndex, llvm::BasicBlock* dispatcherBlock, llvm::LLVMContext& context, llvm::Module* module, llvm::FunctionType* barrierFnType)
 {
-    llvm::Function* barrierFnBlock = CreateBarrierFunction(module, context, barrierFnType, "dispatcher_barrier");
+    llvm::Function* barrierFnBlock = CreateBarrierFunction(module, context, barrierFnType, "__leet_dispatcher_barrier");
 
     llvm::IRBuilder<> terminatorBuilder(terminator);
     terminatorBuilder.CreateStore(nextIndex, dispatcherState, true);
@@ -231,10 +233,21 @@ llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module
 {
     llvm::errs() << "Running DispatcherPass\n";
 
+    std::vector<llvm::Function*> functions;
+
     for (auto& function : module)
     {
-        if (function.getName() != "__leet_split_mix_64" && function.getName() != "__leet_permutation")
-            CreateDispatcherInAFunction(&function, mam);
+        if (function.getName() != "__leet_split_mix_64" && function.getName() != "__leet_permutation" &&
+            function.getName().find("__leet_exception") == std::string::npos
+        )
+        {
+            functions.push_back(&function);
+        }
+    }
+
+    for (auto& function : functions)
+    {
+        CreateDispatcherInAFunction(function, mam);
     }
 
     return llvm::PreservedAnalyses::none();
@@ -301,8 +314,8 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
 
     // The code will technically be valid but the verifier will still complain about uses before initialization
     // so demote everything to stack first. You could call MemToRegPass after everything is done but it will
-    // generate insane amount of instructions because blocks will be jumping between demoting to memory and promoting
-    // to stack on every entry, if you have a lot of blocks it's just bloat that doesn't do anything. So I just
+    // generate insane amount of instructions because blocks will be jumping between demoting to stack and promoting
+    // to registers on every entry, if you have a lot of blocks it's just bloat that doesn't do anything. So I just
     // do RegToMem without promoting it back afterwards
     auto &fam = mam.getResult<llvm::FunctionAnalysisManagerModuleProxy>(*module).getManager();
     llvm::RegToMemPass().run(*function, fam);
@@ -417,7 +430,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
 
     llvm::IRBuilder<> dispatcherBuilder(dispatcherBlock);
     llvm::FunctionType* barrierFnType = llvm::FunctionType::get(dispatcherBuilder.getVoidTy(), false);
-    llvm::Function* barrierFn = CreateBarrierFunction(module, context, barrierFnType, "dispatcher_barrier");
+    llvm::Function* barrierFn = CreateBarrierFunction(module, context, barrierFnType, "__leet_dispatcher_barrier");
 
     dispatcherBuilder.CreateCall(barrierFn);
 

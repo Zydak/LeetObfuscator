@@ -29,7 +29,8 @@ namespace LeetObfuscator
             DispatcherPass,
             AAMBAPass,
             AntiAnalysisPass,
-            AntiAliasingPass
+            AntiAliasingPass,
+            NanomitesPass
         };
 
         struct Pass
@@ -80,6 +81,8 @@ namespace LeetObfuscator
 
             uint32_t aambaProbability = 100;
             std::vector<std::string> aambaTargetOps;
+
+            uint32_t NanomitesProbability = 100;
         };
 
         static FunctionAttributes ParseFunctionAttributes(

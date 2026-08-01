@@ -11,6 +11,7 @@
 #include "AAMBAPass.h"
 #include "AntiAnalysisPass.h"
 #include "AntiAliasingPass.h"
+#include "NanomitesPass.h"
 
 #include "SettingsParser.h"
 #include "RandomNumberGenerator.h"
@@ -62,6 +63,9 @@ extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo
                                 break;
                             case LeetObfuscator::SettingsParser::PassType::AntiAliasingPass:
                                 passManager.addPass(LeetObfuscator::AntiAliasingPass(pass.parameters));
+                                break;
+                            case LeetObfuscator::SettingsParser::PassType::NanomitesPass:
+                                passManager.addPass(LeetObfuscator::NanomitesPass(pass.parameters));
                                 break;
                             default:
                                 llvm::errs() << "INVALID PASS WAS FOUND\n";

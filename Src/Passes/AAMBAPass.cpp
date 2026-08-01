@@ -98,7 +98,7 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
         llvm::FunctionType *FTy = llvm::FunctionType::get(vType, {vType}, false);
 
         enum class ArchPrimitive : uint32_t { ADC = 0, SBB = 1 };
-        ArchPrimitive primitive = static_cast<ArchPrimitive>(generator->DrawRange<uint32_t>(0, 1));
+        ArchPrimitive primitive = (ArchPrimitive)generator->DrawRange<uint32_t>(0, 1);
 
         const char *AsmText = nullptr;
 

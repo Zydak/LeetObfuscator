@@ -267,7 +267,7 @@ llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockRdtsc(llv
     llvm::Value* rdtscEnd = originalBlockBuilder.CreateCall(rdtscIntr, {}, "rdtsc");
     llvm::Value* time = originalBlockBuilder.CreateSub(rdtscEnd, rdtscStart);
 
-    llvm::Value* condition = originalBlockBuilder.CreateICmpUGE(time, originalBlockBuilder.getInt64(0x10000));
+    llvm::Value* condition = originalBlockBuilder.CreateICmpUGE(time, originalBlockBuilder.getInt64(100000000ULL));
     originalBlockBuilder.CreateCondBr(condition, bogusBlock, newSplitBlock);
 
     llvm::IRBuilder<> bogusBlockBuilder(bogusBlock, bogusBlock->end());

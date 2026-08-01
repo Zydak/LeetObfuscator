@@ -109,6 +109,11 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
     if (SettingsParser::ShouldSkipFunction(&function, attributes))
         return;
 
+    if (function.getName().find("__leet_exception") != std::string::npos || function.getName().find("__leet_dispatcher_barrier") != std::string::npos)
+    {
+        return;
+    }
+
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
     llvm::Module* module = function.getParent();
@@ -139,7 +144,7 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
     if (candidates.size() < s_MinSlotsToBother)
         return;
 
-    uint32_t numSlots = static_cast<uint32_t>(candidates.size());
+    uint32_t numSlots = uint32_t(candidates.size());
 
     uint64_t maxSize = 0;
     llvm::Align maxAlign(1);
@@ -155,7 +160,7 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
     }
 
     uint64_t slotSize = llvm::alignTo(maxSize, maxAlign.value());
-    uint64_t totalBytes = slotSize * static_cast<uint64_t>(numSlots);
+    uint64_t totalBytes = slotSize * uint64_t(numSlots);
 
     // create the buffer and permutation table
     llvm::IRBuilder<> entryBuilder(&entryBlock, entryBlock.begin());

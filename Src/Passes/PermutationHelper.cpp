@@ -30,7 +30,7 @@
 //       for (uint32_t i = 0; i < size; i++)
 //           table[i] = i;
 //       for (int i = size - 1; i > 0; i--) {
-//           uint64_t z = splitmix64_next(&state);
+//           uint64_t z = __leet_split_mix_64(&state);
 //           int j = z % (i + 1);
 //           uint32_t tmp = table[i];
 //           table[i] = table[j];
