@@ -432,6 +432,9 @@ LeetObfuscator::SettingsParser::ParseFunctionAttributes(llvm::Function& function
         result.minBlockSize = 0;
     }
 
+    if (function.getName().find("llvm.") != std::string::npos)
+        result.skip = true;
+
     return result;
 }
 

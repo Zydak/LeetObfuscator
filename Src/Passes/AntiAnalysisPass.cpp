@@ -195,19 +195,19 @@ llvm::BasicBlock* LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlock(llvm::Ba
     return newSplitBlock;
 }
 
-bool LeetObfuscator::AntiAnalysisPass::IsSafeToTimeAcross(llvm::Instruction &I)
+bool LeetObfuscator::AntiAnalysisPass::IsSafeToTimeAcross(llvm::Instruction &instruction)
 {
     // Exclude anything that can block, trap, or take unbounded/variable time.
-    if (llvm::isa<llvm::CallBase>(I)) // covers CallInst, InvokeInst, CallBrInst
+    if (llvm::isa<llvm::CallBase>(instruction)) // covers CallInst, InvokeInst, CallBrInst
         return false;
-    if (I.isAtomic()) // atomicrmw, cmpxchg, atomic load/store
+    if (instruction.isAtomic()) // atomicrmw, cmpxchg, atomic load/store
         return false;
-    if (llvm::isa<llvm::FenceInst>(I))
+    if (llvm::isa<llvm::FenceInst>(instruction))
         return false;
-    if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&I))
+    if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&instruction))
         if (LI->isVolatile())
             return false;
-    if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&I))
+    if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&instruction))
         if (SI->isVolatile())
             return false;
     return true;
@@ -286,24 +286,24 @@ llvm::Value* LeetObfuscator::AntiAnalysisPass::FindUsableInput(llvm::DominatorTr
     // before calling FindUsableInput), so this is safe to dereference.
     llvm::Instruction* insertPointInst = &*insertIt;
 
-    auto consider = [&](llvm::Value* V)
+    auto consider = [&](llvm::Value* value)
     {
-        int r = RankValue(V);
+        int r = RankValue(value);
         if (r < 0 || r >= bestRank)
             return;
 
         // A candidate is only safe to reuse at insertIt if it actually
         // dominates that point so check with with a tree
-        if (auto* I = llvm::dyn_cast<llvm::Instruction>(V))
+        if (auto* instruction = llvm::dyn_cast<llvm::Instruction>(value))
         {
-            if (!tree.dominates(I, insertPointInst))
+            if (!tree.dominates(instruction, insertPointInst))
                 return;
         }
         // Function arguments dominate every instruction in the function,
         // so no check is needed for those.
 
         bestRank = r;
-        best = V;
+        best = value;
     };
 
     bool isInsertPoint = true; // insertIt's own result hasn't executed yet so skip it
@@ -326,38 +326,39 @@ llvm::Value* LeetObfuscator::AntiAnalysisPass::FindUsableInput(llvm::DominatorTr
     if (best)
         return best;
 
-    llvm::Function* F = block->getParent();
-    for (llvm::Argument& Arg : F->args())
+    llvm::Function* function = block->getParent();
+    for (llvm::Argument& Arg : function->args())
         consider(&Arg);
     return best;
 }
 
-// Ranks a candidate value: lower is better, -1 means unusable.
-int LeetObfuscator::AntiAnalysisPass::RankValue(llvm::Value* V)
+int LeetObfuscator::AntiAnalysisPass::RankValue(llvm::Value* value)
 {
-    if (!V || llvm::isa<llvm::InlineAsm>(V))
+    if (!value || llvm::isa<llvm::InlineAsm>(value))
         return -1;
 
-    // Reject intrinsic functions like llvm.x86.rdtsc.
-    // They cannot be used as ordinary values / addresses for whatever reason
-    if (auto *F = llvm::dyn_cast<llvm::Function>(V)) {
-        if (F->isIntrinsic())
+    if (auto *function = llvm::dyn_cast<llvm::Function>(value))
+        if (function->isIntrinsic())
             return -1;
-    }
 
-    llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(V);
-    if (CI)
-    {
-        if (llvm::isa<llvm::InlineAsm>(CI->getCalledOperand()))
-        {
+    if (auto *callInstruction = llvm::dyn_cast<llvm::CallInst>(value))
+        if (llvm::isa<llvm::InlineAsm>(callInstruction->getCalledOperand()))
             return -1;
-        }
-    }
-    llvm::Type* Ty = V->getType();
-    bool isConst = llvm::isa<llvm::Constant>(V);
+
+    llvm::Type* Ty = value->getType();
+    bool isConst = llvm::isa<llvm::Constant>(value);
+
     if (Ty->isIntegerTy())
-        return isConst ? 2 : 0;
+    {
+        unsigned bits = Ty->getIntegerBitWidth();
+        // no i1, no i128+, no odd widths, they're not allocated in normal registers
+        // and LLVM doesn't like that fact
+        if (bits != 8 && bits != 16 && bits != 32 && bits != 64)
+            return -1;
+        return isConst ? 2 : 0; // non const int can't do better
+    }
     if (Ty->isPointerTy())
         return isConst ? 3 : 1;
+
     return -1;
 }

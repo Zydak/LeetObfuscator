@@ -48,6 +48,13 @@ bool IsEligibleAlloca(llvm::AllocaInst* allocaInst, const llvm::DataLayout& data
     if (allocaInst->getName().starts_with("leet."))
         return false;
 
+    // auto* type = allocaInst->getAllocatedType();
+    // if (llvm::dyn_cast<llvm::StructType>(type) != nullptr)
+    // {
+    //     llvm::errs() << "SKIPPING STRUCT\n";
+    //     return false;
+    // }
+
     uint64_t fixedSize;
     if (!TryGetAllocaTotalSize(allocaInst, dataLayout, fixedSize))
         return false;
@@ -157,6 +164,9 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
         maxSize = std::max(maxSize, size);
         llvm::Align typeAlign = dataLayout.getPrefTypeAlign(allocaInst->getAllocatedType());
         maxAlign = std::max(maxAlign, std::max(allocaInst->getAlign(), typeAlign));
+        
+        // allocaInst->getAllocatedType()->print(llvm::errs());
+        // llvm::errs() << "\n";
     }
 
     uint64_t slotSize = llvm::alignTo(maxSize, maxAlign.value());

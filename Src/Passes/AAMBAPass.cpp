@@ -31,7 +31,8 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
         function, SettingsParser::PassType::AAMBAPass, m_Arguments
     );
 
-    SettingsParser::ShouldSkipFunction(&function, attributes);
+    if (SettingsParser::ShouldSkipFunction(&function, attributes))
+        return;
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
@@ -44,12 +45,12 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
         
         for (auto& instruction : basicBlock)
         {
-            if (instruction.getMetadata(ARITHMETIC_TAG))
+            if (auto* binOp = llvm::dyn_cast<llvm::BinaryOperator>(&instruction))
             {
                 if (generator->DrawRange(0u, 100u) > attributes.aambaProbability)
                     continue;
-                
-                instructionsToObfuscate.push_back(&instruction); // Obfuscate only prev MBA pass
+
+                instructionsToObfuscate.push_back(binOp);
             }
         }
     }
@@ -154,7 +155,7 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
         }
 
         llvm::InlineAsm *Asm = llvm::InlineAsm::get(
-            FTy, AsmText, "=r,r,~{rcx},~{cc}",
+            FTy, AsmText, "=r,r,~{rcx},~{cc},~{flags}",
             /*hasSideEffects=*/true, /*isAlignStack=*/false,
             llvm::InlineAsm::AD_ATT
         );
