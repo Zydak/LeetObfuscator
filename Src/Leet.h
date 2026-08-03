@@ -62,6 +62,7 @@
 #include <cstring>
 #include <cstdio>
 #include <setjmp.h>
+#include <cstdlib>
 
 struct NanomiteEntry {
     uint32_t nanomiteId;

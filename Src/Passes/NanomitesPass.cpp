@@ -47,22 +47,39 @@ bool LeetObfuscator::NanomitesPass::CanObfuscateCallSignature(llvm::CallInst* ca
     if (callInst->getFunctionType()->isVarArg())
         return false;
 
-    unsigned intArgCount = 0;
+    for (unsigned i = 0; i < callInst->arg_size(); i++)
+    {
+        if (callInst->paramHasAttr(i, llvm::Attribute::ByVal) ||
+            callInst->paramHasAttr(i, llvm::Attribute::StructRet) ||
+            callInst->paramHasAttr(i, llvm::Attribute::InAlloca) ||
+            callInst->paramHasAttr(i, llvm::Attribute::Preallocated))
+            return false;
+    }
+ 
     for (auto& use : callInst->args())
     {
         llvm::Type* argTy = use->getType();
-        if (!argTy->isIntegerTy() && !argTy->isPointerTy())
-            return false; // float/double/struct/vector not handled yet
-        if (++intArgCount > 6)
-            return false; // would need stack slots? Not supported yet
+        if (argTy->isFloatTy() || argTy->isDoubleTy())
+        {
+            continue;
+        }
+        else if (argTy->isIntegerTy() || argTy->isPointerTy())
+        {
+            continue;
+        }
+        else
+        {
+            return false; // vector, long double, aggregate, or some other bullshit
+        }
     }
-
+ 
     llvm::Type* retTy = callInst->getType();
-    if (!retTy->isVoidTy() && !retTy->isIntegerTy() && !retTy->isPointerTy())
-        return false; // floats not supported yet
-
+    if (!retTy->isVoidTy() && !retTy->isIntegerTy() && !retTy->isPointerTy() && !retTy->isFloatTy() && !retTy->isDoubleTy())
+        return false;
+ 
     return true;
 }
+
 
 std::string LeetObfuscator::NanomitesPass::MakeIdTrailer(uint32_t nanomiteId)
 {
@@ -79,9 +96,11 @@ uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(RandomNumberGen
     static std::vector<uint32_t> allIds;
 
     uint32_t nanomiteId;
-    do {
+    do
+    {
         nanomiteId = generator.DrawRange(1u, std::numeric_limits<uint32_t>::max());;
-    } while (std::find(allIds.begin(), allIds.end(), nanomiteId) != allIds.end());
+    }
+    while (std::find(allIds.begin(), allIds.end(), nanomiteId) != allIds.end());
 
     allIds.push_back(nanomiteId);
     return nanomiteId;
@@ -93,7 +112,6 @@ llvm::Function* LeetObfuscator::NanomitesPass::CreateTrampoline(llvm::Module& mo
 
     llvm::FunctionType* trampolineTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
 
-    // Use the actual function name in the trampoline name to ensure uniqueness
     std::string trampolineName = "__leet_trampoline_" + realFunc->getName().str();
     
     llvm::Function* trampoline = llvm::Function::Create(
@@ -117,7 +135,7 @@ llvm::Function* LeetObfuscator::NanomitesPass::CreateTrampoline(llvm::Module& mo
     std::string asmText = 
         "call " + target + "\n\t" +
         "int3\n\t" + 
-        MakeIdTrailer(0); // Empty ID
+        MakeIdTrailer(0); // Empty ID, exception handler will pop the address from the stack
 
     llvm::InlineAsm* trampolineAsm = llvm::InlineAsm::get(
         llvm::FunctionType::get(builder.getVoidTy(), false),
@@ -150,9 +168,10 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
 
     std::vector<llvm::CallInst*> instructions;
 
+    // Don't obfuscate exception stuff because it will break, also skip dispatcher barriers because there's too
+    // many of them and it will be slow, they're also empty calls so what's the point
     if (function->getName().find("__leet_dispatcher_barrier") != std::string::npos ||
         function->getName().find("__leet_exception") != std::string::npos ||
-        function->getName().find("_GLOBAL_") != std::string::npos || // TODO
         function->getName().find("__leet_trampoline") != std::string::npos
     )
         return;
@@ -164,12 +183,12 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
             llvm::CallInst* callInst = llvm::dyn_cast<llvm::CallInst>(&inst);
             if (callInst)
             {
+                // Again, skip llvm and our own stuff
                 if (callInst->getCalledFunction() &&
                     callInst->getCalledFunction()->getName().find("llvm.") == std::string::npos &&
                     callInst->getCalledFunction()->getName().find("__leet_dispatcher_barrier") == std::string::npos &&
                     callInst->getCalledFunction()->getName().find("__leet_exception") == std::string::npos &&
                     callInst->getCalledFunction()->getName().find("__leet_trampoline") == std::string::npos &&
-                    callInst->getCalledFunction()->getName().find("_GLOBAL_") == std::string::npos &&
                     callInst->getCalledFunction()->getName() != "sigaction" &&
                     callInst->getCalledFunction()->getName() != "sigemptyset"
                 )
@@ -185,7 +204,6 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
                         continue;
 
                     instructions.push_back(callInst);
-                    //std::cout << "FOUND ONE " << function->getName().str() << " | " << callInst->getCalledFunction()->getName().str() << std::endl;
                 }
             }
         }
@@ -200,16 +218,17 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     llvm::LLVMContext& context = function->getContext();
     llvm::Module* module = function->getParent();
 
-    llvm::StructType* entryType = llvm::StructType::get(context, {
-        llvm::Type::getInt32Ty(context),
-        llvm::PointerType::get(context, 0)
-    });
+    llvm::StructType* entryType = llvm::StructType::get(
+        context,
+        {llvm::Type::getInt32Ty(context), llvm::PointerType::get(context, 0)}
+    );
 
-    auto makeEntry = [&](uint32_t id, llvm::Constant* addr) -> llvm::Constant* {
-        return llvm::ConstantStruct::get(entryType, {
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), id),
-            addr
-        });
+    auto makeEntry = [&](uint32_t id, llvm::Constant* addr) -> llvm::Constant*
+    {
+        return llvm::ConstantStruct::get(
+            entryType,
+            {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), id), addr}
+        );
     };
 
     for (auto* callInst : instructions)
@@ -222,25 +241,78 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
 
         llvm::IRBuilder<> builder(callInst);
 
+        // Get all arguments
         std::vector<llvm::Value*> argValues;
         std::vector<llvm::Type*> argTypes;
-        for (unsigned i = 0; i < callInst->arg_size(); ++i)
+        std::vector<llvm::Value*> stackArgValues;
+        std::vector<llvm::Type*> stackArgTypes;
+        uint32_t intCounter = 0;
+        uint32_t floatCounter = 0;
+        for (uint32_t i = 0; i < callInst->arg_size(); i++)
         {
-            argValues.push_back(callInst->getArgOperand(i));
-            argTypes.push_back(callInst->getArgOperand(i)->getType());
-        }
-        std::string asmText = "int3\n\t" + MakeIdTrailer(callSiteId);
+            llvm::Type* type = callInst->getArgOperand(i)->getType();
 
+            if (type->isFloatTy() || type->isDoubleTy())
+            {
+                if (floatCounter >= 8)
+                {
+                    stackArgValues.push_back(callInst->getArgOperand(i));
+                    stackArgTypes.push_back(type);
+                }
+                else
+                {
+                    argValues.push_back(callInst->getArgOperand(i));
+                    argTypes.push_back(type);
+                }
+                floatCounter++;
+            }
+            else
+            {
+                if (intCounter >= 6)
+                {
+                    stackArgValues.push_back(callInst->getArgOperand(i));
+                    stackArgTypes.push_back(type);
+                }
+                else
+                {
+                    argValues.push_back(callInst->getArgOperand(i));
+                    argTypes.push_back(type);
+                }
+                intCounter++;
+            }
+        }
+        std::cout << "Number of stack args: " << stackArgValues.size() << std::endl;
         bool hasRet = !callInst->getType()->isVoidTy();
         llvm::Type* retType = hasRet ? callInst->getType() : builder.getVoidTy();
+        bool isRetFloatOrDouble = retType->isFloatTy() || retType->isDoubleTy();
 
-        // Create an int3 to the trampoline
+        uint32_t stackArgCount = (uint32_t)stackArgValues.size();
+        uint32_t stackPad = (stackArgCount % 2 != 0) ? 8u : 0u;
+        uint32_t stackAdjust = stackArgCount * 8u + stackPad;
+
+        bool needGprScratch = false;
+        bool needXmmScratch = false;
+        for (llvm::Type* t : stackArgTypes)
+        {
+            if (t->isFloatTy() || t->isDoubleTy())
+                needXmmScratch = true;
+            else
+                needGprScratch = true;
+        }
+
+        // Dummy outputs are needed for the arguments, otherwise LLVM will assume that their value didn't change
         std::vector<llvm::Type*> outFieldTypes;
         if (hasRet)
             outFieldTypes.push_back(retType);
-        for (unsigned i = 0; i < argValues.size(); ++i)
+        for (uint32_t i = 0; i < argValues.size(); i++)
             outFieldTypes.push_back(argTypes[i]);
+        
+        if (needGprScratch)
+            outFieldTypes.push_back(llvm::Type::getInt64Ty(context));
+        if (needXmmScratch)
+            outFieldTypes.push_back(llvm::Type::getDoubleTy(context));
 
+        // These dummy outputs will all be in a single struct
         llvm::Type* asmRetType;
         if (outFieldTypes.empty())
             asmRetType = builder.getVoidTy();
@@ -260,43 +332,159 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
 
         // Outputs first
         if (hasRet)
+            appendConstraint(isRetFloatOrDouble ? "={xmm0}" : "={rax}");
+
+        floatCounter = 0;
+        intCounter = 0;
+        for (uint32_t i = 0; i < argValues.size(); i++)
         {
-            appendConstraint("={rax}");
+            if (argTypes[i]->isFloatTy() || argTypes[i]->isDoubleTy())
+            {
+                appendConstraint("={xmm" + std::to_string(floatCounter) + "}");
+                floatCounter++;
+            }
+            else
+            {
+                appendConstraint(std::string("=") + kIntArgRegs[intCounter]);
+                intCounter++;
+            }
         }
-        for (unsigned i = 0; i < argValues.size(); ++i)
+
+        // Add constraint for clobber and save its index in the constraint
+        uint32_t scratchGprIdx = 0;
+        uint32_t scratchXmmIdx = 0;
+        if (needGprScratch)
         {
-            // dummy output, still has to be added to constraints. Without it the arguments will only be marked as input
-            // but in reality they can also get overwritten, by doing a dummy output the compiler will know the argument
-            // possibly gets destroyed
-            appendConstraint(std::string("=") + kIntArgRegs[i]);
+            scratchGprIdx = (hasRet ? 1u : 0u) + (uint32_t)argValues.size();
+            appendConstraint("=&r");
         }
+        if (needXmmScratch)
+        {
+            scratchXmmIdx = (hasRet ? 1u : 0u) + (uint32_t)argValues.size() + (needGprScratch ? 1u : 0u);
+            appendConstraint("=&x");
+        }
+
+        uint32_t numOutputs = (hasRet ? 1u : 0u) + (uint32_t)argValues.size() + (needGprScratch ? 1u : 0u) + (needXmmScratch ? 1u : 0u);
 
         // Also declare the dummy outputs as inputs, they're still arguments after all
-        unsigned tiedBase = hasRet ? 1 : 0;
-        for (unsigned i = 0; i < argValues.size(); ++i)
+        uint32_t tiedBase = hasRet ? 1 : 0;
+        for (uint32_t i = 0; i < argValues.size(); i++)
             appendConstraint(std::to_string(tiedBase + i));
 
-        // Then clobbers. Clobber EVERYTHING we have no fucking clue what the function potentially does.
-        if (!hasRet)
+        uint32_t memInputBase = numOutputs + static_cast<uint32_t>(argValues.size());
+        for (uint32_t i = 0; i < stackArgCount; i++)
+            appendConstraint("m");
+
+        // Then clobbers. Clobber EVERYTHING that's left, we have no fucking clue what the function potentially does
+        // and what the values of these registers will be after the call
+
+        if (!hasRet || isRetFloatOrDouble) // clobber rax if it's not an output
             appendConstraint("~{rax}");
 
-        // usused args registers, can still be clobbered just to be safe tho
-        for (unsigned i = argValues.size(); i < 6; ++i)
+        for (uint32_t i = intCounter; i < 6; i++)
             appendConstraint(std::string("~") + kIntArgRegs[i]);
+
+        // Leave one xmm register out of the clobber list when we need it as scratch -
+        // otherwise, whenever floats overflow to the stack (meaning xmm0-7 are all
+        // already pinned by real float args), this loop would clobber xmm8-15 too and
+        // leave nothing for "=&x" to allocate.
+        uint32_t floatClobberLimit = needXmmScratch ? 15u : 16u;
+        for (uint32_t i = floatCounter; i < floatClobberLimit; i++)
+        {
+            if (i == 0 && isRetFloatOrDouble)
+                continue;
+            appendConstraint("~{xmm" + std::to_string(i) + "}");
+        }
 
         appendConstraint("~{r10}");
         appendConstraint("~{r11}");
-        for (unsigned i = 0; i < 16; ++i)
-            appendConstraint("~{xmm" + std::to_string(i) + "}");
         appendConstraint("~{memory}");
         appendConstraint("~{dirflag}");
         appendConstraint("~{fpsr}");
         appendConstraint("~{flags}");
 
-        llvm::FunctionType* asmFuncType = llvm::FunctionType::get(asmRetType, argTypes, false);
+        // Build the asm text
+        std::string asmText;
+        if (stackAdjust > 0)
+            asmText += "sub $$" + std::to_string(stackAdjust) + ", %rsp\n\t";
+
+        // All stack arugments have to be written below RSP
+        uint32_t offset = 0;
+        for (uint32_t i = 0; i < stackArgCount; i++)
+        {
+            uint32_t memIdx = memInputBase + i;
+            llvm::Type* t = stackArgTypes[i];
+
+            llvm::Value* v = stackArgValues[i];
+            bool isImmiediate = false;
+            std::string valueText;
+
+            if (auto* ci = llvm::dyn_cast<llvm::ConstantInt>(v))
+            {
+                isImmiediate = true;
+                llvm::raw_string_ostream os(valueText);
+                ci->getValue().print(os, /*isSigned=*/true);
+            }
+
+            if (isImmiediate)
+            {
+                // Integers and pointers can be passed to the stack without a scratch register
+                uint32_t bits = t->isPointerTy() ? 64 : t->getIntegerBitWidth();
+                std::string mnemonic = (bits <= 8) ? "movb" : (bits <= 16) ? "movw" : (bits <= 32) ? "movl" : "movq";
+
+                // mov $imm, offset(%rsp)
+                asmText += mnemonic + " $$" + valueText + ", " + std::to_string(offset) + "(%rsp)\n\t";
+                std::cout << mnemonic + " $$" + valueText + ", " + std::to_string(offset) + "(%rsp)" << std::endl;
+            }
+            else if (t->isFloatTy())
+            {
+                asmText += "movss $" + std::to_string(memIdx) + ", $" + std::to_string(scratchXmmIdx) + "\n\t";
+                asmText += "movss $" + std::to_string(scratchXmmIdx) + ", " + std::to_string(offset) + "(%rsp)\n\t";
+            }
+            else if (t->isDoubleTy())
+            {
+                asmText += "movsd $" + std::to_string(memIdx) + ", $" + std::to_string(scratchXmmIdx) + "\n\t";
+                asmText += "movsd $" + std::to_string(scratchXmmIdx) + ", " + std::to_string(offset) + "(%rsp)\n\t";
+            }
+            else if (t->isPointerTy())
+            {
+                asmText += "movq $" + std::to_string(memIdx) + ", $" + std::to_string(scratchGprIdx) + "\n\t";
+                asmText += "movq $" + std::to_string(scratchGprIdx) + ", " + std::to_string(offset) + "(%rsp)\n\t";
+            }
+            else
+            {
+                uint32_t bits = t->getIntegerBitWidth();
+                std::string mnemonic = (bits <= 8) ? "movb" : (bits <= 16) ? "movw" : (bits <= 32) ? "movl" : "movq";
+                std::string mod = (bits <= 8) ? "b" : (bits <= 16) ? "w" : (bits <= 32) ? "k" : "";
+                std::string scratchRef = mod.empty()
+                    ? ("$" + std::to_string(scratchGprIdx))
+                    : ("${" + std::to_string(scratchGprIdx) + ":" + mod + "}"); // ${N:b/w/k} = 8/16/32 bit view of the scratch reg
+
+                asmText += mnemonic + " $" + std::to_string(memIdx) + ", " + scratchRef + "\n\t";
+                asmText += mnemonic + " " + scratchRef + ", " + std::to_string(offset) + "(%rsp)\n\t";
+            }
+
+            offset += 8;
+        }
+
+        asmText += "int3\n\t" + MakeIdTrailer(callSiteId);
+
+        if (stackAdjust > 0)
+            asmText += "\n\tadd $$" + std::to_string(stackAdjust) + ", %rsp";
+
+        llvm::FunctionType* asmFuncType;
+        {
+            std::vector<llvm::Type*> allInputTypes = argTypes;
+            allInputTypes.insert(allInputTypes.end(), stackArgTypes.begin(), stackArgTypes.end());
+            asmFuncType = llvm::FunctionType::get(asmRetType, allInputTypes, false);
+        }
+
         llvm::InlineAsm* trapAsm = llvm::InlineAsm::get(asmFuncType, asmText, constraints, /*hasSideEffects*/true);
 
-        llvm::CallInst* trapCall = builder.CreateCall(trapAsm, argValues);
+        std::vector<llvm::Value*> allInputValues = argValues;
+        allInputValues.insert(allInputValues.end(), stackArgValues.begin(), stackArgValues.end());
+
+        llvm::CallInst* trapCall = builder.CreateCall(trapAsm, allInputValues);
 
         // Because the dummy outputs were declared, the function will return a structure of rax + dummy outputs
         // we don't care about dummy stuff so just extract rax from the struct
@@ -309,7 +497,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
 
         llvm::Function* trampoline = CreateTrampoline(*module, realFunc);
 
-        // Trampoline block is technically orphaned, so make sure it's not opted out
+        // call inside the trampoline block is technically orphaned, so make sure it's not opted out
         llvm::appendToCompilerUsed(*module, {realFunc});
 
         nanomitesEntries.push_back(makeEntry(callSiteId, trampoline));
