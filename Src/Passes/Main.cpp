@@ -1,78 +1,78 @@
-#include "llvm/IR/PassManager.h"
-#include "llvm/Plugins/PassPlugin.h"
-#include "llvm/Passes/PassBuilder.h"
-#include "llvm/IR/Module.h"
+// #include "llvm/IR/PassManager.h"
+// #include "llvm/Plugins/PassPlugin.h"
+// #include "llvm/Passes/PassBuilder.h"
+// #include "llvm/IR/Module.h"
 
-#include "MBAPass.h"
-#include "StringEncryptionPass.h"
-#include "BlockSplitterPass.h"
-#include "DispatcherPass.h"
-#include "AnnotationPass.h"
-#include "AAMBAPass.h"
-#include "AntiAnalysisPass.h"
-#include "AntiAliasingPass.h"
-#include "NanomitesPass.h"
+// #include "MBAPass.h"
+// #include "StringEncryptionPass.h"
+// #include "BlockSplitterPass.h"
+// #include "DispatcherPass.h"
+// #include "AnnotationPass.h"
+// #include "AAMBAPass.h"
+// #include "AntiAnalysisPass.h"
+// #include "AntiAliasingPass.h"
+// #include "NanomitesPass.h"
 
-#include "SettingsParser.h"
-#include "RandomNumberGenerator.h"
+// #include "SettingsParser.h"
+// #include "RandomNumberGenerator.h"
 
-#include <iostream>
+// #include <iostream>
 
-extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo()
-{
-    return
-    {
-        LLVM_PLUGIN_API_VERSION,
-        "LeetObfuscatorPass",
-        "0.0.1",
-        [](llvm::PassBuilder& passBuilder)
-        {
+// extern "C" LLVM_ATTRIBUTE_WEAK llvm::PassPluginLibraryInfo llvmGetPassPluginInfo()
+// {
+//     return
+//     {
+//         LLVM_PLUGIN_API_VERSION,
+//         "LeetObfuscatorPass",
+//         "0.0.1",
+//         [](llvm::PassBuilder& passBuilder)
+//         {
 
-            passBuilder.registerOptimizerLastEPCallback(
-                [](llvm::ModulePassManager& passManager, llvm::OptimizationLevel, llvm::ThinOrFullLTOPhase)
-                {
-                    // Annotation pass is mandatory
-                    passManager.addPass(LeetObfuscator::AnnotationPass());
+//             passBuilder.registerOptimizerLastEPCallback(
+//                 [](llvm::ModulePassManager& passManager, llvm::OptimizationLevel, llvm::ThinOrFullLTOPhase)
+//                 {
+//                     // Annotation pass is mandatory
+//                     passManager.addPass(LeetObfuscator::AnnotationPass());
 
-                    LeetObfuscator::SettingsParser::GlobalAttributes globalSettings = LeetObfuscator::SettingsParser::ParseGlobalAttributes();
-                    LeetObfuscator::RandomNumberGenerator::CreateGlobalRandomNumberGenerator(globalSettings.defaultRuntimeSeed);
-                    std::cout << "RUNTIME SEED: " << globalSettings.defaultRuntimeSeed << std::endl;
+//                     LeetObfuscator::SettingsParser::GlobalAttributes globalSettings = LeetObfuscator::SettingsParser::ParseGlobalAttributes();
+//                     LeetObfuscator::RandomNumberGenerator::CreateGlobalRandomNumberGenerator(globalSettings.defaultRuntimeSeed);
+//                     std::cout << "RUNTIME SEED: " << globalSettings.defaultRuntimeSeed << std::endl;
 
-                    // add passes according to the config
-                    for (auto& pass : globalSettings.passes)
-                    {
-                        switch (pass.type)
-                        {
-                            case LeetObfuscator::SettingsParser::PassType::StringEncryptionPass:
-                                passManager.addPass(LeetObfuscator::StringEncryptionPass(pass.parameters));
-                                break;
-                            case LeetObfuscator::SettingsParser::PassType::MBAPass:
-                                passManager.addPass(LeetObfuscator::MBAPass(pass.parameters));
-                                break;
-                            case LeetObfuscator::SettingsParser::PassType::BlockSplitterPass:
-                                passManager.addPass(LeetObfuscator::BlockSplitterPass(pass.parameters));
-                                break;
-                            case LeetObfuscator::SettingsParser::PassType::DispatcherPass:
-                                passManager.addPass(LeetObfuscator::DispatcherPass(pass.parameters));
-                                break;
-                            case LeetObfuscator::SettingsParser::PassType::AAMBAPass:
-                                passManager.addPass(LeetObfuscator::AAMBAPass(pass.parameters));
-                                break;
-                            case LeetObfuscator::SettingsParser::PassType::AntiAnalysisPass:
-                                passManager.addPass(LeetObfuscator::AntiAnalysisPass(pass.parameters));
-                                break;
-                            case LeetObfuscator::SettingsParser::PassType::AntiAliasingPass:
-                                passManager.addPass(LeetObfuscator::AntiAliasingPass(pass.parameters));
-                                break;
-                            case LeetObfuscator::SettingsParser::PassType::NanomitesPass:
-                                passManager.addPass(LeetObfuscator::NanomitesPass(pass.parameters));
-                                break;
-                            default:
-                                llvm::errs() << "INVALID PASS WAS FOUND\n";
-                        }
-                    }
-                }
-            );
-        }
-    };
-}
+//                     // add passes according to the config
+//                     for (auto& pass : globalSettings.passes)
+//                     {
+//                         switch (pass.type)
+//                         {
+//                             case LeetObfuscator::SettingsParser::PassType::StringEncryptionPass:
+//                                 passManager.addPass(LeetObfuscator::StringEncryptionPass(pass.parameters));
+//                                 break;
+//                             case LeetObfuscator::SettingsParser::PassType::MBAPass:
+//                                 passManager.addPass(LeetObfuscator::MBAPass(pass.parameters));
+//                                 break;
+//                             case LeetObfuscator::SettingsParser::PassType::BlockSplitterPass:
+//                                 passManager.addPass(LeetObfuscator::BlockSplitterPass(pass.parameters));
+//                                 break;
+//                             case LeetObfuscator::SettingsParser::PassType::DispatcherPass:
+//                                 passManager.addPass(LeetObfuscator::DispatcherPass(pass.parameters));
+//                                 break;
+//                             case LeetObfuscator::SettingsParser::PassType::AAMBAPass:
+//                                 passManager.addPass(LeetObfuscator::AAMBAPass(pass.parameters));
+//                                 break;
+//                             case LeetObfuscator::SettingsParser::PassType::AntiAnalysisPass:
+//                                 passManager.addPass(LeetObfuscator::AntiAnalysisPass(pass.parameters));
+//                                 break;
+//                             case LeetObfuscator::SettingsParser::PassType::AntiAliasingPass:
+//                                 passManager.addPass(LeetObfuscator::AntiAliasingPass(pass.parameters));
+//                                 break;
+//                             case LeetObfuscator::SettingsParser::PassType::NanomitesPass:
+//                                 passManager.addPass(LeetObfuscator::NanomitesPass(pass.parameters));
+//                                 break;
+//                             default:
+//                                 llvm::errs() << "INVALID PASS WAS FOUND\n";
+//                         }
+//                     }
+//                 }
+//             );
+//         }
+//     };
+// }
