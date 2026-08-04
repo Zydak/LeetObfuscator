@@ -1,3 +1,5 @@
+message(STATUS "LeetObfuscator CMake file included!")
+
 add_llvm_component_library(LLVMLeetObfuscator
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/AAMBAPass.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/AnnotationPass.cpp
