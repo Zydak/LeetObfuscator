@@ -1,0 +1,4 @@
+[submodule "leet-llvm-project"]
+	path = leet-llvm-project
+	url = https://github.com/Zydak/leet-llvm-project
+	branch = release/22.x
