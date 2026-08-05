@@ -11,8 +11,6 @@
 #include <random>
 #include "RandomNumberGenerator.h"
 
-static constexpr const char *ARITHMETIC_TAG = "obfuscator.arithmetic";
-
 llvm::PreservedAnalyses LeetObfuscator::AAMBAPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running AAMBAPass\n";

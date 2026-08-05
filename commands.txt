@@ -11,5 +11,5 @@ clang++ -S -emit-llvm -fpass-plugin=./LeetObfuscator.so ../Src/Tests/Test.cpp -o
 opt -passes=dot-cfg test.il -disable-output
 dot -Tpng .main.dot -o main.png
 
-cmake ../leet-llvm-project/llvm -G Ninja -DLLVM_USE_SPLIT_DWARF=ON -DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_PROJECTS="clang;lld" -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_USE_LINKER=mold
+cmake ../leet-llvm-project/llvm -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DLLVM_USE_LINKER=mold -DLLVM_USE_SPLIT_DWARF=ON -DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_PROJECTS=clang -DLLVM_TARGETS_TO_BUILD=X86 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 ninja clang

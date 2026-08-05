@@ -1,221 +1,210 @@
-// #include "StringEncryptionPass.h"
+#include "StringEncryptionPass.h"
 
-// #include "llvm/IR/ReplaceConstant.h"
-// #include "llvm/IR/IRBuilder.h"
-// #include "llvm/Transforms/Utils/Cloning.h"
-// #include "llvm/Bitcode/BitcodeReader.h"
-// #include "llvm/IR/Module.h"
-// #include "SettingsParser.h"
-// #include "RandomNumberGenerator.h"
+#include "llvm/IR/ReplaceConstant.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/IR/Module.h"
+#include "SettingsParser.h"
+#include "RandomNumberGenerator.h"
 
-// #include "leet_string_obf_runtime_bc.inc" // template bitcode
+llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
+{
+    llvm::errs() << "Running StringEncryptionPass\n";
 
-// llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
-// {
-//     llvm::errs() << "Running StringEncryptionPass\n";
+    srand(time(nullptr));
+    std::vector<StringGlobalInfo> stringGlobals;
+    for (auto& global : module.globals())
+    {
+        if (IsEncryptableStringGlobal(&global))
+        {
+            SettingsParser::GlobalAttributes globalAttributes = SettingsParser::ParseGlobalAttributes();
+            std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
 
-//     EmittedTemplate templates = GetTemplateFunctions(module);
+            if (generator->DrawRange(0u, 100u) > globalAttributes.stringEncryptionProbability)
+                continue;
 
-//     if (!templates.decryptFunction || !templates.getKeyFunction || !templates.module)
-//     {
-//         llvm::errs() << "ERROR: Failed to import template functions for string obfuscation. Skipping the pass.\n";
-//         return llvm::PreservedAnalyses::all();
-//     }
+            uint32_t key = generator->DrawRange(0u, std::numeric_limits<uint32_t>::max());
+            stringGlobals.push_back({&global, key});
+        }
+    }
 
-//     srand(time(nullptr));
-//     std::vector<StringGlobalInfo> stringGlobals;
-//     for (auto& global : module.globals())
-//     {
-//         if (IsEncryptableStringGlobal(&global))
-//         {
-//             SettingsParser::GlobalAttributes globalAttributes = SettingsParser::ParseGlobalAttributes();
-//             std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
+    if (stringGlobals.empty())
+        return llvm::PreservedAnalyses::all();
 
-//             if (generator->DrawRange(0u, 100u) > globalAttributes.stringEncryptionProbability)
-//                 continue;
+    for(auto& stringGlobal : stringGlobals)
+    {
+        EncryptGlobalAndPatchAllUses(stringGlobal);
+    }
 
-//             uint32_t key = generator->DrawRange(0u, std::numeric_limits<uint32_t>::max());
-//             stringGlobals.push_back({&global, key});
-//         }
-//     }
+    return llvm::PreservedAnalyses::none();
+}
 
-//     if (stringGlobals.empty())
-//         return llvm::PreservedAnalyses::all();
+bool LeetObfuscator::StringEncryptionPass::IsEncryptableStringGlobal(llvm::GlobalVariable *global)
+{
+    if (!global->hasInitializer() || !global->isConstant())
+        return false;
 
-//     for(auto& stringGlobal : stringGlobals)
-//     {
-//         EncryptGlobalAndPatchAllUses(stringGlobal, templates);
-//     }
+    if (global->getName().starts_with("llvm.") || global->getName().starts_with("leet."))
+        return false;
 
-//     templates.decryptFunction->eraseFromParent();
-//     templates.getKeyFunction->eraseFromParent();
+    llvm::ConstantDataArray* dataArray = llvm::dyn_cast<llvm::ConstantDataArray>(global->getInitializer());
+    if (!dataArray || !dataArray->isString() || dataArray->getNumElements() == 0)
+        return false;
 
-//     return llvm::PreservedAnalyses::none();
-// }
+    return true;
+}
 
-// bool LeetObfuscator::StringEncryptionPass::IsEncryptableStringGlobal(llvm::GlobalVariable *global)
-// {
-//     if (!global->hasInitializer() || !global->isConstant())
-//         return false;
+void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGlobalInfo &stringInfo)
+{
+    llvm::GlobalVariable* globalVar = stringInfo.globalVar;
+    uint32_t key = stringInfo.key;
 
-//     if (global->getName().starts_with("llvm.") || global->getName().starts_with("leet."))
-//         return false;
+    // Try to convert all uses into patchable instructions
+    llvm::convertUsersOfConstantsToInstructions({globalVar});
+    std::vector<llvm::Use*> usesToPatch;
+    for(auto& use : globalVar->uses())
+    {
+        if (!llvm::isa<llvm::Instruction>(use.getUser()))
+        {
+            // Some uses were still not patched there's nothing we can do for this global
+            llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
+                         << "' - has a non-instruction use ("
+                         << *use.getUser() << ") that can't be patched\n";
+            return;
+        }
 
-//     llvm::ConstantDataArray* dataArray = llvm::dyn_cast<llvm::ConstantDataArray>(global->getInitializer());
-//     if (!dataArray || !dataArray->isString() || dataArray->getNumElements() == 0)
-//         return false;
+        // Check the function attirbutes of the user instruction's function, if it has "leet.skip" then we can't patch this use
+        llvm::Instruction* userInst = llvm::cast<llvm::Instruction>(use.getUser());
+        llvm::Function* userFunction = userInst->getFunction();
+        SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
+            *userFunction, SettingsParser::PassType::StringEncryptionPass, m_Arguments
+        );
+        if (SettingsParser::ShouldSkipFunction(userFunction, attributes))
+        {
+            llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
+                         << "' - has a use in function '" << userFunction->getName()
+                         << "' that has 'leet.skip' attribute, can't patch this use\n";
+            return;
+        }
+        usesToPatch.push_back(&use);
+    }
 
-//     return true;
-// }
+    llvm::ConstantDataArray* dataArray = llvm::cast<llvm::ConstantDataArray>(globalVar->getInitializer());
+    const size_t bytesCount = dataArray->getNumElements();
+    std::vector<uint8_t> encryptedBytes;
+    encryptedBytes.reserve(bytesCount);
+    for(size_t i = 0; i < bytesCount; i++)
+    {
+        uint8_t key8 = uint8_t((key >> (8 * (i % 4))) & 0xFF);
+        uint8_t byte = dataArray->getElementAsInteger(i);
+        encryptedBytes.push_back(byte ^ key8);
+    }
+    llvm::Constant* newInitialzer = llvm::ConstantDataArray::get(globalVar->getContext(), encryptedBytes);
+    globalVar->setInitializer(newInitialzer);
 
-// void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGlobalInfo &stringInfo, const EmittedTemplate& templates)
-// {
-//     llvm::GlobalVariable* globalVar = stringInfo.globalVar;
-//     uint32_t key = stringInfo.key;
+    // Replace all uses with decrypt function
+    llvm::Function* decryptFunction = GetDecryptFunction(*globalVar->getParent(), key);
+    for (llvm::Use* use : usesToPatch)
+    {
+        llvm::Instruction* instruction = llvm::cast<llvm::Instruction>(use->getUser());
+        llvm::Function* parentFunction = instruction->getFunction();
 
-//     // Try to convert all uses into patchable instructions
-//     llvm::convertUsersOfConstantsToInstructions({globalVar});
-//     std::vector<llvm::Use*> usesToPatch;
-//     for(auto& use : globalVar->uses())
-//     {
-//         if (!llvm::isa<llvm::Instruction>(use.getUser()))
-//         {
-//             // Some uses were still not patched there's nothing we can do for this global
-//             llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
-//                          << "' - has a non-instruction use ("
-//                          << *use.getUser() << ") that can't be patched\n";
-//             return;
-//         }
+        llvm::IRBuilder<> builder(&parentFunction->getEntryBlock(), parentFunction->getEntryBlock().getFirstInsertionPt());
+        llvm::AllocaInst* stackBuffer = builder.CreateAlloca(builder.getInt8Ty(), builder.getInt32(bytesCount));
 
-//         // Check the function attirbutes of the user instruction's function, if it has "leet.skip" then we can't patch this use
-//         llvm::Instruction* userInst = llvm::cast<llvm::Instruction>(use.getUser());
-//         llvm::Function* userFunction = userInst->getFunction();
-//         SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
-//             *userFunction, SettingsParser::PassType::StringEncryptionPass, m_Arguments
-//         );
-//         if (SettingsParser::ShouldSkipFunction(userFunction, attributes))
-//         {
-//             llvm::errs() << "StringPass: skipping global '" << globalVar->getName()
-//                          << "' - has a use in function '" << userFunction->getName()
-//                          << "' that has 'leet.skip' attribute, can't patch this use\n";
-//             return;
-//         }
-//         usesToPatch.push_back(&use);
-//     }
+        // If this use feeds a PHI node, the decrypt call must be inserted at the
+        // end of the corresponding predecessor block (before its terminator),
+        // not before the PHI itself. Fuck phi nodes.
+        llvm::Instruction* insertBefore = instruction;
+        if (auto* phi = llvm::dyn_cast<llvm::PHINode>(instruction))
+        {
+            llvm::BasicBlock* incomingBlock = phi->getIncomingBlock(*use);
+            insertBefore = incomingBlock->getTerminator();
+        }
 
-//     llvm::ConstantDataArray* dataArray = llvm::cast<llvm::ConstantDataArray>(globalVar->getInitializer());
-//     const size_t bytesCount = dataArray->getNumElements();
-//     std::vector<uint8_t> encryptedBytes;
-//     encryptedBytes.reserve(bytesCount);
-//     for(size_t i = 0; i < bytesCount; i++)
-//     {
-//         uint8_t key8 = uint8_t((key >> (8 * (i % 4))) & 0xFF);
-//         uint8_t byte = dataArray->getElementAsInteger(i);
-//         encryptedBytes.push_back(byte ^ key8);
-//     }
-//     llvm::Constant* newInitialzer = llvm::ConstantDataArray::get(globalVar->getContext(), encryptedBytes);
-//     globalVar->setInitializer(newInitialzer);
+        llvm::IRBuilder<> callBuilder(insertBefore);
+        llvm::Value* decryptCall = callBuilder.CreateCall(decryptFunction, { globalVar, stackBuffer, builder.getInt32(bytesCount) });
+        use->set(decryptCall);
+    }
+}
 
-//     // Replace all uses with decrypt function
-//     llvm::Function* decryptFunction = GetDecryptFunction(*globalVar->getParent(), key, templates);
-//     for (llvm::Use* use : usesToPatch)
-//     {
-//         llvm::Instruction* instruction = llvm::cast<llvm::Instruction>(use->getUser());
-//         llvm::Function* parentFunction = instruction->getFunction();
+llvm::Function *LeetObfuscator::StringEncryptionPass::GetDecryptFunction(llvm::Module &module, uint32_t key)
+{
+    llvm::LLVMContext &context = module.getContext();
+    llvm::IRBuilder<> builder(context);
 
-//         llvm::IRBuilder<> builder(&parentFunction->getEntryBlock(), parentFunction->getEntryBlock().getFirstInsertionPt());
-//         llvm::AllocaInst* stackBuffer = builder.CreateAlloca(builder.getInt8Ty(), builder.getInt32(bytesCount));
+    // Types
+    llvm::Type *typeInt8 = builder.getInt8Ty();
+    llvm::Type *typeInt32 = builder.getInt32Ty();
+    llvm::Type *typePtr = builder.getPtrTy();
 
-//         // If this use feeds a PHI node, the decrypt call must be inserted at the
-//         // end of the corresponding predecessor block (before its terminator),
-//         // not before the PHI itself. Fuck phi nodes.
-//         llvm::Instruction* insertBefore = instruction;
-//         if (auto* phi = llvm::dyn_cast<llvm::PHINode>(instruction))
-//         {
-//             llvm::BasicBlock* incomingBlock = phi->getIncomingBlock(*use);
-//             insertBefore = incomingBlock->getTerminator();
-//         }
+    // Function type: ptr (ptr, ptr, i32)
+    llvm::FunctionType *functionType = llvm::FunctionType::get(typePtr, {typePtr, typePtr, typeInt32}, false);
 
-//         llvm::IRBuilder<> callBuilder(insertBefore);
-//         llvm::Value* decryptCall = callBuilder.CreateCall(decryptFunction, { globalVar, stackBuffer, builder.getInt32(bytesCount) });
-//         use->set(decryptCall);
-//     }
-// }
+    llvm::Function *function = llvm::Function::Create(
+        functionType,
+        llvm::GlobalValue::ExternalLinkage,
+        "__leet_decrypt_string",
+        &module
+    );
+    function->setCallingConv(llvm::CallingConv::C);
 
-// llvm::Function *LeetObfuscator::StringEncryptionPass::GetDecryptFunction(llvm::Module &module, uint32_t key, const EmittedTemplate& templates)
-// {
-//     llvm::Function* templateFunction = templates.decryptFunction;
+    // Name the arguments
+    auto argumentIterator = function->arg_begin();
+    llvm::Value *encrypted = argumentIterator++;
+    encrypted->setName("enc");
+    llvm::Value *output = argumentIterator++;
+    output->setName("out");
+    llvm::Value *length = argumentIterator++;
+    length->setName("len");
 
-//     llvm::LLVMContext& context = module.getContext();
-//     llvm::Type* bytePtrType = llvm::PointerType::getUnqual(context);
-//     llvm::Type* i32Type = llvm::Type::getInt32Ty(context);
+    // Basic blocks
+    llvm::BasicBlock *entryBlock = llvm::BasicBlock::Create(context, "entry", function);
+    llvm::BasicBlock *loopBlock = llvm::BasicBlock::Create(context, "loop", function);
+    llvm::BasicBlock *bodyBlock = llvm::BasicBlock::Create(context, "body", function);
+    llvm::BasicBlock *exitBlock = llvm::BasicBlock::Create(context, "exit", function);
 
-//     // basically `ptr __leet_decrypt_string(ptr encryptedStr, ptr outStr, i64 lenStr)`
-//     llvm::FunctionType* functionType = llvm::FunctionType::get(bytePtrType, {bytePtrType, bytePtrType, i32Type}, false);
+    // entry
+    builder.SetInsertPoint(entryBlock);
+    builder.CreateBr(loopBlock);
 
-//     llvm::ValueToValueMapTy vmap;
-//     llvm::SmallVector<llvm::ReturnInst*, 8> returns;
-//     llvm::Function* clone = llvm::Function::Create(functionType, llvm::GlobalValue::InternalLinkage, templateFunction->getName() + std::to_string(key), module);
-//     // For whatever reason you have to manually copy arguments...
-//     auto destArgIt = clone->arg_begin();
-//     for(auto& oldArg : templateFunction->args())
-//     {
-//         destArgIt->setName(oldArg.getName());
-//         vmap[&oldArg] = destArgIt;
-//         destArgIt++;
-//     }
-//     llvm::CloneFunctionInto(clone, templateFunction, vmap, llvm::CloneFunctionChangeType::LocalChangesOnly, returns);
+    // loop header (phi + condition)
+    builder.SetInsertPoint(loopBlock);
+    llvm::PHINode *index = builder.CreatePHI(typeInt32, 2, "i");
+    index->addIncoming(builder.getInt32(0), entryBlock);
 
-//     if (clone->isDeclaration())
-//     {
-//         llvm::errs() << "ERROR: Clone of the template is only a declaration!\n";
-//         return nullptr;
-//     }
+    llvm::Value *comparison = builder.CreateICmpULT(index, length, "cmp");
+    builder.CreateCondBr(comparison, bodyBlock, exitBlock);
 
-//     // Find all getKeys inside the clone and replace them with the actual key
-//     std::vector<llvm::CallInst*> callsToReplace;
-//     for (auto& basicBlock : *clone)
-//     {
-//         for (auto& instruction : basicBlock)
-//         {
-//             if (auto* callInst = llvm::dyn_cast<llvm::CallInst>(&instruction))
-//             {
-//                 llvm::Function* calledFunction = callInst->getCalledFunction();
-//                 if (calledFunction && calledFunction->getName() == templates.getKeyFunction->getName())
-//                 {
-//                     callsToReplace.push_back(callInst);
-//                 }
-//             }
-//         }
-//     }
-//     for (auto* callInst : callsToReplace)
-//     {
-//         llvm::IRBuilder<> builder(callInst);
-//         callInst->replaceAllUsesWith(builder.getInt32(key));
-//         callInst->eraseFromParent();
-//     }
+    // loop body
+    builder.SetInsertPoint(bodyBlock);
 
-//     return clone;
-// }
+    // keyByte = (key >> (8 * (i % 4))) & 0xFF
+    llvm::Value *modulo = builder.CreateURem(index, builder.getInt32(4), "mod");
+    llvm::Value *shiftAmount = builder.CreateMul(modulo, builder.getInt32(8), "shift");
+    llvm::Value *keyConstant = builder.getInt32(key);
+    llvm::Value *shifted = builder.CreateLShr(keyConstant, shiftAmount, "shr");
+    llvm::Value *keyByte32 = builder.CreateAnd(shifted, builder.getInt32(0xFF), "keybyte32");
+    llvm::Value *keyByte = builder.CreateTrunc(keyByte32, typeInt8, "keybyte");
 
-// LeetObfuscator::StringEncryptionPass::EmittedTemplate LeetObfuscator::StringEncryptionPass::GetTemplateFunctions(llvm::Module &module)
-// {
-//     EmittedTemplate result;
-//     llvm::LLVMContext& context = module.getContext();
+    // enc[i]
+    llvm::Value *encryptedGep = builder.CreateGEP(typeInt8, encrypted, index, "enc.gep");
+    llvm::Value *encryptedByte = builder.CreateLoad(typeInt8, encryptedGep, "enc.byte");
 
-//     // Create a dummy module with template functions
-//     llvm::StringRef data(reinterpret_cast<const char*>(leet_string_obf_runtime_bc), leet_string_obf_runtime_bc_len);
-//     std::unique_ptr<llvm::MemoryBuffer> buffer = llvm::MemoryBuffer::getMemBuffer(data, "leet_obf_runtime", false);
-//     auto modOrErr = llvm::parseBitcodeFile(buffer->getMemBufferRef(), context);
-//     if (!modOrErr)
-//     {
-//         llvm::errs() << modOrErr.takeError() << "\n";
-//         return result;
-//     }
-//     result.module = std::move(modOrErr.get());
+    // out[i] = enc[i] ^ keyByte
+    llvm::Value *xored = builder.CreateXor(encryptedByte, keyByte, "xored");
+    llvm::Value *outputGep = builder.CreateGEP(typeInt8, output, index, "out.gep");
+    builder.CreateStore(xored, outputGep);
 
-//     result.decryptFunction = result.module->getFunction("__leet_decrypt_string");
-//     result.getKeyFunction  = result.module->getFunction("__leet_get_key");
+    // i = i + 1
+    llvm::Value *nextIndex = builder.CreateAdd(index, builder.getInt32(1), "next");
+    index->addIncoming(nextIndex, bodyBlock);
+    builder.CreateBr(loopBlock);
 
-//     return result;
-// }
+    // exit
+    builder.SetInsertPoint(exitBlock);
+    builder.CreateRet(output);
+
+    return function;
+}
