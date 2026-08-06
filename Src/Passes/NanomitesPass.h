@@ -3,6 +3,8 @@
 #include "SettingsParser.h"
 #include <vector>
 
+#include "llvm/CodeGen/MachineFunctionPass.h"
+
 namespace LeetObfuscator
 {
     class NanomitesPass : public llvm::PassInfoMixin<NanomitesPass>
@@ -17,10 +19,26 @@ namespace LeetObfuscator
         void CreateGlobalNanomitesTable(llvm::Module& module, std::vector<llvm::Constant*>& nanomitesEntries);
 
         uint32_t GenerateUniqueNanomiteId(RandomNumberGenerator& generator);
-        std::string MakeIdTrailer(uint32_t nanomiteId);
-        bool CanObfuscateCallSignature(llvm::CallInst* callInst);
-        llvm::Function* CreateTrampoline(llvm::Module& module, llvm::Function* realFunc);
+        llvm::Function* CreateForwardFunction(llvm::Module& module, llvm::Function* realFunc, uint32_t id);
 
         SettingsParser::PassArguments m_Arguments;
+    };
+
+    class NanomitesMachineCodePass : public llvm::MachineFunctionPass
+    {
+    public:
+        static char ID;
+
+        NanomitesMachineCodePass() : llvm::MachineFunctionPass(ID) {}
+
+        bool runOnMachineFunction(llvm::MachineFunction &MF) override;
+
+        llvm::StringRef getPassName() const override {
+            return "Leet Nanomites Machine Code Pass";
+        }
+
+    private:
+        bool ParseLeetID(llvm::StringRef name, uint32_t& id);
+        void InsertTrap(uint32_t id, llvm::MachineInstr& machineInstruction);
     };
 }

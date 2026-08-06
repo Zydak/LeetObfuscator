@@ -61,7 +61,6 @@
 #include <sys/ucontext.h>
 #include <cstring>
 #include <cstdio>
-#include <setjmp.h>
 #include <cstdlib>
 
 struct NanomiteEntry {
@@ -70,24 +69,14 @@ struct NanomiteEntry {
 };
 
 extern "C" {
-    NanomiteEntry __nanomites_table[1];
-    uint32_t __nanomites_table_size = 0;
+    extern NanomiteEntry __nanomites_table[];
+    extern uint32_t __nanomites_table_size;
 }
-
-static constexpr uint32_t ADDRESS_STACK_SIZE = 128;
-static void* addressStack[ADDRESS_STACK_SIZE];
-static uint32_t stackPointer = 0;
 
 __attribute__((optnone))
 extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucontext)
 {
-    static const char msg_stack_underflow[] = "STACK UNDERFLOW!\n";
-    static const char msg_found_stack_ptr[] = "FOUND STACK PTR\n";
-    static const char msg_stack_lookup_fail[] = "FUFUFUUFUFUFCK\n";
-    static const char msg_stack_overflow[] = "STACK OVERFLOW!\n";
     static const char msg_invalid_id[] = "ERROR: Invalid nanomite ID!\n";
-    static const char msg_pop_true[]  = "popFromStack=1\n";
-    static const char msg_pop_false[] = "popFromStack=0\n";
 
     ucontext_t *uc = (ucontext_t *)ucontext;
     unsigned long long rip = uc->uc_mcontext.gregs[REG_RIP];
@@ -98,14 +87,8 @@ extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucon
 
     if (popFromStack)
     {
-        if (stackPointer == 0)
-        {
-            write(STDOUT_FILENO, msg_stack_underflow, sizeof(msg_stack_underflow) - 1);
-            _exit(1);
-        }
-
-        target = addressStack[stackPointer];
-        stackPointer--;
+        target = *(void**)uc->uc_mcontext.gregs[REG_RSP];
+        uc->uc_mcontext.gregs[REG_RSP] += 8;
     }
     else
     {
@@ -123,14 +106,8 @@ extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucon
     {
         if (!popFromStack)
         {
-            stackPointer++;
-            if (stackPointer >= ADDRESS_STACK_SIZE)
-            {
-                write(STDOUT_FILENO, msg_stack_overflow, sizeof(msg_stack_overflow) - 1);
-                _exit(1);
-            }
-
-            addressStack[stackPointer] = ((uint8_t*)rip) + 6;
+            uc->uc_mcontext.gregs[REG_RSP] -= 8;
+            *(uint64_t*)uc->uc_mcontext.gregs[REG_RSP] = rip + 6;
         }
 
         uc->uc_mcontext.gregs[REG_RIP] = (greg_t)target;

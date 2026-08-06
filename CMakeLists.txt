@@ -12,14 +12,10 @@ add_llvm_component_library(LLVMLeetObfuscator
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/PermutationHelper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/SettingsParser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringEncryptionPass.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringObfuscateHelper.cpp
-
-    ADDITIONAL_HEADER_DIRS
-    ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms/Obfuscation
-    ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms/Obfuscation/compat
 
     LINK_COMPONENTS
     Analysis
     Core
     TransformUtils
+    CodeGen
 )
