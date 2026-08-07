@@ -15,6 +15,7 @@
 llvm::PreservedAnalyses LeetObfuscator::BlockSplitterPass::run(llvm::Module &module, llvm::ModuleAnalysisManager &)
 {
     llvm::errs() << "Running BlockSplitterPass\n";
+    m_Logger.LogModule(module, "Starting pass", 0);
 
     for (auto& function : module)
     {
@@ -31,8 +32,11 @@ void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
     );
     if (SettingsParser::ShouldSkipFunction(&function, attributes))
     {
+        m_Logger.LogFunction(function, "Skipping function due to settings", 1);
         return;
     }
+
+    m_Logger.LogFunction(function, "Processing function", 1);
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
@@ -57,6 +61,8 @@ void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
         {
             continue;
         }
+
+        m_Logger.LogFunction(function, "Splitting block", 2);
 
         auto it = block->begin();
         std::advance(it, attributes.blockSplitSize);

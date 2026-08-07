@@ -14,6 +14,7 @@
 llvm::PreservedAnalyses LeetObfuscator::AAMBAPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running AAMBAPass\n";
+    m_Logger.LogModule(module, "Starting pass", 0);
 
     for (auto& function : module)
     {
@@ -30,7 +31,12 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
     );
 
     if (SettingsParser::ShouldSkipFunction(&function, attributes))
+    {
+        m_Logger.LogFunction(function, "Skipping function due to settings", 1);
         return;
+    }
+
+    m_Logger.LogFunction(function, "Processing function", 1);
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
@@ -53,8 +59,10 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
         }
     }
 
+    m_Logger.LogFunction(function, "Found instructions to transform", 2);
     for (auto& instruction : instructionsToObfuscate)
     {
+        m_Logger.LogInstruction(*instruction, "Obfuscating instruction", 3);
         ObfuscateInstruction(instruction, generator);
     }
 

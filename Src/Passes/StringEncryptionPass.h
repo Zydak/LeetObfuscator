@@ -2,13 +2,15 @@
 
 #include "llvm/Passes/PassBuilder.h"
 #include "SettingsParser.h"
+#include "Logger.h"
 
 namespace LeetObfuscator
 {
     class StringEncryptionPass : public llvm::PassInfoMixin<StringEncryptionPass>
     {
     public:
-        explicit StringEncryptionPass(SettingsParser::PassArguments arguments) : m_Arguments(std::move(arguments)) {}
+        explicit StringEncryptionPass(SettingsParser::PassArguments arguments)
+            : m_Arguments(std::move(arguments)), m_Logger("StringEncryptionPass") {}
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
     private:
@@ -22,5 +24,6 @@ namespace LeetObfuscator
         void EncryptGlobalAndPatchAllUses(StringGlobalInfo& stringInfo);
         llvm::Function* GetDecryptFunction(llvm::Module& module, uint32_t key);
         SettingsParser::PassArguments m_Arguments;
+        Logger m_Logger;
     };
 }

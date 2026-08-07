@@ -24,7 +24,8 @@
 
 llvm::PreservedAnalyses LeetObfuscator::NanomitesPass::run(llvm::Module& module, llvm::ModuleAnalysisManager&)
 {
-    std::cout << "NANOMITES PASS" << std::endl;
+    std::cout << "Running NanomitesPass" << std::endl;
+    m_Logger.LogModule(module, "Obfuscating module", 0);
 
     std::vector<llvm::Constant*> nanomitesEntries;
 
@@ -66,7 +67,12 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     );
 
     if(SettingsParser::ShouldSkipFunction(function, attributes))
+    {
+        m_Logger.LogFunction(*function, "Skipping function due to pass settings", 1);
         return;
+    }
+
+    m_Logger.LogFunction(*function, "Processing function", 1);
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
@@ -82,10 +88,16 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         function->getName().find("sigemptyset") != std::string::npos ||
         function->getName().find("sigaction") != std::string::npos
     )
+    {
+        m_Logger.LogFunction(*function, "Skipping helper/runtime function", 2);
         return;
+    }
 
     for (auto& basicBlock : *function)
     {
+        if(SettingsParser::ShouldSkipBlock(&basicBlock, attributes))
+            continue;
+        
         for (auto& inst : basicBlock)
         {
             llvm::CallInst* callInst = llvm::dyn_cast<llvm::CallInst>(&inst);
@@ -113,7 +125,12 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     }
 
     if (instructions.empty())
+    {
+        m_Logger.LogFunction(*function, "No eligible call sites found", 2);
         return;
+    }
+
+    m_Logger.LogFunction(*function, "Found eligible call sites for nanomite insertion", 2);
 
     function->addFnAttr(llvm::Attribute::NoInline);
     function->addFnAttr(llvm::Attribute::NoDuplicate);
@@ -140,7 +157,9 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
 
         uint32_t callSiteId = GenerateUniqueNanomiteId(*generator);
 
-        std::cout << "FOUND ONE " << callSiteId << " | " << function->getName().str() << " | " << callInst->getCalledFunction()->getName().str() << std::endl;
+        m_Logger.LogFunction(*function, "Injecting nanomite wrapper", 3);
+        m_Logger.LogInstruction(*callInst, "Rewriting call site", 4);
+        m_Logger.Log(callInst->getCalledFunction() ? std::string("Target call: ") + callInst->getCalledFunction()->getName().str() : "Target call: <unknown>", 5);
 
         llvm::IRBuilder<> builder(callInst);
 
@@ -165,6 +184,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         llvm::appendToCompilerUsed(*module, {realFunc});
 
         nanomitesEntries.push_back(makeEntry(callSiteId, forwardFunc));
+        m_Logger.LogFunction(*function, "Registered nanomite entry for call site", 4);
     }
 
     // Verify the function at the end
@@ -189,8 +209,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         exit(1);
     }
 
-    //std::cout << "REPLACED " << instructions.size() << " calls" << std::endl;
-
+    m_Logger.LogFunction(*function, "Finished transforming function", 2);
 }
 
 llvm::Function* LeetObfuscator::NanomitesPass::CreateForwardFunction(llvm::Module& module, llvm::Function* realFunc, uint32_t id)
@@ -231,62 +250,59 @@ llvm::Function* LeetObfuscator::NanomitesPass::CreateForwardFunction(llvm::Modul
     return forwardFunc;
 }
 
-void LeetObfuscator::NanomitesPass::CreateGlobalNanomitesTable( llvm::Module& module, std::vector<llvm::Constant*>& nanomitesEntries)
+void LeetObfuscator::NanomitesPass::CreateGlobalNanomitesTable(llvm::Module& module, std::vector<llvm::Constant*>& nanomitesEntries)
 {
     llvm::LLVMContext& context = module.getContext();
+    llvm::PointerType* ptrTy = llvm::PointerType::get(context, 0);
 
-    llvm::StructType* entryType = llvm::StructType::get(context, {
-        llvm::Type::getInt32Ty(context),
-        llvm::PointerType::get(context, 0)
-    });
-
+    llvm::StructType* entryType = llvm::StructType::get(context, {llvm::Type::getInt32Ty(context), ptrTy});
     llvm::ArrayType* tableType = llvm::ArrayType::get(entryType, nanomitesEntries.size());
 
-    llvm::GlobalVariable* oldTable = module.getGlobalVariable("__nanomites_table", /*AllowLocal=*/true);
+    llvm::StructType* chunkType = llvm::StructType::get(context, {ptrTy, llvm::Type::getInt32Ty(context), ptrTy}); // entries, count, next
 
-    auto* newTable = new llvm::GlobalVariable(
+    auto* table = new llvm::GlobalVariable(
         module,
         tableType,
         true,
-        llvm::GlobalValue::ExternalLinkage,
+        llvm::GlobalValue::InternalLinkage,
         llvm::ConstantArray::get(tableType, nanomitesEntries),
-        "__nanomites_table"
+        "__nanomites_local"
     );
 
-    newTable->setSection(".nanomites");
-    newTable->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::None);
-    newTable->setVisibility(llvm::GlobalValue::DefaultVisibility);
-    newTable->setDSOLocal(false);
-
-    if (oldTable)
-    {
-        oldTable->replaceAllUsesWith(newTable);
-        oldTable->eraseFromParent();
-    }
-
-    llvm::GlobalVariable* oldSize =module.getGlobalVariable("__nanomites_table_size", true);
-
-    auto* newSize = new llvm::GlobalVariable(
+    auto* chunk = new llvm::GlobalVariable(
         module,
-        llvm::Type::getInt32Ty(context),
-        true,
-        llvm::GlobalValue::ExternalLinkage,
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), nanomitesEntries.size()),
-        "__nanomites_table_size"
+        chunkType,
+        false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantStruct::get(chunkType, {
+            table,
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (uint32_t)nanomitesEntries.size()),
+            llvm::ConstantPointerNull::get(ptrTy)
+        }),
+        "__nanomites_chunk"
     );
 
-    newSize->setSection(".nanomites");
-    newSize->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::None);
-    newSize->setVisibility(llvm::GlobalValue::DefaultVisibility);
-    newSize->setDSOLocal(false);
+    // Linked list
+    // before = head -> A -> B -> C
+    // After this insert = head -> D -> A -> B -> C
+    // So this inserts the new chunk at the begining of the chain and makes it point to the previous element at that slot
+    // the exception handler finds all of this through head pointer
 
-    if (oldSize)
-    {
-        oldSize->replaceAllUsesWith(newSize);
-        oldSize->eraseFromParent();
-    }
+    llvm::GlobalVariable* head = llvm::cast<llvm::GlobalVariable>(module.getOrInsertGlobal("__nanomite_chunk_head", ptrTy));
 
-    std::cout << "Created global nanomites table with " << nanomitesEntries.size() << " entries in section .nanomites\n";
+    llvm::FunctionType* constructorType = llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+    llvm::Function* constructorFunction = llvm::Function::Create(constructorType, llvm::GlobalValue::InternalLinkage, "__leet_register_nanomites", module);
+
+    llvm::IRBuilder<> builder(llvm::BasicBlock::Create(context, "entry", constructorFunction));
+    llvm::Value* oldHead = builder.CreateLoad(ptrTy, head);
+    builder.CreateStore(oldHead, builder.CreateStructGEP(chunkType, chunk, 2));
+    builder.CreateStore(chunk, head);
+    builder.CreateRetVoid();
+
+    llvm::appendToGlobalCtors(module, constructorFunction, 0);
+    llvm::appendToCompilerUsed(module, {constructorFunction});
+
+    m_Logger.LogModule(module, "Registered nanomites chunk with " + std::to_string(nanomitesEntries.size()) + " entries", 0);
 }
 
 char LeetObfuscator::NanomitesMachineCodePass::ID = 0;
@@ -333,6 +349,12 @@ bool LeetObfuscator::NanomitesMachineCodePass::ParseLeetID(llvm::StringRef name,
 
 bool LeetObfuscator::NanomitesMachineCodePass::runOnMachineFunction(llvm::MachineFunction &machineFunction)
 {
+    static bool printed = false;
+    if (!printed)
+    {
+        llvm::errs() << "Running NanomitesMachineFunctionPass\n";
+        printed = true;
+    }
     bool changed = false;
 
     // Patch every call to __leet_forward_function_ID with a trap

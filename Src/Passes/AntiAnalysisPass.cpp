@@ -12,11 +12,10 @@
 #include <algorithm>
 #include <math.h>
 
-static constexpr const char *ANTI_ANALYSIS_TAG = "leet.AA";
-
 llvm::PreservedAnalyses LeetObfuscator::AntiAnalysisPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running AntiAnalysisPass\n";
+    m_Logger.LogModule(module, "Starting pass", 0);
 
     for (auto& function : module)
     {
@@ -33,7 +32,12 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
     );
     
     if (SettingsParser::ShouldSkipFunction(&function, attributes))
+    {
+        m_Logger.LogFunction(function, "Skipping function due to settings", 1);
         return;
+    }
+
+    m_Logger.LogFunction(function, "Processing function", 1);
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
@@ -50,6 +54,7 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
         for (llvm::BasicBlock* block : blocksToObfuscate)
         {
             bool rdtsc = false;
+            m_Logger.LogFunction(function, "Instrumenting basic block", 2);
             if (generator->DrawRange(0u, 100u) <= attributes.antiAnalysisRdtscProbability)
                 rdtsc = true;
             

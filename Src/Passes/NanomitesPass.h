@@ -1,6 +1,7 @@
 #pragma once
 #include "llvm/Passes/PassBuilder.h"
 #include "SettingsParser.h"
+#include "Logger.h"
 #include <vector>
 
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -10,7 +11,8 @@ namespace LeetObfuscator
     class NanomitesPass : public llvm::PassInfoMixin<NanomitesPass>
     {
     public:
-        explicit NanomitesPass(SettingsParser::PassArguments arguments) : m_Arguments(std::move(arguments)) {}
+        explicit NanomitesPass(SettingsParser::PassArguments arguments)
+            : m_Arguments(std::move(arguments)), m_Logger("NanomitesPass") {}
 
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
@@ -22,6 +24,7 @@ namespace LeetObfuscator
         llvm::Function* CreateForwardFunction(llvm::Module& module, llvm::Function* realFunc, uint32_t id);
 
         SettingsParser::PassArguments m_Arguments;
+        Logger m_Logger;
     };
 
     class NanomitesMachineCodePass : public llvm::MachineFunctionPass

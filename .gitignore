@@ -12,3 +12,4 @@ _deps
 build/
 Src/Tests/benchmark_build
 .cache
+**/logs/

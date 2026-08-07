@@ -2,13 +2,15 @@
 
 #include "llvm/Passes/PassBuilder.h"
 #include "SettingsParser.h"
+#include "Logger.h"
 
 namespace LeetObfuscator
 {
     class MBAPass : public llvm::PassInfoMixin<MBAPass>
     {
     public:
-        explicit MBAPass(SettingsParser::PassArguments arguments) : m_Arguments(std::move(arguments)) {}
+        explicit MBAPass(SettingsParser::PassArguments arguments)
+            : m_Arguments(std::move(arguments)), m_Logger("MBAPass") {}
 
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
@@ -31,5 +33,6 @@ namespace LeetObfuscator
         void ObfuscateCompareOperation(llvm::Instruction* instruction, uint32_t expansionCount, uint32_t iteration = 0);
 
         SettingsParser::PassArguments m_Arguments;
+        Logger m_Logger;
     };
 }

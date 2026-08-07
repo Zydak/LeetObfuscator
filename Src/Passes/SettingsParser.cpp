@@ -12,10 +12,7 @@
 namespace LeetObfuscator
 {
 
-using FunctionAttributes = SettingsParser::FunctionAttributes;
-using PassArguments = SettingsParser::PassArguments;
-
-static void SetArgument(PassArguments& arguments, llvm::StringRef key, std::vector<std::string> values)
+void SettingsParser::SetArgument(PassArguments& arguments, llvm::StringRef key, std::vector<std::string> values)
 {
     auto it = std::find_if(arguments.begin(), arguments.end(), [key](const auto& argument)
     {
@@ -28,7 +25,7 @@ static void SetArgument(PassArguments& arguments, llvm::StringRef key, std::vect
         it->second = std::move(values);
 }
 
-static const std::vector<std::string>* FindArgument(const PassArguments& arguments, llvm::StringRef key)
+const std::vector<std::string>* SettingsParser::FindArgument(const PassArguments& arguments, llvm::StringRef key)
 {
     auto it = std::find_if(arguments.begin(), arguments.end(), [key](const auto& argument)
     {
@@ -36,8 +33,7 @@ static const std::vector<std::string>* FindArgument(const PassArguments& argumen
     });
     return it == arguments.end() ? nullptr : &it->second;
 }
-
-static std::vector<std::string> ParseValues(llvm::StringRef value)
+std::vector<std::string> SettingsParser::ParseValues(llvm::StringRef value)
 {
     std::vector<std::string> values;
     while (true)
@@ -49,23 +45,20 @@ static std::vector<std::string> ParseValues(llvm::StringRef value)
         value = split.second;
     }
 }
-
-static std::vector<std::string> GetFunctionOption(llvm::Function& function, llvm::StringRef key)
+std::vector<std::string> SettingsParser::GetFunctionOption(llvm::Function& function, llvm::StringRef key)
 {
     if (!function.hasFnAttribute(key))
         return {};
     return ParseValues(function.getFnAttribute(key).getValueAsString());
 }
-
-static void ReportInvalidArgument(llvm::Function& function, llvm::StringRef key, llvm::StringRef reason)
+void SettingsParser::ReportInvalidArgument(llvm::Function& function, llvm::StringRef key, llvm::StringRef reason)
 {
     llvm::errs()
         << "LeetObfuscator: invalid '" << key << "' for function '"
         << function.getName() << "': " << reason << "; using the default value\n";
 }
-
 template <typename T>
-static bool ParseUnsignedArgument(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, T& output, T maximum)
+bool SettingsParser::ParseUnsignedArgument(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, T& output, T maximum)
 {
     if (!values)
         return true;
@@ -85,8 +78,7 @@ static bool ParseUnsignedArgument(llvm::Function& function, const std::vector<st
     output = (T)parsed;
     return true;
 }
-
-static void ParseStringList(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, std::vector<std::string>& output)
+void SettingsParser::ParseStringList(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, std::vector<std::string>& output)
 {
     if (!values)
         return;
@@ -97,9 +89,8 @@ static void ParseStringList(llvm::Function& function, const std::vector<std::str
     }
     output = *values;
 }
-
 template <typename T>
-static bool ParseEnumArgument(
+bool SettingsParser::ParseEnumArgument(
     llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key,
     T& output, const std::vector<std::pair<llvm::StringRef, T>>& namedValues, llvm::StringRef expected)
 {
@@ -119,8 +110,7 @@ static bool ParseEnumArgument(
     ReportInvalidArgument(function, key, expected);
     return false;
 }
-
-static uint64_t GenerateRuntimeSeed()
+uint64_t SettingsParser::GenerateRuntimeSeed()
 {
     static std::random_device randomDevice;
     static std::mt19937_64 generator((uint64_t(randomDevice()) << 32) ^ randomDevice());
@@ -140,33 +130,23 @@ static uint64_t GenerateRuntimeSeed()
 // to nicely abstract this
 // ---------------------------------------------------------------------------
 
-using OptionApplier = std::function<void(llvm::Function&, const std::vector<std::string>*, llvm::StringRef, FunctionAttributes&)>;
-
-struct Option
-{
-    llvm::StringRef name;
-    OptionApplier apply;
-};
-
 template <typename T>
-static OptionApplier UnsignedOption(T FunctionAttributes::* field, T maximum = std::numeric_limits<T>::max())
+SettingsParser::OptionApplier SettingsParser::UnsignedOption(T FunctionAttributes::* field, T maximum)
 {
     return [field, maximum](llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
     {
         ParseUnsignedArgument<T>(function, values, name, result.*field, maximum);
     };
 }
-
-static OptionApplier StringListOption(std::vector<std::string> FunctionAttributes::* field)
+SettingsParser::OptionApplier SettingsParser::StringListOption(std::vector<std::string> FunctionAttributes::* field)
 {
     return [field](llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
     {
         ParseStringList(function, values, name, result.*field);
     };
 }
-
 template <typename T>
-static OptionApplier EnumOption(T FunctionAttributes::* field, std::vector<std::pair<llvm::StringRef, T>> namedValues, llvm::StringRef expected)
+SettingsParser::OptionApplier SettingsParser::EnumOption(T FunctionAttributes::* field, std::vector<std::pair<llvm::StringRef, T>> namedValues, llvm::StringRef expected)
 {
     return [field, namedValues = std::move(namedValues), expected](llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
     {
@@ -174,12 +154,12 @@ static OptionApplier EnumOption(T FunctionAttributes::* field, std::vector<std::
     };
 }
 
-static const std::vector<std::pair<llvm::StringRef, SettingsParser::GlobalParseMode>> kParseModeValues = {
+const std::vector<std::pair<llvm::StringRef, SettingsParser::GlobalParseMode>> SettingsParser::kParseModeValues = {
     {"all", SettingsParser::GlobalParseMode::All},
     {"none", SettingsParser::GlobalParseMode::None},
 };
 
-static void ApplyRuntimeSeed(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
+void SettingsParser::ApplyRuntimeSeed(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
 {
     if (!values)
         return;
@@ -196,16 +176,33 @@ static void ApplyRuntimeSeed(llvm::Function& function, const std::vector<std::st
     }
     ParseUnsignedArgument<uint64_t>(function, values, name, result.runtimeSeed, std::numeric_limits<uint64_t>::max());
 }
+void SettingsParser::ApplyDefaultParseMode(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
+{
+    if (!values)
+        return;
 
-static void ApplySkip(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
+    if (values->size() != 1)
+    {
+        ReportInvalidArgument(function, name, "expected all or none");
+        return;
+    }
+
+    const std::string& value = values->front();
+    if (value == "all")
+        result.skip = false;
+    else if (value == "none")
+        result.skip = true;
+    else
+        ReportInvalidArgument(function, name, "expected all or none");
+}
+void SettingsParser::ApplySkip(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
 {
     if (!values)
         return;
 
     result.skip = true;
 }
-
-static void ApplyForcePass(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
+void SettingsParser::ApplyForcePass(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
 {
     if (!values)
         return;
@@ -214,15 +211,17 @@ static void ApplyForcePass(llvm::Function&, const std::vector<std::string>* valu
 }
 
 // Settings specific to one pass, namespaced as "leet.<PassName>.<name>".
-static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passType)
+const std::vector<SettingsParser::Option>& SettingsParser::GetPassOptions(SettingsParser::PassType passType)
 {
     using FA = FunctionAttributes;
 
     static const std::vector<Option> stringEncryptionOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
     };
     static const std::vector<Option> mbaOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
@@ -235,6 +234,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"probability", UnsignedOption(&FA::mbaProbability, 100u)},
     };
     static const std::vector<Option> blockSplitterOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
@@ -247,6 +247,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"blockSplitSize", UnsignedOption(&FA::blockSplitSize)},
     };
     static const std::vector<Option> dispatcherOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
@@ -255,6 +256,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"probability", UnsignedOption(&FA::dispatcherProbability, 100u)},
     };
     static const std::vector<Option> antiAnalysisOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
@@ -272,6 +274,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"invalidBogusBlocksProbability", UnsignedOption(&FA::invalidBogusBlocksProbability, 100u)},
     };
     static const std::vector<Option> aambaOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
@@ -283,6 +286,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"targetOps", StringListOption(&FA::aambaTargetOps)},
     };
     static const std::vector<Option> antiAliasingOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
@@ -291,9 +295,14 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         {"probability", UnsignedOption(&FA::antiAliasingProbability, 100u)},
     };
     static const std::vector<Option> nanomitesOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
+        {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
+        {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
+        {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
+        {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"probability", UnsignedOption(&FA::antiAliasingProbability, 100u)},
     };
     static const std::vector<Option> noOptions;
@@ -311,12 +320,7 @@ static const std::vector<Option>& GetPassOptions(SettingsParser::PassType passTy
         default: return noOptions;
     }
 }
-
-// for each Option in `options`, let a
-// "<attributePrefix>.<name>" function attribute, if present, override the
-// value already in `effective`. Doesn't touch `result` - overriding and
-// extracting are kept as separate steps.
-static void OverlayFunctionAttributes(llvm::Function& function, llvm::StringRef attributePrefix, const std::vector<Option>& options, PassArguments& effective)
+void SettingsParser::OverlayFunctionAttributes(llvm::Function& function, llvm::StringRef attributePrefix, const std::vector<Option>& options, PassArguments& effective)
 {
     for (const Option& option : options)
     {
@@ -325,10 +329,7 @@ static void OverlayFunctionAttributes(llvm::Function& function, llvm::StringRef 
             SetArgument(effective, option.name, GetFunctionOption(function, attributeKey));
     }
 }
-
-// parses the fully-resolved `effective`
-// arguments into `result`, one Option at a time.
-static void ExtractOptions(llvm::Function& function, const std::vector<Option>& options, const PassArguments& effective, FunctionAttributes& result)
+void SettingsParser::ExtractOptions(llvm::Function& function, const std::vector<Option>& options, const PassArguments& effective, FunctionAttributes& result)
 {
     for (const Option& option : options)
     {
@@ -336,11 +337,50 @@ static void ExtractOptions(llvm::Function& function, const std::vector<Option>& 
     }
 }
 
-// A semicolon or comma inside (...) belongs to a pass's parameter list.
-// Finds the next occurrence of `separator` at paren depth 0, tracking depth
-// by reference so a value split across multiple config lines can resume
-// scanning where the previous line left off.
-static size_t FindTopLevelSeparator(llvm::StringRef text, char separator, int& depth)
+bool SettingsParser::IsKnownOption(const std::vector<Option>& options, llvm::StringRef key)
+{
+    for (const auto& o : options)
+        if (o.name == key)
+            return true;
+
+    // Known global options
+    static const std::vector<llvm::StringRef> globalOptions = {
+        "defaultParseMode",
+        "parseFunctions",
+        "runtimeSeed",
+        "stringEncryptionProbability",
+        "minFunctionSize",
+        "maxFunctionSize",
+        "minBlockSize",
+        "maxBlockSize",
+        "passes"
+    };
+    for (const auto& g : globalOptions)
+        if (g == key)
+            return true;
+
+    // Check if the option exists for any pass type
+    const std::vector<SettingsParser::PassType> allPassTypes = {
+        SettingsParser::PassType::StringEncryptionPass,
+        SettingsParser::PassType::MBAPass,
+        SettingsParser::PassType::BlockSplitterPass,
+        SettingsParser::PassType::DispatcherPass,
+        SettingsParser::PassType::AAMBAPass,
+        SettingsParser::PassType::AntiAnalysisPass,
+        SettingsParser::PassType::AntiAliasingPass,
+        SettingsParser::PassType::NanomitesPass,
+    };
+    for (auto pt : allPassTypes)
+    {
+        const auto& opts = GetPassOptions(pt);
+        for (const auto& o : opts)
+            if (o.name == key)
+                return true;
+    }
+
+    return false;
+}
+size_t SettingsParser::FindTopLevelSeparator(llvm::StringRef text, char separator, int& depth)
 {
     for (size_t i = 0; i < text.size(); ++i)
     {
@@ -350,8 +390,7 @@ static size_t FindTopLevelSeparator(llvm::StringRef text, char separator, int& d
     }
     return llvm::StringRef::npos;
 }
-
-static void ParsePassList(SettingsParser::GlobalAttributes& settings, llvm::StringRef value)
+void SettingsParser::ParsePassList(SettingsParser::GlobalAttributes& settings, llvm::StringRef value)
 {
     int depth = 0;
     while (true)
@@ -415,6 +454,13 @@ LeetObfuscator::SettingsParser::ParseFunctionAttributes(llvm::Function& function
 
     // Let function attributes override the arguments
     OverlayFunctionAttributes(function, "leet." + passName.str(), passOptions, effective);
+
+    // Report any unknown options provided for this pass (from global or pass args)
+    for (const auto& arg : effective)
+    {
+        if (!IsKnownOption(passOptions, arg.first))
+            llvm::errs() << "LeetObfuscator: unknown option '" << arg.first << "' for pass '" << passName << "'; ignoring\n";
+    }
 
     // Everything above just produced the final argument values so now just place them into the struct
     ExtractOptions(function, passOptions, effective, result);
@@ -596,12 +642,14 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
         if (assignment.second.empty() && assignment.first != "passes") continue;
         llvm::StringRef key = assignment.first.trim();
         llvm::StringRef value = assignment.second.trim();
+        bool handled = false;
 
         if (key == "defaultParseMode" || key == "parseFunctions")
         {
             if (value == "all") settings.defaultParseMode = GlobalParseMode::All;
             else if (value == "none") settings.defaultParseMode = GlobalParseMode::None;
             SetArgument(settings.parameters, "defaultParseMode", {value.str()});
+            handled = true;
         }
         if (key == "runtimeSeed")
         {
@@ -610,15 +658,18 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
             else
                 settings.defaultRuntimeSeed = std::stoull(value.str());
             SetArgument(settings.parameters, key, {value.str()});
+            handled = true;
         }
         if (key == "stringEncryptionProbability")
         {
             settings.stringEncryptionProbability = (uint32_t)std::stoi(value.str());
             SetArgument(settings.parameters, key, {value.str()});
+            handled = true;
         }
         else if (key == "runtimeSeed" || key == "minFunctionSize" || key == "maxFunctionSize" || key == "maxBlockSize" || key == "minBlockSize")
         {
             SetArgument(settings.parameters, key, ParseValues(value));
+            handled = true;
         }
         else if (key == "passes")
         {
@@ -630,6 +681,11 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
                 continue;
             }
             ParsePassList(settings, value);
+            handled = true;
+        }
+        if (!handled)
+        {
+            llvm::errs() << "LeetObfuscator: unknown global option '" << key << "'; ignoring\n";
         }
     }
     if (readingPassList)

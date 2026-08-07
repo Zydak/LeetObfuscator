@@ -45,7 +45,7 @@ static llvm::Function* EmitSplitmix64Next(llvm::Module &module)
     llvm::IRBuilder<> builder(context);
 
     llvm::FunctionType* functionType = llvm::FunctionType::get(builder.getInt64Ty(), {builder.getPtrTy()}, false);
-    llvm::Function* function = llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, "__leet_split_mix_64", &module);
+    llvm::Function* function = llvm::Function::Create(functionType, llvm::Function::InternalLinkage, "__leet_split_mix_64", &module);
     function->arg_begin()->setName("state");
     llvm::Argument* statePtr = function->arg_begin();
 
@@ -88,7 +88,7 @@ llvm::Function* EmitLeetPermutation(llvm::Module &module, llvm::Function* splitm
     llvm::IRBuilder<> builder(context);
 
     llvm::FunctionType* functionType = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy(), builder.getInt32Ty()}, false);
-    llvm::Function* function = llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, "__leet_permutation", &module);
+    llvm::Function* function = llvm::Function::Create(functionType, llvm::Function::InternalLinkage, "__leet_permutation", &module);
 
     auto argIt = function->arg_begin();
     llvm::Argument* tablePtr = &*argIt++;

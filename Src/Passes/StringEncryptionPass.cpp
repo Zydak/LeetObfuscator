@@ -11,6 +11,7 @@
 llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running StringEncryptionPass\n";
+    m_Logger.LogModule(module, "Starting pass", 0);
 
     srand(time(nullptr));
     std::vector<StringGlobalInfo> stringGlobals;
@@ -25,15 +26,20 @@ llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &
                 continue;
 
             uint32_t key = generator->DrawRange(0u, std::numeric_limits<uint32_t>::max());
+            m_Logger.LogValue(global, "Encrypting string global", 1);
             stringGlobals.push_back({&global, key});
         }
     }
 
     if (stringGlobals.empty())
+    {
+        m_Logger.Log("No encryptable string globals found", 1);
         return llvm::PreservedAnalyses::all();
+    }
 
     for(auto& stringGlobal : stringGlobals)
     {
+        m_Logger.LogValue(*stringGlobal.globalVar, "Encrypting and patching uses", 2);
         EncryptGlobalAndPatchAllUses(stringGlobal);
     }
 

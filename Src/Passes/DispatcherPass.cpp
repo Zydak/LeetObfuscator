@@ -232,6 +232,7 @@ void RewriteCallBrTerminator(llvm::CallBrInst* callBr, std::vector<llvm::BasicBl
 llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module, llvm::ModuleAnalysisManager& mam)
 {
     llvm::errs() << "Running DispatcherPass\n";
+    m_Logger.LogModule(module, "Starting pass", 0);
 
     std::vector<llvm::Function*> functions;
 
@@ -245,6 +246,7 @@ llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module
         }
     }
 
+    
     for (auto& function : functions)
     {
         CreateDispatcherInAFunction(function, mam);
@@ -296,12 +298,22 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(*function, SettingsParser::PassType::DispatcherPass, m_Arguments);
     
     if (SettingsParser::ShouldSkipFunction(function, attributes))
+    {
+        m_Logger.LogFunction(*function, "Skipping function due to settings", 1);
         return;
+    }
+
+    m_Logger.LogFunction(*function, "Processing function", 1);
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
     if (generator->DrawRange(0u, 100u) > attributes.dispatcherProbability)
+    {
+        m_Logger.LogFunction(*function, "Skipping dispatcher insertion due to probability", 2);
         return;
+    }
+
+    m_Logger.LogFunction(*function, "Creating dispatcher in function", 2);
 
     llvm::Module* module = function->getParent();
 

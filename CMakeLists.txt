@@ -8,6 +8,7 @@ add_llvm_component_library(LLVMLeetObfuscator
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/BlockSplitterPass.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/DispatcherPass.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/MBAPass.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/Logger.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/NanomitesPass.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/PermutationHelper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/SettingsParser.cpp

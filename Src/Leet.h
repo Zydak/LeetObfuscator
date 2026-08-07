@@ -63,15 +63,10 @@
 #include <cstdio>
 #include <cstdlib>
 
-struct NanomiteEntry {
-    uint32_t nanomiteId;
-    void* functionAddress;
-};
+struct NanomiteEntry { uint32_t nanomiteId; void* functionAddress; };
+struct TableChunk { const NanomiteEntry* entries; uint32_t count; TableChunk* next; };
 
-extern "C" {
-    NanomiteEntry __nanomites_table[1];
-    uint32_t __nanomites_table_size=0;
-}
+extern "C" TableChunk* __nanomite_chunk_head = nullptr;
 
 __attribute__((optnone))
 extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucontext)
@@ -92,13 +87,17 @@ extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucon
     }
     else
     {
-        for (uint32_t i = 0; i < __nanomites_table_size; i++)
+        for (TableChunk* c = __nanomite_chunk_head; c && !target; c = c->next)
         {
-            if (__nanomites_table[i].nanomiteId == nanomiteId)
+            for (uint32_t i = 0; i < c->count; i++)
             {
-                target = __nanomites_table[i].functionAddress;
-                break;
+                if (c->entries[i].nanomiteId == nanomiteId)
+                {
+                    target = c->entries[i].functionAddress;
+                    break;
+                }
             }
+
         }
     }
 

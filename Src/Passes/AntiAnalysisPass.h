@@ -2,6 +2,7 @@
 
 #include "llvm/IR/PassManager.h"
 #include "SettingsParser.h"
+#include "Logger.h"
 #include "llvm/IR/BasicBlock.h"
 
 #include "llvm/IR/Dominators.h"
@@ -13,7 +14,8 @@ namespace LeetObfuscator
     class AntiAnalysisPass : public llvm::PassInfoMixin<AntiAnalysisPass>
     {
     public:
-            explicit AntiAnalysisPass(SettingsParser::PassArguments arguments) : m_Arguments(std::move(arguments)) {}
+            explicit AntiAnalysisPass(SettingsParser::PassArguments arguments)
+                : m_Arguments(std::move(arguments)), m_Logger("AntiAnalysisPass") {}
             llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
             static llvm::BasicBlock* CreateInvalidBogusBlock(llvm::Function* function, std::shared_ptr<RandomNumberGenerator> generator);
@@ -27,5 +29,6 @@ namespace LeetObfuscator
             static int RankValue(llvm::Value* value);
             static bool IsSafeToTimeAcross(llvm::Instruction &I);
             SettingsParser::PassArguments m_Arguments;
+            Logger m_Logger;
     };
 }

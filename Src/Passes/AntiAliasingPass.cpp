@@ -87,6 +87,7 @@ void StripDebugAndLifetimeUsers(llvm::AllocaInst* allocaInst)
 llvm::PreservedAnalyses LeetObfuscator::AntiAliasingPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running AntiAliasingPass\n";
+    m_Logger.LogModule(module, "Starting pass", 0);
 
     for (llvm::Function &function : module)
     {
@@ -114,7 +115,12 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
     );
     
     if (SettingsParser::ShouldSkipFunction(&function, attributes))
+    {
+        m_Logger.LogFunction(function, "Skipping function due to settings", 1);
         return;
+    }
+
+    m_Logger.LogFunction(function, "Processing function", 1);
 
     if (function.getName().find("__leet_exception") != std::string::npos || function.getName().find("__leet_dispatcher_barrier") != std::string::npos)
     {
@@ -149,7 +155,12 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
     }
 
     if (candidates.size() < s_MinSlotsToBother)
+    {
+        m_Logger.LogFunction(function, "Not enough stack slots to obfuscate", 2);
         return;
+    }
+
+    m_Logger.LogFunction(function, "Creating aliasing obfuscation state", 2);
 
     uint32_t numSlots = uint32_t(candidates.size());
 
@@ -171,6 +182,7 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
 
     uint64_t slotSize = llvm::alignTo(maxSize, maxAlign.value());
     uint64_t totalBytes = slotSize * uint64_t(numSlots);
+    m_Logger.LogFunction(function, "Allocating obfuscation buffer and permutation table", 3);
 
     // create the buffer and permutation table
     llvm::IRBuilder<> entryBuilder(&entryBlock, entryBlock.begin());

@@ -7,6 +7,7 @@
 llvm::PreservedAnalyses LeetObfuscator::AnnotationPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running AnnotationPass\n";
+    m_Logger.LogModule(module, "Starting pass", 0);
 
     llvm::GlobalVariable* globalVar = module.getGlobalVariable("llvm.global.annotations");
     if (!globalVar)
@@ -37,6 +38,8 @@ llvm::PreservedAnalyses LeetObfuscator::AnnotationPass::run(llvm::Module &module
         llvm::StringRef annotationStr = annotationData->getAsCString();
         if (!annotationStr.starts_with("leet."))
             continue;
+
+        m_Logger.LogFunction(*function, "Applying annotation", 2);
 
         auto split = annotationStr.split('=');
 
