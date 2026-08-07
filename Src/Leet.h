@@ -69,8 +69,8 @@ struct NanomiteEntry {
 };
 
 extern "C" {
-    extern NanomiteEntry __nanomites_table[];
-    extern uint32_t __nanomites_table_size;
+    NanomiteEntry __nanomites_table[1];
+    uint32_t __nanomites_table_size=0;
 }
 
 __attribute__((optnone))

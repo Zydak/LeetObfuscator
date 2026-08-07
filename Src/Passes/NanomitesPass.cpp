@@ -77,7 +77,10 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     if (function->getName().find("__leet_dispatcher_barrier") != std::string::npos ||
         function->getName().find("__leet_exception") != std::string::npos ||
         function->getName().find("__leet_forward") != std::string::npos ||
-        function->getName().find("__leet_trampoline") != std::string::npos
+        function->getName().find("__leet_split_mix_64") != std::string::npos ||
+        function->getName().find("__leet_forward") != std::string::npos ||
+        function->getName().find("sigemptyset") != std::string::npos ||
+        function->getName().find("sigaction") != std::string::npos
     )
         return;
 
@@ -95,8 +98,9 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
                     callInst->getCalledFunction()->getName().find("__leet_exception") == std::string::npos &&
                     callInst->getCalledFunction()->getName().find("__leet_trampoline") == std::string::npos &&
                     callInst->getCalledFunction()->getName().find("__leet_forward") == std::string::npos &&
-                    callInst->getCalledFunction()->getName() != "sigaction" &&
-                    callInst->getCalledFunction()->getName() != "sigemptyset"
+                    callInst->getCalledFunction()->getName().find("__leet_split_mix_64") == std::string::npos &&
+                    callInst->getCalledFunction()->getName().find("sigemptyset") == std::string::npos &&
+                    callInst->getCalledFunction()->getName().find("sigaction") == std::string::npos
                 )
                 {
                     if (generator->DrawRange(0u, 100u) > attributes.NanomitesProbability)
@@ -111,7 +115,8 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     if (instructions.empty())
         return;
 
-    function->addFnAttr(llvm::Attribute::NoRedZone);
+    function->addFnAttr(llvm::Attribute::NoInline);
+    function->addFnAttr(llvm::Attribute::NoDuplicate);
 
     llvm::LLVMContext& context = function->getContext();
     llvm::Module* module = function->getParent();
