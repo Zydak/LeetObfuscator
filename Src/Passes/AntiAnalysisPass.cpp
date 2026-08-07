@@ -110,38 +110,95 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
     return true;
 }
 
-
 llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::CreateInvalidBogusBlock(llvm::Function* function, std::shared_ptr<RandomNumberGenerator> generator)
 {
     llvm::LLVMContext& context = function->getContext();
-    llvm::BasicBlock* bogusBlock = llvm::BasicBlock::Create(context, "leet.invalid.bogus", function, function->getEntryBlock().getNextNode()); // TODO random pos in func
+    // TODO: random position in function insert
+    llvm::BasicBlock* bogusBlock = llvm::BasicBlock::Create(context, "leet.invalid.bogus", function, function->getEntryBlock().getNextNode());
 
     llvm::IRBuilder<> bogusBuilder(bogusBlock);
 
-    std::vector<const char*> asmOptions = {
-        "0x0F",
-        "0x68",
-        "0xF2",
-        "0x6A",
-        "0xE9",
-        "0xC7",
-        "0xF6",
-        "0xF7",
-        "0xFE",
-        "0x6B",
-    };
+    std::vector<std::string> asmOptions;
 
-    const char* selectedAsm = asmOptions[generator->DrawRange(0u, (uint32_t)asmOptions.size() - 1)];
+    // Near CALL / JMP (eats 4)
+    asmOptions.push_back(".byte 0xE8");
+    asmOptions.push_back(".byte 0xE9");
+
+    // PUSH imm (eats 4 or 1)
+    asmOptions.push_back(".byte 0x68");
+    asmOptions.push_back(".byte 0x6A");
+
+    // RET / RETF imm (eats 2)
+    asmOptions.push_back(".byte 0xC2");
+    asmOptions.push_back(".byte 0xCA");
+
+    // Far CALL / JMP (eats 6)
+    asmOptions.push_back(".byte 0x9A");
+    asmOptions.push_back(".byte 0xEA");
+
+    // movabs (eats 8)
+    asmOptions.push_back(".byte 0x48, 0xB8");
+    asmOptions.push_back(".byte 0x48, 0xB9");
+    asmOptions.push_back(".byte 0x48, 0xBA");
+    asmOptions.push_back(".byte 0x48, 0xBB");
+    asmOptions.push_back(".byte 0x48, 0xBC");
+    asmOptions.push_back(".byte 0x48, 0xBD");
+    asmOptions.push_back(".byte 0x48, 0xBE");
+    asmOptions.push_back(".byte 0x48, 0xBF");
+
+    // ENTER (eats 3)
+    asmOptions.push_back(".byte 0xC8");
+
+    // Multi byte escapes that force further decoding
+    asmOptions.push_back(".byte 0x0F, 0x1F");
+    asmOptions.push_back(".byte 0x0F, 0x0D");
+    asmOptions.push_back(".byte 0x0F, 0x38");
+    asmOptions.push_back(".byte 0x0F, 0x3A");
+
+    // Long ModR/M + SIB forms (primary + ModR/M + SIB)
+    static const uint8_t primaries[] = {
+        0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, // duplicated for better distribution
+        0xC7, // MOV
+        0x69, // IMUL
+        0xF7 // TEST
+    };
+    static const uint8_t longModRMs[] = { 0x84, 0x8C, 0x94, 0x9C, 0xA4, 0xAC, 0xB4, 0xBC };
+
+    // Add one random long form for every primary and every long ModR/M
+    for (uint8_t primary : primaries)
+    {
+        for (uint8_t modrm : longModRMs)
+        {
+            uint8_t sib = static_cast<uint8_t>(generator->DrawRange(0u, 255u));
+
+            std::string seq;
+
+            if (generator->DrawRange(0u, 2u) == 0) seq += ".byte 0x66\n";
+            if (generator->DrawRange(0u, 2u) == 0) seq += ".byte 0x67\n";
+            if (generator->DrawRange(0u, 3u) == 0) seq += ".byte 0x48\n";
+            if (generator->DrawRange(0u, 4u) == 0) seq += ".byte 0x2E\n";
+            if (generator->DrawRange(0u, 4u) == 0) seq += ".byte 0x3E\n";
+            if (generator->DrawRange(0u, 5u) == 0) seq += ".byte 0xF0\n";
+
+            seq += ".byte " + std::to_string(primary) + "\n";
+            seq += ".byte " + std::to_string(modrm)   + "\n";
+            seq += ".byte " + std::to_string(sib)     + "\n";
+
+            asmOptions.push_back(std::move(seq));
+        }
+    }
+
+    // Select one
+    const std::string& selected = asmOptions[generator->DrawRange(0u, (uint32_t)asmOptions.size() - 1)];
 
     llvm::InlineAsm* inAsm = llvm::InlineAsm::get(
         llvm::FunctionType::get(bogusBuilder.getVoidTy(), false),
-        ".byte " + std::string(selectedAsm),
+        selected,
         "",
         true
     );
 
     bogusBuilder.CreateCall(inAsm);
-
     return bogusBlock;
 }
 

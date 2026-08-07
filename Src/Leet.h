@@ -75,7 +75,7 @@ extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucon
 
     ucontext_t *uc = (ucontext_t *)ucontext;
     unsigned long long rip = uc->uc_mcontext.gregs[REG_RIP];
-    uint32_t nanomiteId = *((uint32_t*)((uint8_t*)rip + 1));
+    uint32_t nanomiteId = *((uint32_t*)((uint8_t*)rip + 3));
     bool popFromStack = (nanomiteId == 0);
 
     void* target = nullptr;
@@ -106,7 +106,7 @@ extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucon
         if (!popFromStack)
         {
             uc->uc_mcontext.gregs[REG_RSP] -= 8;
-            *(uint64_t*)uc->uc_mcontext.gregs[REG_RSP] = rip + 6;
+            *(uint64_t*)uc->uc_mcontext.gregs[REG_RSP] = rip + 7;
         }
 
         uc->uc_mcontext.gregs[REG_RIP] = (greg_t)target;

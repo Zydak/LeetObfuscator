@@ -313,17 +313,40 @@ void LeetObfuscator::NanomitesMachineCodePass::InsertTrap(uint32_t id, llvm::Mac
     llvm::MachineFunction* machineFunction = machineBlock->getParent();
     const llvm::TargetInstrInfo* instructionInfo = machineFunction->getSubtarget().getInstrInfo();
 
+    // Insert some invalid opcodes as always
+    // This will eat 4 ID bytes + the next instruction bytes after that as part of this instruction
+    static const uint8_t primaries[] = {
+        0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, // duplicated for better distribution
+        0xC7, // MOV
+        0x69, // IMUL
+        0xF7 // TEST
+    };
+
+    static const uint8_t longModRMs[] = {
+        0x84, 0x8C, 0x94, 0x9C, 0xA4, 0xAC, 0xB4, 0xBC
+    };
+    
+    static thread_local std::mt19937 rng{std::random_device{}()}; // TODO generator
+    std::uniform_int_distribution<size_t> primDist(0, std::size(primaries) - 1);
+    std::uniform_int_distribution<size_t> modDist(0, std::size(longModRMs) - 1);
+    std::uniform_int_distribution<uint8_t> byteDist(0, 255);
+
+    uint8_t primary = primaries[primDist(rng)];
+    uint8_t modrm = longModRMs[modDist(rng)];
+    uint8_t sib = byteDist(rng);
+
     std::string asmText;
     llvm::raw_string_ostream os(asmText);
-    os << 
-        "\t.byte 0xCC\n" <<
-        "\t.byte 0xE8\n" <<
-        "\t.byte " << ((id >>  0) & 0xFF) << "\n" <<
-        "\t.byte " << ((id >>  8) & 0xFF) << "\n" <<
-        "\t.byte " << ((id >> 16) & 0xFF) << "\n" <<
-        "\t.byte " << ((id >> 24) & 0xFF) << "\n" <<
-        "\t.byte 0x0F\n";
-
+    os 
+        << "\t.byte 0xCC\n"
+        << "\t.byte " << (int32_t)primary << "\n"
+        << "\t.byte " << (int32_t)modrm   << "\n"
+        << "\t.byte " << (int32_t)sib     << "\n"
+        << "\t.byte " << ((id >>  0) & 0xFF) << "\n"
+        << "\t.byte " << ((id >>  8) & 0xFF) << "\n"
+        << "\t.byte " << ((id >> 16) & 0xFF) << "\n"
+        << "\t.byte " << ((id >> 24) & 0xFF) << "\n";
+    
     const char *AsmSym = machineFunction->createExternalSymbolName(os.str());
 
     llvm::MachineInstrBuilder builder = llvm::BuildMI(
