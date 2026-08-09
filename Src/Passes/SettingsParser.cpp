@@ -110,13 +110,6 @@ bool SettingsParser::ParseEnumArgument(
     ReportInvalidArgument(function, key, expected);
     return false;
 }
-uint64_t SettingsParser::GenerateRuntimeSeed()
-{
-    static std::random_device randomDevice;
-    static std::mt19937_64 generator((uint64_t(randomDevice()) << 32) ^ randomDevice());
-    static uint64_t seed = generator();
-    return seed;
-}
 
 // ---------------------------------------------------------------------------
 // Option tables.
@@ -166,12 +159,6 @@ void SettingsParser::ApplyRuntimeSeed(llvm::Function& function, const std::vecto
     if (values->size() != 1)
     {
         ReportInvalidArgument(function, name, "expected 'auto' or one unsigned integer");
-        return;
-    }
-    if (values->front() == "auto")
-    {
-        static uint64_t seed = GenerateRuntimeSeed();
-        result.runtimeSeed = seed;
         return;
     }
     ParseUnsignedArgument<uint64_t>(function, values, name, result.runtimeSeed, std::numeric_limits<uint64_t>::max());
@@ -238,11 +225,10 @@ const std::vector<SettingsParser::Option>& SettingsParser::GetPassOptions(Settin
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
+        {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
         {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
-        {"maxBlockSize", UnsignedOption(&FA::maxBlockSize)},
-        {"minBlockSize", UnsignedOption(&FA::minBlockSize)},
         {"probability", UnsignedOption(&FA::blockSplitterProbability, 100u)},
         {"blockSplitSize", UnsignedOption(&FA::blockSplitSize)},
     };
@@ -303,7 +289,7 @@ const std::vector<SettingsParser::Option>& SettingsParser::GetPassOptions(Settin
         {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
-        {"probability", UnsignedOption(&FA::antiAliasingProbability, 100u)},
+        {"probability", UnsignedOption(&FA::NanomitesProbability, 100u)},
     };
     static const std::vector<Option> noOptions;
 
@@ -433,7 +419,11 @@ llvm::StringRef LeetObfuscator::SettingsParser::GetPassTypeName(PassType passTyp
         case PassType::AAMBAPass: return "AAMBAPass";
         case PassType::AntiAnalysisPass: return "AntiAnalysisPass";
         case PassType::AntiAliasingPass: return "AntiAliasingPass";
-        default: return "";
+        case PassType::NanomitesPass: return "NanomitesPass";
+        default:
+            std::cout << "WRONG PASS NAME WTF?" << std::endl;
+            exit(1);
+            break;
     }
 }
 
@@ -541,7 +531,6 @@ std::shared_ptr<LeetObfuscator::RandomNumberGenerator> LeetObfuscator::SettingsP
     if (generator->GetSeed() != attributes.runtimeSeed)
     {
         generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
-        std::cout << "UNIQUE SEED" << std::endl;
     }
 
     return generator;
@@ -567,43 +556,137 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
         }
 
         std::ofstream file("Leet.conf");
+
         std::cout << "Creating " << std::filesystem::current_path().c_str() << "/Leet.conf" << std::endl;
-        file << "# Leet Obfuscator Settings\n"
-            << "#(all/none)\n"
-            << "# all will mark all functions for parsing automatically and omit only functions with skip annotation\n"
-            << "# none will parse only functions that are explicitly marked with forcePass annotation and skip everything else\n"
-            << "defaultParseMode=all\n"
-            << "# seed for randomness, keep auto unless debugging\n"
-            << "runtimeSeed=auto\n"
-            << "# minimum instruction count of a function for it to qualify for obfuscation (0 = all qualify)\n"
-            << "minFunctionSize=10\n"
-            << "# maximum instruction count of a function for it to qualify for obfuscation (0 = all qualify)\n"
-            << "maxFunctionSize=0\n"
-            << "# minimum instruction count of a block for it to qualify for obfuscation (0 = all qualify)\n"
-            << "minBlockSize=5\n"
-            << "# maximum instruction count of a block for it to qualify for obfuscation (0 = all qualify)\n"
-            << "maxBlockSize=0\n\n"
-            << "# Passes available right now:\n"
-            << "# \t- StringEncryptionPass\n"
-            << "# \t- MBAPass\n"
-            << "# \t- BlockSplitterPass\n"
-            << "# \t- DispatcherPass\n"
-            << "# \t- AntiAnalysisPass\n"
-            << "# \t- AntiAliasingPass\n"
-            << "# \t- NanomitesPass\n"
-            << "# \t- AAMBAPass\n"
-            << "# Each pass needs to be on a separate line. Separate pass parameters with ',' and multi-values with '|'.\n"
-            << "passes=\n"
-            << "    StringEncryptionPass(),\n"
-            << "    MBAPass(expansionCount=2),\n"
-            << "    BlockSplitterPass(maxBlockSize=20),\n"
-            << "    AntiAnalysisPass(),\n"
-            << "    DispatcherPass(),\n"
-            << "    MBAPass(expansionCount=1),\n"
-            << "    AAMBAPass(),\n"
-            << "    AntiAliasingPass(),\n"
-            << "    AntiAnalysisPass(),\n"
-            << "    NanomitesPass();\n";
+
+        file << R"(# Leet Obfuscator Config
+# Priority order:
+# 1. Global defaults
+# 2. Pass specific arguments
+# 3. Function attributes (forcePass / skip etc. set through provided macros)
+#
+# GLOBAL SETTINGS
+#
+# defaultParseMode:
+#   'all'  = process every function unless it has a skip annotation
+#   'none' = only process functions you explicitly mark with forcePass
+#
+# runtimeSeed:
+#   <number> = uint64_t fixed seed for reproducible results
+#
+# minFunctionSize / maxFunctionSize:
+#   Skip functions that are too small or too big. 0 = no limit.
+#
+# minBlockSize / maxBlockSize:
+#   Same idea but for basic blocks. 0 = no limit.
+#
+# PASS-SPECIFIC SETTINGS
+# Can be set on any pass, e.g. MBAPass(probability=50)
+#
+# Available: defaultParseMode, skip, forcePass, runtimeSeed, probability,
+# minFunctionSize, maxFunctionSize, minBlockSize, maxBlockSize
+# probability is 0-100.
+#
+# THE PASSES
+#
+# StringEncryptionPass:
+#   Encrypts string literals at compile time and inserts runtime decryption at every use.
+#
+#   Performance impact: Very small
+#   Just a decryption call per string use. You won't notice it unless you have a ton of strings.
+#
+#   Attributes: defaultParseMode, skip, forcePass
+#
+# MBAPass (Mixed Boolean Arithmetic):
+#   Replaces simple binary operations with equivalent but much more complex expressions.
+#   Makes the logic a lot harder to follow.
+#
+#   Performance impact: Mild to high (depends on expansionCount)
+#
+#   Attributes:
+#   expansionCount (int): How many times to expand each operation. 1-3 is the usual range, 2 is a solid default. I wouldn't go higher than that since it grows exponentially.
+#   probability (0-100): Chance to apply the transform.
+#
+# BlockSplitterPass:
+#   Breaks large basic blocks into smaller ones. Increases control flow complexity,
+#   useless on its own, very useful together with DispatcherPass.
+#
+#   Performance impact: Mild
+#
+#   Attributes:
+#   blockSplitSize (int): Target size for the split blocks.
+#   probability (0-100)
+#
+# DispatcherPass:
+#   Replaces direct branches with a dispatcher that uses indirect jumps.
+#   Control flow targets are resolved at runtime, which is a pain for static analysis.
+#
+#   Performance impact: High (scales with block count, since you'll have an indirect jump for every block in the function)
+#
+#   Attributes:
+#   probability (0-100)
+#
+# AntiAnalysisPass:
+#   Inserts bogus blocks with invalid opcodes and anti debug checks (like RDTSC timing) to mess with analysis tools.
+#
+#   Performance impact: Very small, the bogus blocks are never executed.
+#
+#   Attributes:
+#   bogusInsertPosition (start|random)
+#   rdtscProbability (0-100)
+#   validBogusBlocksProbability (0-100) # doesn't do anything for now
+#   invalidBogusBlocksProbability (0-100) # doesn't do anything for now
+#
+# AntiAliasingPass:
+#   Places all local variables into one big shared stack buffer so the decompilers can't alias the variables.
+#
+#   Performance impact: low to mild
+#
+#   Attributes:
+#   probability (0-100)
+#
+# AAMBAPass:
+#   Rewrites arithmetic to use ADC/SBB so it depends on the carry flag.
+#   Decompilers usually struggle to track this properly.
+#
+#   Performance impact: Mild
+#
+#   Attributes:
+#   probability (0-100)
+#
+# NanomitesPass:
+#   Replaces calls with int3 breakpoints. An exception handler then redirects to the real target.
+#   Makes dynamic analysis pretty miserable.
+#
+#   Performance impact: Very high, it will fire an exception leaving the program and going to kernel, and interrupts like this are just slow. Use very sparingly.
+#   It's best to set defaultParsingMode on this to none and manually mark which functions or even which calls you want to obfuscate with this explicitly.
+#
+#   Attributes:
+#   probability (0-100)
+#
+# =====================================
+# DEFAULT PRESET, works well on small binaries
+# =====================================
+defaultParseMode=all
+runtimeSeed=0
+minFunctionSize=10
+maxFunctionSize=0
+minBlockSize=5
+maxBlockSize=0
+
+passes=
+    StringEncryptionPass(),
+    MBAPass(expansionCount=2),
+    BlockSplitterPass(blockSplitSize=50),
+    AntiAnalysisPass(),
+    DispatcherPass(),
+    MBAPass(expansionCount=1),
+    AAMBAPass(),
+    AntiAliasingPass(),
+    AntiAnalysisPass(),
+    NanomitesPass();
+
+)";
     }
 
     std::ifstream file("Leet.conf");
@@ -649,15 +732,6 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
             if (value == "all") settings.defaultParseMode = GlobalParseMode::All;
             else if (value == "none") settings.defaultParseMode = GlobalParseMode::None;
             SetArgument(settings.parameters, "defaultParseMode", {value.str()});
-            handled = true;
-        }
-        if (key == "runtimeSeed")
-        {
-            if (value == "auto")
-                settings.defaultRuntimeSeed = GenerateRuntimeSeed();
-            else
-                settings.defaultRuntimeSeed = std::stoull(value.str());
-            SetArgument(settings.parameters, key, {value.str()});
             handled = true;
         }
         if (key == "stringEncryptionProbability")

@@ -146,7 +146,7 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
     {
         if (auto* allocaInst = llvm::dyn_cast<llvm::AllocaInst>(&inst))
         {
-            if (generator->DrawRange(0u, 100u) > attributes.antiAliasingProbability)
+            if (generator->DrawRange(1u, 100u) > attributes.antiAliasingProbability)
                 continue;
             
             if (IsEligibleAlloca(allocaInst, dataLayout))

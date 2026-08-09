@@ -51,7 +51,7 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
         {
             if (auto* binOp = llvm::dyn_cast<llvm::BinaryOperator>(&instruction))
             {
-                if (generator->DrawRange(0u, 100u) > attributes.aambaProbability)
+                if (generator->DrawRange(1u, 100u) > attributes.aambaProbability)
                     continue;
 
                 instructionsToObfuscate.push_back(binOp);

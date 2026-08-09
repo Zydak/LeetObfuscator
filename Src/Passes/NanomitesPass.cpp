@@ -6,6 +6,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "llvm/IR/Verifier.h"
@@ -14,6 +15,7 @@
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/ADT/Hashing.h"
 
 #include "SettingsParser.h"
 
@@ -42,21 +44,22 @@ llvm::PreservedAnalyses LeetObfuscator::NanomitesPass::run(llvm::Module& module,
     return llvm::PreservedAnalyses::none();
 }
 
-uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(RandomNumberGenerator& generator)
+uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(llvm::Module& module, RandomNumberGenerator& generator)
 {
     static std::vector<uint32_t> allIds;
 
     uint32_t nanomiteId;
     do
     {
-        nanomiteId = generator.DrawRange(1u, std::numeric_limits<uint32_t>::max());;
+        nanomiteId = generator.DrawRange(1u, std::numeric_limits<uint32_t>::max());
+
+        nanomiteId = (uint32_t)llvm::hash_combine(module.getModuleIdentifier(), nanomiteId);
     }
     while (std::find(allIds.begin(), allIds.end(), nanomiteId) != allIds.end());
 
     allIds.push_back(nanomiteId);
     return nanomiteId;
 }
-
 
 void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, std::vector<llvm::Constant*>& nanomitesEntries)
 {
@@ -65,12 +68,6 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         SettingsParser::PassType::NanomitesPass,
         m_Arguments
     );
-
-    if(SettingsParser::ShouldSkipFunction(function, attributes))
-    {
-        m_Logger.LogFunction(*function, "Skipping function due to pass settings", 1);
-        return;
-    }
 
     m_Logger.LogFunction(*function, "Processing function", 1);
 
@@ -84,7 +81,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         function->getName().find("__leet_exception") != std::string::npos ||
         function->getName().find("__leet_forward") != std::string::npos ||
         function->getName().find("__leet_split_mix_64") != std::string::npos ||
-        function->getName().find("__leet_forward") != std::string::npos ||
+        function->getName().find("__leet_nanomite_marker") != std::string::npos ||
         function->getName().find("sigemptyset") != std::string::npos ||
         function->getName().find("sigaction") != std::string::npos
     )
@@ -93,35 +90,72 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         return;
     }
 
+    std::vector<llvm::Instruction*> markerCallsToRemove;
+    
     for (auto& basicBlock : *function)
     {
-        if(SettingsParser::ShouldSkipBlock(&basicBlock, attributes))
-            continue;
+        bool nextCallMarked = false;
         
         for (auto& inst : basicBlock)
         {
             llvm::CallInst* callInst = llvm::dyn_cast<llvm::CallInst>(&inst);
             if (callInst)
             {
+                llvm::Function* calledFunction = callInst->getCalledFunction();
+                if (!calledFunction)
+                    continue;
+
+                // Check if this is our marker function
+                if (calledFunction->getName() == "__leet_nanomite_marker")
+                {
+                    nextCallMarked = true;
+                    m_Logger.LogInstruction(*callInst, "Found nanomite marker, next call will be obfuscated", 4);
+                    // Mark for removal as it's just a placeholder
+                    markerCallsToRemove.push_back(callInst);
+                    continue;
+                }
+
+                if(!nextCallMarked && SettingsParser::ShouldSkipFunction(calledFunction, attributes))
+                {
+                    m_Logger.LogFunction(*calledFunction, "Skipping function due to pass settings", 1);
+                    continue;
+                }
+                
                 // Again, skip llvm and our own stuff
-                if (callInst->getCalledFunction() &&
-                    callInst->getCalledFunction()->getName().find("llvm.") == std::string::npos &&
-                    callInst->getCalledFunction()->getName().find("__leet_dispatcher_barrier") == std::string::npos &&
-                    callInst->getCalledFunction()->getName().find("__leet_exception") == std::string::npos &&
-                    callInst->getCalledFunction()->getName().find("__leet_trampoline") == std::string::npos &&
-                    callInst->getCalledFunction()->getName().find("__leet_forward") == std::string::npos &&
-                    callInst->getCalledFunction()->getName().find("__leet_split_mix_64") == std::string::npos &&
-                    callInst->getCalledFunction()->getName().find("sigemptyset") == std::string::npos &&
-                    callInst->getCalledFunction()->getName().find("sigaction") == std::string::npos
+                if (calledFunction->getName().find("llvm.") == std::string::npos &&
+                    calledFunction->getName().find("__leet_dispatcher_barrier") == std::string::npos &&
+                    calledFunction->getName().find("__leet_exception") == std::string::npos &&
+                    calledFunction->getName().find("__leet_trampoline") == std::string::npos &&
+                    calledFunction->getName().find("__leet_forward") == std::string::npos &&
+                    calledFunction->getName().find("__leet_split_mix_64") == std::string::npos &&
+                    calledFunction->getName().find("sigemptyset") == std::string::npos &&
+                    calledFunction->getName().find("sigaction") == std::string::npos
                 )
                 {
-                    if (generator->DrawRange(0u, 100u) > attributes.NanomitesProbability)
+                    // Check if this call site is explicitly marked for nanomite obfuscation
+                    bool isMarked = nextCallMarked;
+                    if (isMarked)
+                    {
+                        m_Logger.LogInstruction(*callInst, "Call site explicitly marked for nanomite obfuscation", 4);
+                    }
+                    
+                    // Reset the marker after checking
+                    nextCallMarked = false;
+                    
+                    // If not marked, use probability based selection
+                    if (!isMarked && generator->DrawRange(1u, 100u) > attributes.NanomitesProbability)
                         continue;
 
                     instructions.push_back(callInst);
                 }
             }
         }
+    }
+    
+    // Remove marker calls as they're just placeholders
+    for (auto* markerCall : markerCallsToRemove)
+    {
+        markerCall->eraseFromParent();
     }
 
     if (instructions.empty())
@@ -155,7 +189,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     {
         llvm::Function* realFunc = callInst->getCalledFunction();
 
-        uint32_t callSiteId = GenerateUniqueNanomiteId(*generator);
+        uint32_t callSiteId = GenerateUniqueNanomiteId(*module, *generator);
 
         m_Logger.LogFunction(*function, "Injecting nanomite wrapper", 3);
         m_Logger.LogInstruction(*callInst, "Rewriting call site", 4);

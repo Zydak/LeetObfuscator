@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cmath>
 
+#define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
 // ---- Structs of various sizes ----
@@ -39,6 +40,7 @@ struct PackedS {
 };
 
 // Simple deterministic mix / checksum helpers
+__attribute__((noinline))
 static inline uint64_t mix64(uint64_t x) {
     x ^= x >> 30;
     x *= 0xbf58476d1ce4e5b9ULL;
@@ -48,12 +50,14 @@ static inline uint64_t mix64(uint64_t x) {
     return x;
 }
 
+__attribute__((noinline))
 static inline uint64_t add_f(uint64_t h, float f) {
     uint32_t u;
     std::memcpy(&u, &f, sizeof(u));
     return mix64(h ^ u);
 }
 
+__attribute__((noinline))
 static inline uint64_t add_d(uint64_t h, double d) {
     uint64_t u;
     std::memcpy(&u, &d, sizeof(u));
@@ -61,6 +65,7 @@ static inline uint64_t add_d(uint64_t h, double d) {
 }
 
 // ---- Function 1 ----
+__attribute__((noinline))
 uint64_t f01(
     int a0, int a1, int a2, int a3, int a4, int a5, int a6, int a7,
     int a8, int a9, float b0, float b1, float b2, float b3, float b4,
@@ -93,6 +98,7 @@ uint64_t f01(
 }
 
 // ---- Function 2 ----
+__attribute__((noinline))
 uint64_t f02(
     double d0, double d1, double d2, double d3, double d4, double d5,
     int i0, int i1, int i2, int i3, int i4, int i5, int i6, int i7, int i8, int i9,
@@ -127,6 +133,7 @@ uint64_t f02(
 }
 
 // ---- Function 3 ----
+__attribute__((noinline))
 uint64_t f03(
     int v00, int v01, int v02, int v03, int v04, int v05, int v06, int v07,
     int v08, int v09, int v10, int v11, int v12, int v13, int v14, int v15,
@@ -162,6 +169,7 @@ uint64_t f03(
 }
 
 // ---- Function 4 ----
+__attribute__((noinline))
 uint64_t f04(
     PackedS p0, PackedS p1, PackedS p2, PackedS p3,
     BigS b0, BigS b1,
@@ -197,6 +205,7 @@ uint64_t f04(
 }
 
 // ---- Function 5 ----
+__attribute__((noinline))
 uint64_t f05(
     int* a0, int* a1, int* a2, int* a3, int* a4, int* a5, int* a6, int* a7,
     float* f0, float* f1, float* f2, float* f3, float* f4, float* f5, float* f6, float* f7,
@@ -241,6 +250,7 @@ uint64_t f05(
 }
 
 // ---- Function 6 ----
+__attribute__((noinline))
 uint64_t f06(
     int x0, float y0, double z0, int x1, float y1, double z1,
     int x2, float y2, double z2, int x3, float y3, double z3,
@@ -266,6 +276,7 @@ uint64_t f06(
 }
 
 // ---- Function 7 ----
+__attribute__((noinline))
 uint64_t f07(
     BigS b0, BigS b1, BigS b2,
     MedS m0, MedS m1, MedS m2, MedS m3,
@@ -296,6 +307,7 @@ uint64_t f07(
 }
 
 // ---- Function 8 ----
+__attribute__((noinline))
 uint64_t f08(
     int i00, int i01, int i02, int i03, int i04, int i05, int i06, int i07, int i08, int i09,
     int i10, int i11, int i12, int i13, int i14, int i15, int i16, int i17, int i18, int i19,
@@ -324,6 +336,7 @@ uint64_t f08(
 }
 
 // ---- Function 9 ----
+__attribute__((noinline))
 uint64_t f09(
     double d0, double d1, double d2, double d3, double d4, double d5, double d6, double d7,
     float f0, float f1, float f2, float f3, float f4, float f5, float f6, float f7, float f8, float f9,
@@ -352,6 +365,7 @@ uint64_t f09(
 }
 
 // ---- Function 10 ----
+__attribute__((noinline))
 uint64_t f10(
     int i0, int i1, int i2, int i3, int i4, int i5, int i6, int i7, int i8, int i9,
     int i10, int i11, int i12, int i13, int i14, int i15, int i16, int i17, int i18, int i19,
@@ -379,6 +393,7 @@ uint64_t f10(
 
 // ---- More functions with large mixed signatures ----
 
+__attribute__((noinline))
 uint64_t f11(
     SmallS s0, SmallS s1, SmallS s2, SmallS s3, SmallS s4, SmallS s5, SmallS s6, SmallS s7,
     MedS m0, MedS m1, MedS m2, MedS m3,
@@ -405,6 +420,7 @@ uint64_t f11(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f12(
     int* p00, int* p01, int* p02, int* p03, int* p04, int* p05, int* p06, int* p07, int* p08, int* p09,
     float* f00, float* f01, float* f02, float* f03, float* f04, float* f05, float* f06, float* f07, float* f08, float* f09,
@@ -439,6 +455,7 @@ uint64_t f12(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f13(
     int i0, float f0, double d0, char c0, short s0, long l0, long long ll0, unsigned u0, bool b0,
     int i1, float f1, double d1, char c1, short s1, long l1, long long ll1, unsigned u1, bool b1,
@@ -468,6 +485,7 @@ uint64_t f13(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f14(
     BigS b0, BigS b1, BigS b2, BigS b3,
     MedS m0, MedS m1, MedS m2, MedS m3, MedS m4, MedS m5,
@@ -495,6 +513,7 @@ uint64_t f14(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f15(
     int i00, int i01, int i02, int i03, int i04, int i05, int i06, int i07, int i08, int i09,
     int i10, int i11, int i12, int i13, int i14, int i15, int i16, int i17, int i18, int i19,
@@ -520,6 +539,7 @@ uint64_t f15(
 }
 
 // Continue with more to reach a good number of large functions
+__attribute__((noinline))
 uint64_t f16(
     PackedS p0, PackedS p1, PackedS p2, PackedS p3, PackedS p4, PackedS p5, PackedS p6, PackedS p7,
     BigS b0, BigS b1,
@@ -544,6 +564,7 @@ uint64_t f16(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f17(
     int i0, int i1, int i2, int i3, int i4, int i5, int i6, int i7, int i8, int i9,
     int i10, int i11, int i12, int i13, int i14, int i15, int i16, int i17, int i18, int i19,
@@ -562,6 +583,7 @@ uint64_t f17(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f18(
     SmallS* s0, SmallS* s1, SmallS* s2, SmallS* s3, SmallS* s4, SmallS* s5, SmallS* s6, SmallS* s7,
     MedS* m0, MedS* m1, MedS* m2, MedS* m3,
@@ -604,6 +626,7 @@ uint64_t f18(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f19(
     int i0, float f0, double d0, int i1, float f1, double d1, int i2, float f2, double d2,
     int i3, float f3, double d3, int i4, float f4, double d4, int i5, float f5, double d5,
@@ -625,6 +648,7 @@ uint64_t f19(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f20(
     int i00, int i01, int i02, int i03, int i04, int i05, int i06, int i07, int i08, int i09,
     int i10, int i11, int i12, int i13, int i14, int i15, int i16, int i17, int i18, int i19,
@@ -648,6 +672,7 @@ uint64_t f20(
 }
 
 // A few more for good measure
+__attribute__((noinline))
 uint64_t f21(
     float f00, float f01, float f02, float f03, float f04, float f05, float f06, float f07, float f08, float f09,
     float f10, float f11, float f12, float f13, float f14, float f15, float f16, float f17, float f18, float f19,
@@ -668,6 +693,7 @@ uint64_t f21(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f22(
     BigS b0, BigS b1, BigS b2, BigS b3, BigS b4,
     MedS m0, MedS m1, MedS m2, MedS m3, MedS m4, MedS m5, MedS m6, MedS m7,
@@ -690,6 +716,7 @@ uint64_t f22(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f23(
     int* p0, int* p1, int* p2, int* p3, int* p4, int* p5, int* p6, int* p7, int* p8, int* p9,
     int* p10, int* p11, int* p12, int* p13, int* p14, int* p15, int* p16, int* p17, int* p18, int* p19,
@@ -711,6 +738,7 @@ uint64_t f23(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f24(
     SmallS s0, SmallS s1, SmallS s2, SmallS s3, SmallS s4, SmallS s5, SmallS s6, SmallS s7, SmallS s8, SmallS s9,
     MedS m0, MedS m1, MedS m2, MedS m3, MedS m4, MedS m5, MedS m6, MedS m7, MedS m8, MedS m9,
@@ -737,6 +765,7 @@ uint64_t f24(
     return h;
 }
 
+__attribute__((noinline))
 uint64_t f25(
     int i0, int i1, int i2, int i3, int i4, int i5, int i6, int i7, int i8, int i9,
     float f0, float f1, float f2, float f3, float f4, float f5, float f6, float f7, float f8, float f9,

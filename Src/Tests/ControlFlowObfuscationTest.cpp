@@ -10,8 +10,10 @@
 #include <cmath>
 #include <chrono>
 
+#define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
+__attribute__((noinline))
 static inline uint64_t mix64(uint64_t x) {
     x ^= x >> 30;
     x *= 0xbf58476d1ce4e5b9ULL;
@@ -21,12 +23,14 @@ static inline uint64_t mix64(uint64_t x) {
     return x;
 }
 
+__attribute__((noinline))
 static inline uint64_t add_f(uint64_t h, float f) {
     uint32_t u;
     std::memcpy(&u, &f, sizeof(u));
     return mix64(h ^ u);
 }
 
+__attribute__((noinline))
 static inline uint64_t add_d(uint64_t h, double d) {
     uint64_t u;
     std::memcpy(&u, &d, sizeof(u));
@@ -34,6 +38,7 @@ static inline uint64_t add_d(uint64_t h, double d) {
 }
 
 // Complex nested loop with multiple exit conditions
+__attribute__((noinline))
 static uint64_t nestedLoopComplex(int maxA, int maxB, int maxC) {
     uint64_t h = 0xdeadbeefcafebabeULL;
     
@@ -80,6 +85,7 @@ static uint64_t nestedLoopComplex(int maxA, int maxB, int maxC) {
 }
 
 // State machine with complex transitions
+__attribute__((noinline))
 static uint64_t complexStateMachine(const std::array<int, 20> &inputs, int initialState) {
     uint64_t h = 0xfeedfacebadc0ffeULL;
     int state = initialState;
@@ -167,6 +173,7 @@ static uint64_t complexStateMachine(const std::array<int, 20> &inputs, int initi
 }
 
 // Control flow flattening simulation
+__attribute__((noinline))
 static uint64_t controlFlowFlattening(const std::array<int, 16> &data) {
     uint64_t h = 0x0badf00d1337c0deULL;
     int state = 0;
@@ -234,6 +241,7 @@ static uint64_t controlFlowFlattening(const std::array<int, 16> &data) {
 }
 
 // Complex conditional chain
+__attribute__((noinline))
 static uint64_t complexConditionalChain(int input, const std::array<int, 10> &thresholds) {
     uint64_t h = 0xcafebabedeadfaceULL;
     
@@ -297,6 +305,7 @@ static uint64_t complexConditionalChain(int input, const std::array<int, 10> &th
 }
 
 // Loop with complex conditions
+__attribute__((noinline))
 static uint64_t loopWithComplexConditions(const std::array<int, 20> &data) {
     uint64_t h = 0xfacefeed0ddba11eULL;
     int i = 0;
@@ -351,6 +360,7 @@ static uint64_t loopWithComplexConditions(const std::array<int, 20> &data) {
 }
 
 // Switch with fallthrough and complex cases
+__attribute__((noinline))
 static uint64_t complexSwitchFallthrough(int value, const std::array<int, 15> &data) {
     uint64_t h = 0xbaddcafebabe1337ULL;
     int result = 0;
@@ -411,6 +421,7 @@ static uint64_t complexSwitchFallthrough(int value, const std::array<int, 15> &d
 }
 
 // Virtual dispatch simulation
+__attribute__((noinline))
 static uint64_t virtualDispatchSimulation(int operation, int operand) {
     uint64_t h = 0xc0dedeadbadf00dULL;
     int result = 0;
@@ -465,6 +476,7 @@ static uint64_t virtualDispatchSimulation(int operation, int operand) {
 }
 
 // Exception handling simulation with control flow
+__attribute__((noinline))
 static uint64_t exceptionFlowSimulation(int input) {
     uint64_t h = 0xfeedfacedeadbeefULL;
     int result = 0;
@@ -510,6 +522,7 @@ static uint64_t exceptionFlowSimulation(int input) {
 }
 
 // Recursive control flow with multiple branches
+__attribute__((noinline))
 static uint64_t recursiveControlFlow(int n, const std::array<int, 8> &values) {
     uint64_t h = 0xfaceface12345678ULL;
     
@@ -534,6 +547,7 @@ static uint64_t recursiveControlFlow(int n, const std::array<int, 8> &values) {
 }
 
 // Loop unrolling simulation
+__attribute__((noinline))
 static uint64_t loopUnrollingSimulation(const std::array<int, 16> &data) {
     uint64_t h = 0xdead1234face5678ULL;
     int sum = 0;
@@ -564,6 +578,7 @@ static uint64_t loopUnrollingSimulation(const std::array<int, 16> &data) {
 }
 
 // Indirect branching simulation
+__attribute__((noinline))
 static uint64_t indirectBranchingSimulation(const std::array<int, 10> &targets, int selector) {
     uint64_t h = 0xcafe1234dead5678ULL;
     int result = 0;
@@ -614,6 +629,7 @@ static uint64_t indirectBranchingSimulation(const std::array<int, 10> &targets, 
 }
 
 // Table-based control flow
+__attribute__((noinline))
 static uint64_t tableBasedControlFlow(const std::array<int, 8> &table, int index) {
     uint64_t h = 0x1337deadbeef1337ULL;
     int result = 0;
@@ -656,6 +672,7 @@ static uint64_t tableBasedControlFlow(const std::array<int, 8> &table, int index
 }
 
 // Complex loop with continue and break
+__attribute__((noinline))
 static uint64_t complexLoopWithControl(const std::array<int, 25> &data) {
     uint64_t h = 0xfacedeadbeefcafeULL;
     int sum = 0;
@@ -705,6 +722,7 @@ static uint64_t complexLoopWithControl(const std::array<int, 25> &data) {
 }
 
 // Nested switch statements
+__attribute__((noinline))
 static uint64_t nestedSwitchStatements(int a, int b, int c) {
     uint64_t h = 0xdeadcafe12345678ULL;
     int result = 0;
@@ -772,6 +790,7 @@ static uint64_t nestedSwitchStatements(int a, int b, int c) {
 }
 
 // Control flow with computed goto simulation
+__attribute__((noinline))
 static uint64_t computedGotoSimulation(const std::array<int, 12> &labels, int start) {
     uint64_t h = 0xbeefdeadface1234ULL;
     int pc = start % labels.size();
@@ -848,6 +867,7 @@ static uint64_t computedGotoSimulation(const std::array<int, 12> &labels, int st
 }
 
 // Complex return path simulation
+__attribute__((noinline))
 static uint64_t complexReturnPath(int input, const std::array<int, 6> &thresholds) {
     uint64_t h = 0xcafebeefdeadfaceULL;
     int result = 0;

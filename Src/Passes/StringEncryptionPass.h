@@ -20,9 +20,17 @@ namespace LeetObfuscator
             uint32_t key;
         };
 
+        struct EmittedTemplate
+        {
+            llvm::Function* decryptFunction = nullptr;
+            llvm::Function* getKeyFunction = nullptr;
+            std::unique_ptr<llvm::Module> module = nullptr;
+        };
+
         bool IsEncryptableStringGlobal(llvm::GlobalVariable* global);
-        void EncryptGlobalAndPatchAllUses(StringGlobalInfo& stringInfo);
-        llvm::Function* GetDecryptFunction(llvm::Module& module, uint32_t key);
+        void EncryptGlobalAndPatchAllUses(StringGlobalInfo& stringInfo, const EmittedTemplate& templates);
+        llvm::Function* GetDecryptFunction(llvm::Module& module, uint32_t key, const EmittedTemplate& templates);
+        EmittedTemplate GetTemplateFunctions(llvm::Module& module);
         SettingsParser::PassArguments m_Arguments;
         Logger m_Logger;
     };

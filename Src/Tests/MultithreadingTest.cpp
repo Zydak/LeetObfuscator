@@ -1,766 +1,532 @@
-// Deterministic multithreading test for the Leet obfuscator.
-// Uses std::thread and fixed per-thread data to ensure repeatable output.
-// Expanded to stress test multithreading with complex synchronization patterns.
+// test_threading.cpp - Multi-threaded application test
+//
+// Compile:  g++ -O2 -std=c++17 -fno-exceptions -pthread -o test_threading test_threading.cpp
+//
+// Design notes (these are the rules that make a threaded program's output
+// reproducible even though thread *scheduling* is not):
+//  1. All input data is generated single-threaded, up front, by a seeded
+//     deterministic LCG -- never by std::rand/random_device.
+//  2. Every worker thread writes ONLY to a memory location that no other
+//     thread touches (its own slot in a results array, or disjoint rows of
+//     a matrix). This means there are no data races, and the *content* of
+//     the result never depends on which thread happened to finish first.
+//  3. Wherever threads must share mutable state (the mutex-protected
+//     counter, the producer/consumer queue), the shared state is updated
+//     with operations that are either (a) commutative/associative integer
+//     operations, so any interleaving yields the same final value, or
+//     (b) ordered by a mutex + condition variable so the logical order is
+//     fixed regardless of physical thread timing.
+//  4. Combination of per-thread results into the final answer always
+//     happens on the main thread, AFTER every worker has been joined, and
+//     always in a fixed index order (thread 0, 1, 2, ... N-1) -- never in
+//     "whichever finished first" order.
+//  5. No thread ever calls std::cout directly. Only the main thread prints,
+//     after all joins, so there is no possibility of interleaved /
+//     torn output between runs.
+//  6. Thread count is a fixed compile-time constant (not
+//     hardware_concurrency()), so the partitioning of work is identical on
+//     every run and every machine.
 
-#include <array>
-#include <atomic>
-#include <cstdint>
-#include <cstdio>
-#include <thread>
+#include <iostream>
+#include <iomanip>
 #include <vector>
+#include <thread>
 #include <mutex>
+#include <atomic>
 #include <condition_variable>
+#include <queue>
+#include <numeric>
+#include <algorithm>
 #include <chrono>
-#include <cstring>
-#include <cmath>
-#include <chrono>
+#include <cstdint>
 
+#define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
-static inline uint64_t mix64(uint64_t x) {
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9ULL;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebULL;
-    x ^= x >> 31;
-    return x;
-}
+constexpr int NUM_THREADS = 6;
 
-static inline uint64_t add_f(uint64_t h, float f) {
-    uint32_t u;
-    std::memcpy(&u, &f, sizeof(u));
-    return mix64(h ^ u);
-}
-
-static inline uint64_t add_d(uint64_t h, double d) {
-    uint64_t u;
-    std::memcpy(&u, &d, sizeof(u));
-    return mix64(h ^ u);
-}
-
-// Basic thread worker with simple computation
-static uint64_t threadWorker(int threadId,
-                             int baseValue,
-                             int stepValue,
-                             double scaleValue,
-                             bool invert,
-                             char tag,
-                             size_t limit,
-                             const std::array<int, 32> &data,
-                             const std::array<double, 16> &weights,
-                             uint32_t seed) {
-    uint64_t h = 0x1234567890abcdefULL;
-    for (size_t i = 0; i < limit; ++i) {
-        int index = (int)((i * stepValue + baseValue) % data.size());
-        double value = data[index] * weights[i % weights.size()];
-        if (invert)
-            value = -value;
-        h = add_d(h, value + (double)tag + seed);
-        h = mix64(h ^ (uint64_t)(threadId * 37 + (int)tag));
+// ---------------------------------------------------------------------------
+// Deterministic generator (LCG)
+// ---------------------------------------------------------------------------
+struct Lcg {
+    uint64_t state;
+    explicit Lcg(uint64_t seed) : state(seed) {}
+    uint64_t nextRaw() {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return state;
     }
-    return h;
+    int nextInt(int lo, int hi) {
+        uint64_t range = static_cast<uint64_t>(hi - lo + 1);
+        return lo + static_cast<int>(nextRaw() % range);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Deterministic chunk boundaries: splits [0, total) into NUM_THREADS
+// contiguous ranges as evenly as possible. Purely a function of `total`
+// and NUM_THREADS, so identical on every run/machine.
+// ---------------------------------------------------------------------------
+struct Range {
+    size_t begin;
+    size_t end;
+};
+
+__attribute__((noinline))
+std::vector<Range> makeChunks(size_t total, int numChunks) {
+    std::vector<Range> chunks;
+    chunks.reserve(static_cast<size_t>(numChunks));
+    size_t base = total / static_cast<size_t>(numChunks);
+    size_t remainder = total % static_cast<size_t>(numChunks);
+    size_t cursor = 0;
+    for (int i = 0; i < numChunks; ++i) {
+        size_t size = base + (static_cast<size_t>(i) < remainder ? 1 : 0);
+        chunks.push_back(Range{cursor, cursor + size});
+        cursor += size;
+    }
+    return chunks;
 }
 
-// Thread worker with matrix multiplication simulation
-static uint64_t matrixThreadWorker(int threadId,
-                                    const std::array<std::array<uint32_t, 8>, 8> &matrixA,
-                                    const std::array<std::array<uint32_t, 8>, 8> &matrixB,
-                                    int startRow,
-                                    int endRow,
-                                    uint32_t multiplier) {
-    uint64_t h = 0xdeadbeefcafebabeULL;
-    
-    for (int row = startRow; row < endRow; ++row) {
-        for (int col = 0; col < 8; ++col) {
-            uint32_t sum = 0;
-            for (int k = 0; k < 8; ++k) {
-                sum += matrixA[row][k] * matrixB[k][col];
+// ---------------------------------------------------------------------------
+// 1. Parallel sum of squares. Each thread writes to its own results[i]
+//    slot -- no shared mutable state, no locking needed, no races.
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+void sumOfSquaresWorker(const std::vector<long long>& data, Range range, long long& outResult) {
+    long long sum = 0;
+    for (size_t i = range.begin; i < range.end; ++i) {
+        sum += data[i] * data[i];
+    }
+    outResult = sum;
+}
+
+__attribute__((noinline))
+long long parallelSumOfSquares(const std::vector<long long>& data) {
+    std::vector<Range> chunks = makeChunks(data.size(), NUM_THREADS);
+    std::vector<long long> partial(NUM_THREADS, 0);
+    std::vector<std::thread> workers;
+    workers.reserve(NUM_THREADS);
+
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        workers.emplace_back(sumOfSquaresWorker, std::cref(data), chunks[static_cast<size_t>(i)],
+                              std::ref(partial[static_cast<size_t>(i)]));
+    }
+    for (auto& t : workers) t.join();
+
+    long long total = 0;
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        total += partial[static_cast<size_t>(i)]; // fixed order: thread 0..N-1
+    }
+    return total;
+}
+
+// ---------------------------------------------------------------------------
+// 2. Parallel prime counting over [2, bound). Each thread counts primes in
+//    its own disjoint sub-range via trial division, writing to its own slot.
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isPrimeTrialDivision(long long n) {
+    if (n < 2) return false;
+    if (n < 4) return true;
+    if (n % 2 == 0) return false;
+    for (long long d = 3; d * d <= n; d += 2) {
+        if (n % d == 0) return false;
+    }
+    return true;
+}
+
+__attribute__((noinline))
+void primeCountWorker(Range range, long long& outCount) {
+    long long count = 0;
+    for (size_t n = range.begin; n < range.end; ++n) {
+        if (isPrimeTrialDivision(static_cast<long long>(n))) {
+            ++count;
+        }
+    }
+    outCount = count;
+}
+
+__attribute__((noinline))
+long long parallelPrimeCount(size_t bound) {
+    std::vector<Range> chunks = makeChunks(bound, NUM_THREADS);
+    std::vector<long long> partial(NUM_THREADS, 0);
+    std::vector<std::thread> workers;
+    workers.reserve(NUM_THREADS);
+
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        workers.emplace_back(primeCountWorker, chunks[static_cast<size_t>(i)],
+                              std::ref(partial[static_cast<size_t>(i)]));
+    }
+    for (auto& t : workers) t.join();
+
+    long long total = 0;
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        total += partial[static_cast<size_t>(i)];
+    }
+    return total;
+}
+
+// ---------------------------------------------------------------------------
+// 3. Parallel max-finding. Combination via max() is commutative/associative
+//    so combining order truly does not matter here -- a good example of a
+//    reduction that stays correct under any interleaving.
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+void maxFinderWorker(const std::vector<long long>& data, Range range, long long& outMax) {
+    long long best = data[range.begin];
+    for (size_t i = range.begin; i < range.end; ++i) {
+        if (data[i] > best) best = data[i];
+    }
+    outMax = best;
+}
+
+__attribute__((noinline))
+long long parallelMax(const std::vector<long long>& data) {
+    std::vector<Range> chunks = makeChunks(data.size(), NUM_THREADS);
+    std::vector<long long> partial(NUM_THREADS, 0);
+    std::vector<std::thread> workers;
+    workers.reserve(NUM_THREADS);
+
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        workers.emplace_back(maxFinderWorker, std::cref(data), chunks[static_cast<size_t>(i)],
+                              std::ref(partial[static_cast<size_t>(i)]));
+    }
+    for (auto& t : workers) t.join();
+
+    long long best = partial[0];
+    for (int i = 1; i < NUM_THREADS; ++i) {
+        if (partial[static_cast<size_t>(i)] > best) best = partial[static_cast<size_t>(i)];
+    }
+    return best;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Mutex-protected shared counter. Every increment is a plain integer add
+//    (associative & commutative), so no matter how the threads interleave,
+//    the final total is always NUM_THREADS * incrementsPerThread.
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+void counterWorker(std::mutex& mtx, long long& sharedCounter, int incrementsPerThread) {
+    for (int i = 0; i < incrementsPerThread; ++i) {
+        std::lock_guard<std::mutex> lock(mtx);
+        sharedCounter += 1;
+    }
+}
+
+__attribute__((noinline))
+long long runMutexCounter(int incrementsPerThread) {
+    std::mutex mtx;
+    long long sharedCounter = 0;
+    std::vector<std::thread> workers;
+    workers.reserve(NUM_THREADS);
+
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        workers.emplace_back(counterWorker, std::ref(mtx), std::ref(sharedCounter), incrementsPerThread);
+    }
+    for (auto& t : workers) t.join();
+
+    return sharedCounter;
+}
+
+// ---------------------------------------------------------------------------
+// 5. Producer/consumer with a mutex + condition_variable bounded queue. The
+//    single producer pushes 0..N-1 in that exact order; the single consumer
+//    pops in FIFO order. Because there is exactly one producer and one
+//    consumer and the queue preserves FIFO order, the sequence of values
+//    consumed is always 0, 1, 2, ..., N-1 regardless of the relative speed
+//    of the two threads -- so the resulting sum is fully deterministic.
+// ---------------------------------------------------------------------------
+class BoundedQueue {
+public:
+    explicit BoundedQueue(size_t capacity) : capacity_(capacity), finished_(false) {}
+
+    void push(long long value) {
+        std::unique_lock<std::mutex> lock(mtx_);
+        notFull_.wait(lock, [this] { return queue_.size() < capacity_; });
+        queue_.push(value);
+        lock.unlock();
+        notEmpty_.notify_one();
+    }
+
+    void signalDone() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        finished_ = true;
+        notEmpty_.notify_all();
+    }
+
+    // Returns false when the queue is empty AND the producer signalled done.
+    bool pop(long long& outValue) {
+        std::unique_lock<std::mutex> lock(mtx_);
+        notEmpty_.wait(lock, [this] { return !queue_.empty() || finished_; });
+        if (queue_.empty()) {
+            return false;
+        }
+        outValue = queue_.front();
+        queue_.pop();
+        lock.unlock();
+        notFull_.notify_one();
+        return true;
+    }
+
+private:
+    std::mutex mtx_;
+    std::condition_variable notFull_;
+    std::condition_variable notEmpty_;
+    std::queue<long long> queue_;
+    size_t capacity_;
+    bool finished_;
+};
+
+__attribute__((noinline))
+void producerThread(BoundedQueue& q, long long count) {
+    for (long long i = 0; i < count; ++i) {
+        q.push(i);
+    }
+    q.signalDone();
+}
+
+__attribute__((noinline))
+void consumerThread(BoundedQueue& q, long long& outSum, long long& outCount) {
+    long long sum = 0;
+    long long consumed = 0;
+    long long value = 0;
+    while (q.pop(value)) {
+        sum += value;
+        ++consumed;
+    }
+    outSum = sum;
+    outCount = consumed;
+}
+
+// ---------------------------------------------------------------------------
+// 6. Parallel matrix multiplication (int). Rows of the result are
+//    partitioned across threads; each thread writes only to its own
+//    disjoint set of rows, so there is no need for locking.
+// ---------------------------------------------------------------------------
+using Matrix = std::vector<std::vector<long long>>;
+
+__attribute__((noinline))
+Matrix makeDeterministicMatrix(int n, Lcg& rng) {
+    Matrix mat(static_cast<size_t>(n), std::vector<long long>(static_cast<size_t>(n), 0));
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            mat[static_cast<size_t>(i)][static_cast<size_t>(j)] = rng.nextInt(-9, 9);
+        }
+    }
+    return mat;
+}
+
+__attribute__((noinline))
+void matMulRowRangeWorker(const Matrix& a, const Matrix& b, Matrix& result, Range rowRange) {
+    size_t n = a.size();
+    for (size_t i = rowRange.begin; i < rowRange.end; ++i) {
+        for (size_t j = 0; j < n; ++j) {
+            long long sum = 0;
+            for (size_t k = 0; k < n; ++k) {
+                sum += a[i][k] * b[k][j];
             }
-            h = mix64(h ^ (uint64_t)(sum * multiplier));
-            h = mix64(h ^ (uint64_t)(threadId + row + col));
+            result[i][j] = sum;
         }
     }
-    
-    return h;
 }
 
-// Thread worker with recursive computation
-static uint64_t recursiveThreadWorker(int threadId,
-                                       int depth,
-                                       int maxDepth,
-                                       const std::array<int, 16> &values,
-                                       double factor) {
-    uint64_t h = 0xabc123def456789ULL;
-    
-    if (depth >= maxDepth) {
-        for (unsigned i = 0; i < values.size(); ++i) {
-            h = mix64(h ^ (uint64_t)(values[i] + threadId + depth));
-        }
-        return h;
+__attribute__((noinline))
+Matrix parallelMatMul(const Matrix& a, const Matrix& b) {
+    size_t n = a.size();
+    Matrix result(n, std::vector<long long>(n, 0));
+    std::vector<Range> chunks = makeChunks(n, NUM_THREADS);
+    std::vector<std::thread> workers;
+    workers.reserve(NUM_THREADS);
+
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        workers.emplace_back(matMulRowRangeWorker, std::cref(a), std::cref(b), std::ref(result),
+                              chunks[static_cast<size_t>(i)]);
     }
-    
-    int sum = 0;
-    for (unsigned i = 0; i < values.size(); ++i) {
-        sum += values[i] * (depth + 1);
-    }
-    
-    h = mix64(h ^ (uint64_t)sum);
-    h = add_d(h, factor * (double)depth);
-    
-    uint64_t left = recursiveThreadWorker(threadId, depth + 1, maxDepth, values, factor * 1.1);
-    uint64_t right = recursiveThreadWorker(threadId, depth + 2, maxDepth, values, factor * 0.9);
-    
-    h = mix64(h ^ left);
-    h = mix64(h ^ right);
-    
-    return h;
+    for (auto& t : workers) t.join();
+
+    return result;
 }
 
-// Thread worker with complex data processing
-static uint64_t dataProcessingThreadWorker(int threadId,
-                                           const std::array<int, 64> &inputData,
-                                           const std::array<float, 32> &floatData,
-                                           int blockSize,
-                                           int passes) {
-    uint64_t h = 0xfee1deadbadc0ffeULL;
-    
-    for (int pass = 0; pass < passes; ++pass) {
-        for (int block = 0; block < (int)inputData.size(); block += blockSize) {
-            int blockSum = 0;
-            for (int i = block; i < block + blockSize && i < (int)inputData.size(); ++i) {
-                blockSum += inputData[i];
-                h = mix64(h ^ (uint64_t)(inputData[i] + threadId + pass));
-            }
-            
-            h = mix64(h ^ (uint64_t)blockSum);
-            
-            for (int i = block; i < block + blockSize / 2 && i < (int)floatData.size(); ++i) {
-                h = add_f(h, floatData[i] * (float)(threadId + 1));
-            }
+__attribute__((noinline))
+long long matrixChecksum(const Matrix& m) {
+    long long sum = 0;
+    for (const auto& row : m) {
+        for (long long v : row) {
+            sum += v;
         }
     }
-    
-    return h;
+    return sum;
 }
 
-// Thread worker with sorting simulation
-static uint64_t sortingThreadWorker(int threadId,
-                                     std::array<int, 32> localArray,
-                                     int iterations) {
-    uint64_t h = 0xc0ffee1234567890ULL;
-    
-    for (int iter = 0; iter < iterations; ++iter) {
-        // Bubble sort simulation
-        for (unsigned i = 0; i < localArray.size(); ++i) {
-            for (unsigned j = 0; j < localArray.size() - i - 1; ++j) {
-                if (localArray[j] > localArray[j + 1]) {
-                    int temp = localArray[j];
-                    localArray[j] = localArray[j + 1];
-                    localArray[j + 1] = temp;
-                    h = mix64(h ^ (uint64_t)(threadId + i + j));
-                }
-            }
+// ---------------------------------------------------------------------------
+// 7. std::call_once demonstration: a shared piece of "expensive" one-time
+//    initialization state, guaranteed to run exactly once no matter how
+//    many threads race to trigger it.
+// ---------------------------------------------------------------------------
+std::once_flag g_initFlag;
+long long g_initializedValue = 0;
+
+__attribute__((noinline))
+void expensiveOneTimeInit() {
+    long long value = 0;
+    for (int i = 1; i <= 1000; ++i) {
+        value += i * i;
+    }
+    g_initializedValue = value;
+}
+
+__attribute__((noinline))
+void callOnceWorker() {
+    std::call_once(g_initFlag, expensiveOneTimeInit);
+}
+
+__attribute__((noinline))
+long long runCallOnceDemo() {
+    std::vector<std::thread> workers;
+    workers.reserve(NUM_THREADS);
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        workers.emplace_back(callOnceWorker);
+    }
+    for (auto& t : workers) t.join();
+    return g_initializedValue;
+}
+
+// ---------------------------------------------------------------------------
+// 8. Parallel Collatz step counting. Each thread writes into its own
+//    disjoint slice of a shared results vector -- disjoint indices mean no
+//    race even without a lock.
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+int collatzSteps(long long n) {
+    int steps = 0;
+    while (n != 1) {
+        if (n % 2 == 0) {
+            n = n / 2;
+        } else {
+            n = 3 * n + 1;
         }
-        
-        for (unsigned i = 0; i < localArray.size(); ++i) {
-            h = mix64(h ^ (uint64_t)localArray[i]);
-        }
+        ++steps;
+        if (steps > 10000) break; // safety bound; not expected to trigger for our range
     }
-    
-    return h;
+    return steps;
 }
 
-// Thread worker with prime number calculation simulation
-static uint64_t primeThreadWorker(int threadId,
-                                  int start,
-                                  int end,
-                                  const std::array<int, 10> &primes) {
-    uint64_t h = 0xdeadbeef12345678ULL;
-    int count = 0;
-    
-    for (int num = start; num < end; ++num) {
-        bool isPrime = true;
-        for (int i = 2; i * i <= num; ++i) {
-            if (num % i == 0) {
-                isPrime = false;
-                break;
-            }
-        }
-        
-        if (isPrime) {
-            count++;
-            h = mix64(h ^ (uint64_t)num);
-            
-            for (unsigned i = 0; i < primes.size(); ++i) {
-                if (num == primes[i]) {
-                    h = mix64(h ^ (uint64_t)(threadId * primes[i]));
-                }
-            }
-        }
+__attribute__((noinline))
+void collatzWorker(std::vector<int>& results, Range range) {
+    for (size_t n = range.begin; n < range.end; ++n) {
+        results[n] = collatzSteps(static_cast<long long>(n + 1)); // avoid n=0
     }
-    
-    h = mix64(h ^ (uint64_t)count);
-    return h;
 }
 
-// Thread worker with Fibonacci calculation
-static uint64_t fibonacciThreadWorker(int threadId,
-                                      int n,
-                                      const std::array<uint64_t, 20> &cache) {
-    uint64_t h = 0xfedcba9876543210ULL;
-    
-    if (n <= 1) {
-        h = mix64(h ^ (uint64_t)n);
-        return h;
+__attribute__((noinline))
+std::vector<int> parallelCollatz(size_t count) {
+    std::vector<int> results(count, 0);
+    std::vector<Range> chunks = makeChunks(count, NUM_THREADS);
+    std::vector<std::thread> workers;
+    workers.reserve(NUM_THREADS);
+
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        workers.emplace_back(collatzWorker, std::ref(results), chunks[static_cast<size_t>(i)]);
     }
-    
-    uint64_t a = 0, b = 1;
-    for (int i = 2; i <= n; ++i) {
-        uint64_t next = a + b;
-        a = b;
-        b = next;
-        
-        if (i < (int)cache.size()) {
-            h = mix64(h ^ cache[i]);
-        }
-        
-        h = mix64(h ^ (next + threadId));
-    }
-    
-    h = mix64(h ^ b);
-    return h;
+    for (auto& t : workers) t.join();
+
+    return results;
 }
 
-// Thread worker with string processing simulation
-static uint64_t stringThreadWorker(int threadId,
-                                    const std::array<char, 64> &charData,
-                                    int offset,
-                                    int length) {
-    uint64_t h = 0x1122334455667788ULL;
-    
-    for (int i = 0; i < length; ++i) {
-        int idx = (offset + i) % charData.size();
-        char c = charData[idx];
-        
-        h = mix64(h ^ (uint64_t)c);
-        h = mix64(h ^ (uint64_t)(threadId + i));
-        
-        // Simulate character transformation
-        char transformed = c + (threadId % 26);
-        h = mix64(h ^ (uint64_t)transformed);
-    }
-    
-    return h;
-}
-
-// Thread worker with bitwise operations
-static uint64_t bitwiseThreadWorker(int threadId,
-                                    const std::array<uint32_t, 32> &data,
-                                    int operations) {
-    uint64_t h = 0x8899aabbccddeeffULL;
-    
-    for (int op = 0; op < operations; ++op) {
-        for (unsigned i = 0; i < data.size(); ++i) {
-            uint32_t value = data[i];
-            
-            switch (op % 5) {
-            case 0:
-                h = mix64(h ^ (uint64_t)(value | (threadId << 16)));
-                break;
-            case 1:
-                h = mix64(h ^ (uint64_t)(value & (0xFFFF ^ threadId)));
-                break;
-            case 2:
-                h = mix64(h ^ (uint64_t)(value ^ (threadId * 0x01010101)));
-                break;
-            case 3:
-                h = mix64(h ^ (uint64_t)((value << (threadId % 16)) | (value >> (16 - threadId % 16))));
-                break;
-            case 4:
-                h = mix64(h ^ (uint64_t)(~value + threadId));
-                break;
-            }
-        }
-    }
-    
-    return h;
-}
-
-// Thread worker with mathematical series
-static uint64_t seriesThreadWorker(int threadId,
-                                    int terms,
-                                    double start,
-                                    double ratio,
-                                    const std::array<double, 8> &coefficients) {
-    uint64_t h = 0x0011223344556677ULL;
-    double sum = 0.0;
-    
-    for (int i = 0; i < terms; ++i) {
-        double term = start * std::pow(ratio, i);
-        sum += term;
-        
-        h = add_d(h, term);
-        
-        for (unsigned j = 0; j < coefficients.size(); ++j) {
-            h = add_d(h, term * coefficients[j] * (double)(threadId + 1));
-        }
-    }
-    
-    h = add_d(h, sum);
-    return h;
-}
-
-// Thread worker with histogram calculation
-static uint64_t histogramThreadWorker(int threadId,
-                                       const std::array<int, 128> &data,
-                                       const std::array<int, 16> &bins,
-                                       int startIdx,
-                                       int endIdx) {
-    uint64_t h = 0x778899aabbccdde0ULL;
-    std::array<int, 16> localBins{};
-    localBins.fill(0);
-    
-    for (int i = startIdx; i < endIdx && i < (int)data.size(); ++i) {
-        int value = data[i];
-        int binIdx = value % bins.size();
-        localBins[binIdx]++;
-        
-        h = mix64(h ^ (uint64_t)(value + threadId));
-    }
-    
-    for (unsigned i = 0; i < localBins.size(); ++i) {
-        h = mix64(h ^ (uint64_t)(localBins[i] + bins[i]));
-    }
-    
-    return h;
-}
-
-// Thread worker with polynomial evaluation
-static uint64_t polynomialThreadWorker(int threadId,
-                                        const std::array<double, 10> &coefficients,
-                                        const std::array<double, 20> &xValues,
-                                        int start,
-                                        int end) {
-    uint64_t h = 0xffeeddccbbaa9988ULL;
-    
-    for (int i = start; i < end && i < (int)xValues.size(); ++i) {
-        double x = xValues[i];
-        double result = 0.0;
-        
-        for (unsigned j = 0; j < coefficients.size(); ++j) {
-            result += coefficients[j] * std::pow(x, (double)j);
-        }
-        
-        h = add_d(h, result);
-        h = mix64(h ^ (uint64_t)(threadId + i));
-    }
-    
-    return h;
-}
-
-// Thread worker with search simulation
-static uint64_t searchThreadWorker(int threadId,
-                                    const std::array<int, 100> &data,
-                                    const std::array<int, 10> &targets,
-                                    int start,
-                                    int end) {
-    uint64_t h = 0x5566778899aabbccULL;
-    int foundCount = 0;
-    
-    for (int target : targets) {
-        for (int i = start; i < end && i < (int)data.size(); ++i) {
-            if (data[i] == target) {
-                foundCount++;
-                h = mix64(h ^ (uint64_t)(i + threadId));
-                h = mix64(h ^ (uint64_t)target);
-            }
-        }
-    }
-    
-    h = mix64(h ^ (uint64_t)foundCount);
-    return h;
-}
-
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
-    // Initialize test data
-    std::array<int, 32> data;
-    for (unsigned i = 0; i < data.size(); ++i)
-        data[i] = (int)(i * 5 + 3);
 
-    std::array<double, 16> weights;
-    for (unsigned i = 0; i < weights.size(); ++i)
-        weights[i] = 1.5 + i * 0.75;
+    uint64_t checksum = 0;
 
-    std::array<std::array<uint32_t, 8>, 8> matrixA{};
-    std::array<std::array<uint32_t, 8>, 8> matrixB{};
-    for (unsigned r = 0; r < 8; ++r) {
-        for (unsigned c = 0; c < 8; ++c) {
-            matrixA[r][c] = (uint32_t)(r * 11 + c * 7 + 13);
-            matrixB[r][c] = (uint32_t)(r * 5 + c * 17 + 19);
-        }
+    std::cout << "=== Multi-threaded Application Test ===\n";
+    std::cout << "(fixed thread count: " << NUM_THREADS << ")\n\n";
+
+    // All data generated single-threaded and deterministically.
+    Lcg rng(88172645463325252ULL);
+
+    // 1. Parallel sum of squares
+    std::cout << "-- Parallel sum of squares --\n";
+    std::vector<long long> squareData;
+    squareData.reserve(2000000);
+    for (int i = 0; i < 2000000; ++i) {
+        squareData.push_back(static_cast<long long>(rng.nextInt(-1000, 1000)));
     }
+    long long sumSquares = parallelSumOfSquares(squareData);
+    std::cout << "sum of squares: " << sumSquares << "\n";
+    checksum += static_cast<uint64_t>(sumSquares);
 
-    std::array<int, 16> recursiveValues;
-    for (unsigned i = 0; i < recursiveValues.size(); ++i)
-        recursiveValues[i] = (int)(i * 9 + 17);
+    // 2. Parallel prime counting
+    std::cout << "\n-- Parallel prime counting --\n";
+    long long primeCount = parallelPrimeCount(300000);
+    std::cout << "primes below 300000: " << primeCount << "\n";
+    checksum += static_cast<uint64_t>(primeCount);
 
-    std::array<int, 64> inputData;
-    for (unsigned i = 0; i < inputData.size(); ++i)
-        inputData[i] = (int)(i * 3 + 11);
+    // 3. Parallel max
+    std::cout << "\n-- Parallel max --\n";
+    long long maxValue = parallelMax(squareData);
+    std::cout << "max value in dataset: " << maxValue << "\n";
+    checksum += static_cast<uint64_t>(maxValue + 1000);
 
-    std::array<float, 32> floatData;
-    for (unsigned i = 0; i < floatData.size(); ++i)
-        floatData[i] = 1.5f + i * 0.25f;
+    // 4. Mutex-protected counter
+    std::cout << "\n-- Mutex-protected shared counter --\n";
+    long long counterResult = runMutexCounter(200000);
+    long long expectedCounter = static_cast<long long>(NUM_THREADS) * 200000LL;
+    std::cout << "counter result: " << counterResult << " (expected " << expectedCounter << ")\n";
+    std::cout << "matches expected: " << (counterResult == expectedCounter ? "true" : "false") << "\n";
+    checksum += static_cast<uint64_t>(counterResult);
 
-    std::array<int, 32> sortArray;
-    for (unsigned i = 0; i < sortArray.size(); ++i)
-        sortArray[i] = (int)((i * 7) % 32);
+    // 5. Producer/consumer
+    std::cout << "\n-- Producer/consumer (bounded queue) --\n";
+    BoundedQueue queue(64);
+    long long producedCount = 500000;
+    long long consumedSum = 0;
+    long long consumedCount = 0;
+    std::thread producer(producerThread, std::ref(queue), producedCount);
+    std::thread consumer(consumerThread, std::ref(queue), std::ref(consumedSum), std::ref(consumedCount));
+    producer.join();
+    consumer.join();
+    long long expectedSum = (producedCount - 1) * producedCount / 2; // sum(0..N-1)
+    std::cout << "consumed count: " << consumedCount << " (expected " << producedCount << ")\n";
+    std::cout << "consumed sum: " << consumedSum << " (expected " << expectedSum << ")\n";
+    checksum += static_cast<uint64_t>(consumedSum % 1000000007LL);
 
-    std::array<int, 10> primes = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29};
+    // 6. Parallel matrix multiplication
+    std::cout << "\n-- Parallel matrix multiplication --\n";
+    const int matSize = 120;
+    Matrix matA = makeDeterministicMatrix(matSize, rng);
+    Matrix matB = makeDeterministicMatrix(matSize, rng);
+    Matrix product = parallelMatMul(matA, matB);
+    long long matChecksum = matrixChecksum(product);
+    std::cout << "matrix size: " << matSize << "x" << matSize << "\n";
+    std::cout << "result matrix checksum (sum of all elements): " << matChecksum << "\n";
+    std::cout << "result[0][0]=" << product[0][0] << " result[last][last]=" << product.back().back() << "\n";
+    checksum += static_cast<uint64_t>(matChecksum % 1000000007LL + 1000000007LL);
 
-    std::array<uint64_t, 20> fibCache;
-    fibCache[0] = 0;
-    fibCache[1] = 1;
-    for (unsigned i = 2; i < fibCache.size(); ++i)
-        fibCache[i] = fibCache[i - 1] + fibCache[i - 2];
+    // 7. call_once demonstration
+    std::cout << "\n-- std::call_once demonstration --\n";
+    long long onceResult = runCallOnceDemo();
+    std::cout << "one-time-init value: " << onceResult << "\n";
+    checksum += static_cast<uint64_t>(onceResult);
 
-    std::array<char, 64> charData;
-    for (unsigned i = 0; i < charData.size(); ++i)
-        charData[i] = (char)('A' + (i % 26));
+    // 8. Parallel Collatz
+    std::cout << "\n-- Parallel Collatz step counting --\n";
+    std::vector<int> collatzResults = parallelCollatz(200000);
+    long long collatzTotal = std::accumulate(collatzResults.begin(), collatzResults.end(), 0LL);
+    int collatzMaxSteps = *std::max_element(collatzResults.begin(), collatzResults.end());
+    std::cout << "total collatz steps (n=1..200000): " << collatzTotal << "\n";
+    std::cout << "max collatz steps in range: " << collatzMaxSteps << "\n";
+    checksum += static_cast<uint64_t>(collatzTotal % 1000000007LL);
+    checksum += static_cast<uint64_t>(collatzMaxSteps);
 
-    std::array<uint32_t, 32> bitwiseData;
-    for (unsigned i = 0; i < bitwiseData.size(); ++i)
-        bitwiseData[i] = (uint32_t)(i * 0x9e3779b9);
-
-    std::array<double, 8> seriesCoefficients;
-    for (unsigned i = 0; i < seriesCoefficients.size(); ++i)
-        seriesCoefficients[i] = 1.0 + i * 0.5;
-
-    std::array<int, 16> histogramBins;
-    for (unsigned i = 0; i < histogramBins.size(); ++i)
-        histogramBins[i] = (int)(i * 2);
-
-    std::array<int, 128> histogramData;
-    for (unsigned i = 0; i < histogramData.size(); ++i)
-        histogramData[i] = (int)(i % 16);
-
-    std::array<double, 10> polyCoefficients;
-    for (unsigned i = 0; i < polyCoefficients.size(); ++i)
-        polyCoefficients[i] = (i % 2 == 0) ? 1.0 : -1.0;
-
-    std::array<double, 20> xValues;
-    for (unsigned i = 0; i < xValues.size(); ++i)
-        xValues[i] = 0.1 * i;
-
-    std::array<int, 100> searchData;
-    for (unsigned i = 0; i < searchData.size(); ++i)
-        searchData[i] = (int)(i * 2);
-
-    std::array<int, 10> searchTargets;
-    for (unsigned i = 0; i < searchTargets.size(); ++i)
-        searchTargets[i] = (int)(i * 10);
-
-    // Test 1: Basic thread workers
-    std::array<uint64_t, 8> basicResults{};
-    std::vector<std::thread> basicThreads;
-    basicThreads.reserve(basicResults.size());
-
-    for (int threadId = 0; threadId < (int)basicResults.size(); ++threadId) {
-        basicThreads.emplace_back([threadId, &data, &weights, &basicResults]() {
-            basicResults[threadId] = threadWorker(
-                threadId,
-                7 + threadId,
-                3 + threadId,
-                1.2345 + threadId * 0.1,
-                (threadId % 2) == 0,
-                (char)('A' + threadId),
-                16u + threadId,
-                data,
-                weights,
-                0xdead0000u + (uint32_t)threadId);
-        });
-    }
-
-    for (auto &thread : basicThreads)
-        thread.join();
-
-    // Test 2: Matrix multiplication threads
-    std::array<uint64_t, 4> matrixResults{};
-    std::vector<std::thread> matrixThreads;
-    matrixThreads.reserve(matrixResults.size());
-
-    for (int threadId = 0; threadId < (int)matrixResults.size(); ++threadId) {
-        matrixThreads.emplace_back([threadId, &matrixA, &matrixB, &matrixResults]() {
-            int startRow = threadId * 2;
-            int endRow = startRow + 2;
-            matrixResults[threadId] = matrixThreadWorker(
-                threadId,
-                matrixA,
-                matrixB,
-                startRow,
-                endRow,
-                (uint32_t)(threadId + 1));
-        });
-    }
-
-    for (auto &thread : matrixThreads)
-        thread.join();
-
-    // Test 3: Recursive computation threads
-    std::array<uint64_t, 6> recursiveResults{};
-    std::vector<std::thread> recursiveThreads;
-    recursiveThreads.reserve(recursiveResults.size());
-
-    for (int threadId = 0; threadId < (int)recursiveResults.size(); ++threadId) {
-        recursiveThreads.emplace_back([threadId, &recursiveValues, &recursiveResults]() {
-            recursiveResults[threadId] = recursiveThreadWorker(
-                threadId,
-                0,
-                5 + threadId,
-                recursiveValues,
-                1.5 + threadId * 0.2);
-        });
-    }
-
-    for (auto &thread : recursiveThreads)
-        thread.join();
-
-    // Test 4: Data processing threads
-    std::array<uint64_t, 5> dataProcessingResults{};
-    std::vector<std::thread> dataProcessingThreads;
-    dataProcessingThreads.reserve(dataProcessingResults.size());
-
-    for (int threadId = 0; threadId < (int)dataProcessingResults.size(); ++threadId) {
-        dataProcessingThreads.emplace_back([threadId, &inputData, &floatData, &dataProcessingResults]() {
-            dataProcessingResults[threadId] = dataProcessingThreadWorker(
-                threadId,
-                inputData,
-                floatData,
-                8 + threadId,
-                3 + threadId);
-        });
-    }
-
-    for (auto &thread : dataProcessingThreads)
-        thread.join();
-
-    // Test 5: Sorting threads
-    std::array<uint64_t, 4> sortingResults{};
-    std::vector<std::thread> sortingThreads;
-    sortingThreads.reserve(sortingResults.size());
-
-    for (int threadId = 0; threadId < (int)sortingResults.size(); ++threadId) {
-        sortingThreads.emplace_back([threadId, &sortArray, &sortingResults]() {
-            sortingResults[threadId] = sortingThreadWorker(
-                threadId,
-                sortArray,
-                5 + threadId);
-        });
-    }
-
-    for (auto &thread : sortingThreads)
-        thread.join();
-
-    // Test 6: Prime calculation threads
-    std::array<uint64_t, 3> primeResults{};
-    std::vector<std::thread> primeThreads;
-    primeThreads.reserve(primeResults.size());
-
-    for (int threadId = 0; threadId < (int)primeResults.size(); ++threadId) {
-        primeThreads.emplace_back([threadId, &primes, &primeResults]() {
-            primeResults[threadId] = primeThreadWorker(
-                threadId,
-                threadId * 100,
-                (threadId + 1) * 100,
-                primes);
-        });
-    }
-
-    for (auto &thread : primeThreads)
-        thread.join();
-
-    // Test 7: Fibonacci threads
-    std::array<uint64_t, 5> fibResults{};
-    std::vector<std::thread> fibThreads;
-    fibThreads.reserve(fibResults.size());
-
-    for (int threadId = 0; threadId < (int)fibResults.size(); ++threadId) {
-        fibThreads.emplace_back([threadId, &fibCache, &fibResults]() {
-            fibResults[threadId] = fibonacciThreadWorker(
-                threadId,
-                10 + threadId * 5,
-                fibCache);
-        });
-    }
-
-    for (auto &thread : fibThreads)
-        thread.join();
-
-    // Test 8: String processing threads
-    std::array<uint64_t, 6> stringResults{};
-    std::vector<std::thread> stringThreads;
-    stringThreads.reserve(stringResults.size());
-
-    for (int threadId = 0; threadId < (int)stringResults.size(); ++threadId) {
-        stringThreads.emplace_back([threadId, &charData, &stringResults]() {
-            stringResults[threadId] = stringThreadWorker(
-                threadId,
-                charData,
-                threadId * 10,
-                20 + threadId * 2);
-        });
-    }
-
-    for (auto &thread : stringThreads)
-        thread.join();
-
-    // Test 9: Bitwise operation threads
-    std::array<uint64_t, 4> bitwiseResults{};
-    std::vector<std::thread> bitwiseThreads;
-    bitwiseThreads.reserve(bitwiseResults.size());
-
-    for (int threadId = 0; threadId < (int)bitwiseResults.size(); ++threadId) {
-        bitwiseThreads.emplace_back([threadId, &bitwiseData, &bitwiseResults]() {
-            bitwiseResults[threadId] = bitwiseThreadWorker(
-                threadId,
-                bitwiseData,
-                10 + threadId * 3);
-        });
-    }
-
-    for (auto &thread : bitwiseThreads)
-        thread.join();
-
-    // Test 10: Series calculation threads
-    std::array<uint64_t, 4> seriesResults{};
-    std::vector<std::thread> seriesThreads;
-    seriesThreads.reserve(seriesResults.size());
-
-    for (int threadId = 0; threadId < (int)seriesResults.size(); ++threadId) {
-        seriesThreads.emplace_back([threadId, &seriesCoefficients, &seriesResults]() {
-            seriesResults[threadId] = seriesThreadWorker(
-                threadId,
-                15 + threadId * 5,
-                1.0 + threadId * 0.5,
-                1.5 - threadId * 0.1,
-                seriesCoefficients);
-        });
-    }
-
-    for (auto &thread : seriesThreads)
-        thread.join();
-
-    // Test 11: Histogram threads
-    std::array<uint64_t, 8> histogramResults{};
-    std::vector<std::thread> histogramThreads;
-    histogramThreads.reserve(histogramResults.size());
-
-    for (int threadId = 0; threadId < (int)histogramResults.size(); ++threadId) {
-        histogramThreads.emplace_back([threadId, &histogramData, &histogramBins, &histogramResults]() {
-            int startIdx = threadId * 16;
-            int endIdx = startIdx + 16;
-            histogramResults[threadId] = histogramThreadWorker(
-                threadId,
-                histogramData,
-                histogramBins,
-                startIdx,
-                endIdx);
-        });
-    }
-
-    for (auto &thread : histogramThreads)
-        thread.join();
-
-    // Test 12: Polynomial evaluation threads
-    std::array<uint64_t, 4> polyResults{};
-    std::vector<std::thread> polyThreads;
-    polyThreads.reserve(polyResults.size());
-
-    for (int threadId = 0; threadId < (int)polyResults.size(); ++threadId) {
-        polyThreads.emplace_back([threadId, &polyCoefficients, &xValues, &polyResults]() {
-            int start = threadId * 5;
-            int end = start + 5;
-            polyResults[threadId] = polynomialThreadWorker(
-                threadId,
-                polyCoefficients,
-                xValues,
-                start,
-                end);
-        });
-    }
-
-    for (auto &thread : polyThreads)
-        thread.join();
-
-    // Test 13: Search threads
-    std::array<uint64_t, 5> searchResults{};
-    std::vector<std::thread> searchThreads;
-    searchThreads.reserve(searchResults.size());
-
-    for (int threadId = 0; threadId < (int)searchResults.size(); ++threadId) {
-        searchThreads.emplace_back([threadId, &searchData, &searchTargets, &searchResults]() {
-            int start = threadId * 20;
-            int end = start + 20;
-            searchResults[threadId] = searchThreadWorker(
-                threadId,
-                searchData,
-                searchTargets,
-                start,
-                end);
-        });
-    }
-
-    for (auto &thread : searchThreads)
-        thread.join();
-
-    // Combine all results
-    uint64_t checksum = 0x0fedcba987654321ULL;
-    
-    for (uint64_t value : basicResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : matrixResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : recursiveResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : dataProcessingResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : sortingResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : primeResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : fibResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : stringResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : bitwiseResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : seriesResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : histogramResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : polyResults)
-        checksum = mix64(checksum ^ value);
-    
-    for (uint64_t value : searchResults)
-        checksum = mix64(checksum ^ value);
-
-    checksum = mix64(checksum);
-    std::printf("CHECKSUM: 0x%016llx\n", (unsigned long long)checksum);
+    // Final checksum
+    std::cout << "\n=== Final checksum ===\n";
+    std::cout << "TOTAL_CHECKSUM: " << checksum << "\n";
 
     auto end = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-    printf("%ld\n", diff);
+    std::cout << diff << "\n";
+
     return 0;
 }

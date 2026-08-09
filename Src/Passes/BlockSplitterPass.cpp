@@ -45,7 +45,7 @@ void LeetObfuscator::BlockSplitterPass::SplitFunction(llvm::Function& function)
     {
         if (block.size() > attributes.blockSplitSize)
         {
-            if (generator->DrawRange(0u, 100u) > attributes.blockSplitterProbability)
+            if (generator->DrawRange(1u, 100u) > attributes.blockSplitterProbability)
                 continue;
             
             blocksToSplit.push_back(&block);

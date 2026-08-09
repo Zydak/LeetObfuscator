@@ -45,7 +45,7 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
         std::vector<llvm::BasicBlock*> blocksToObfuscate;
         for (auto& block : function)
         {
-            if (generator->DrawRange(0u, 100u) > attributes.antiAnalysisProbability)
+            if (generator->DrawRange(1u, 100u) > attributes.antiAnalysisProbability)
                 continue;
             
             blocksToObfuscate.push_back(&block);
@@ -55,7 +55,7 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
         {
             bool rdtsc = false;
             m_Logger.LogFunction(function, "Instrumenting basic block", 2);
-            if (generator->DrawRange(0u, 100u) <= attributes.antiAnalysisRdtscProbability)
+            if (generator->DrawRange(1u, 100u) <= attributes.antiAnalysisRdtscProbability)
                 rdtsc = true;
             
             if (attributes.antiAnalysisInsertPosition == SettingsParser::BogusInsertPosition::Start)

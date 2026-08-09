@@ -1,793 +1,594 @@
-// Deterministic containers test for the Leet obfuscator.
-// Uses std::vector, std::map, std::deque, std::set, std::array, and std::string.
-// Output is always the same for validation.
-// Expanded to stress test STL containers with complex operations.
+// test_containers.cpp - Comprehensive std:: containers test
+//
+// Compile:  g++ -O2 -std=c++17 -fno-exceptions -o test_containers test_containers.cpp
+//
+// Design notes:
+//  - unordered_set/unordered_map iteration order is NOT guaranteed to be
+//    stable/portable, so whenever their contents affect printed output,
+//    the contents are copied out and sorted first. Nothing here relies on
+//    unordered-container iteration order directly.
+//  - operator[]/at() are only ever used with keys/indices known to be
+//    valid, so no exception paths are exercised (required for
+//    -fno-exceptions).
+//  - std::sort is used only with comparators that establish a strict weak
+//    ordering; ties are broken explicitly so results are unambiguous.
 
-#include <array>
-#include <cstdint>
-#include <cstdio>
-#include <deque>
-#include <map>
-#include <set>
-#include <string>
+#include <iostream>
+#include <iomanip>
 #include <vector>
-#include <algorithm>
-#include <numeric>
+#include <array>
+#include <deque>
 #include <list>
-#include <forward_list>
-#include <unordered_map>
+#include <set>
+#include <map>
 #include <unordered_set>
+#include <unordered_map>
 #include <stack>
 #include <queue>
+#include <bitset>
+#include <string>
+#include <utility>
 #include <tuple>
-#include <cstring>
+#include <algorithm>
+#include <numeric>
+#include <functional>
 #include <chrono>
 
+#define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
-static inline uint64_t mix64(uint64_t x) {
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9ULL;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebULL;
-    x ^= x >> 31;
-    return x;
+// ---------------------------------------------------------------------------
+// Deterministic generator (LCG) reused from the pattern in the other tests
+// ---------------------------------------------------------------------------
+struct Lcg {
+    uint64_t state;
+    explicit Lcg(uint64_t seed) : state(seed) {}
+    uint64_t nextRaw() {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return state;
+    }
+    int nextInt(int lo, int hi) {
+        uint64_t range = static_cast<uint64_t>(hi - lo + 1);
+        return lo + static_cast<int>(nextRaw() % range);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Helper printing
+// ---------------------------------------------------------------------------
+template <typename Container>
+void printIntContainer(const std::string& label, const Container& c) {
+    std::cout << label << ": [";
+    bool first = true;
+    for (const auto& v : c) {
+        if (!first) std::cout << ", ";
+        std::cout << v;
+        first = false;
+    }
+    std::cout << "]\n";
 }
 
-static inline uint64_t add_f(uint64_t h, float f) {
-    uint32_t u;
-    std::memcpy(&u, &f, sizeof(u));
-    return mix64(h ^ u);
+// ---------------------------------------------------------------------------
+// A small Person struct used across several container demonstrations
+// ---------------------------------------------------------------------------
+struct Person {
+    std::string name;
+    int age;
+};
+
+bool comparePersonByAgeThenName(const Person& a, const Person& b) {
+    if (a.age != b.age) return a.age < b.age;
+    return a.name < b.name;
 }
 
-static inline uint64_t add_d(uint64_t h, double d) {
-    uint64_t u;
-    std::memcpy(&u, &d, sizeof(u));
-    return mix64(h ^ u);
+// ---------------------------------------------------------------------------
+// Section 1: std::vector
+// ---------------------------------------------------------------------------
+uint64_t vectorSection() {
+    std::cout << "-- std::vector --\n";
+    uint64_t checksum = 0;
+
+    std::vector<int> v;
+    v.reserve(20);
+    for (int i = 1; i <= 20; ++i) {
+        v.push_back(i * i);
+    }
+    printIntContainer("squares", v);
+
+    v.insert(v.begin() + 5, -1);
+    v.erase(v.begin() + 10);
+    printIntContainer("after insert/erase", v);
+
+    std::sort(v.begin(), v.end());
+    printIntContainer("sorted", v);
+
+    auto newEnd = std::unique(v.begin(), v.end());
+    v.erase(newEnd, v.end());
+    printIntContainer("unique", v);
+
+    std::reverse(v.begin(), v.end());
+    printIntContainer("reversed", v);
+
+    long long sum = std::accumulate(v.begin(), v.end(), 0LL);
+    std::cout << "sum: " << sum << "\n";
+    checksum += static_cast<uint64_t>(sum < 0 ? -sum : sum);
+
+    auto foundIt = std::find(v.begin(), v.end(), 81);
+    std::cout << "found 81: " << (foundIt != v.end() ? "true" : "false") << "\n";
+
+    long countEven = std::count_if(v.begin(), v.end(), [](int x) { return x % 2 == 0; });
+    std::cout << "even count: " << countEven << "\n";
+    checksum += static_cast<uint64_t>(countEven);
+
+    v.erase(std::remove_if(v.begin(), v.end(), [](int x) { return x < 0; }), v.end());
+    printIntContainer("after remove negatives", v);
+
+    std::vector<std::vector<int>> grid(4, std::vector<int>(4, 0));
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            grid[i][j] = i * 4 + j;
+        }
+    }
+    std::cout << "2D vector diagonal sum: ";
+    int diagSum = 0;
+    for (int i = 0; i < 4; ++i) diagSum += grid[i][i];
+    std::cout << diagSum << "\n";
+    checksum += static_cast<uint64_t>(diagSum);
+
+    std::cout << "capacity >= size: " << (v.capacity() >= v.size() ? "true" : "false") << "\n";
+
+    return checksum;
 }
 
-static uint64_t hashString(const std::string &value) {
-    uint64_t h = 0x13579bdf2468ace0ULL;
-    for (unsigned char c : value) {
-        h = mix64(h ^ (uint64_t)c);
+// ---------------------------------------------------------------------------
+// Section 2: std::array
+// ---------------------------------------------------------------------------
+uint64_t arraySection() {
+    std::cout << "\n-- std::array --\n";
+    uint64_t checksum = 0;
+
+    std::array<int, 10> arr{};
+    for (size_t i = 0; i < arr.size(); ++i) {
+        arr[i] = static_cast<int>((i + 1) * 7 % 17);
     }
-    return h;
+    printIntContainer("array", arr);
+
+    std::array<int, 10> sortedArr = arr;
+    std::sort(sortedArr.begin(), sortedArr.end());
+    printIntContainer("sorted array", sortedArr);
+
+    int arrSum = std::accumulate(arr.begin(), arr.end(), 0);
+    std::cout << "array sum: " << arrSum << "\n";
+    checksum += static_cast<uint64_t>(arrSum);
+
+    std::array<int, 10> filled{};
+    filled.fill(42);
+    printIntContainer("filled array", filled);
+
+    return checksum;
 }
 
-static uint64_t hashContainer(const std::vector<int> &values,
-                              const std::deque<double> &doubles,
-                              const std::array<uint32_t, 8> &fixedArray,
-                              const std::set<char> &letters,
-                              const std::map<std::string, int> &mapping,
-                              const std::string &label) {
-    uint64_t h = 0xabcdef0123456789ULL;
-    h = mix64(h ^ (uint64_t)values.size());
-    for (int value : values) {
-        h = mix64(h ^ (uint64_t)value);
+// ---------------------------------------------------------------------------
+// Section 3: std::deque
+// ---------------------------------------------------------------------------
+uint64_t dequeSection() {
+    std::cout << "\n-- std::deque --\n";
+    uint64_t checksum = 0;
+
+    std::deque<int> dq;
+    for (int i = 1; i <= 5; ++i) {
+        dq.push_back(i);
+        dq.push_front(-i);
     }
-    h = mix64(h ^ (uint64_t)doubles.size());
-    for (double value : doubles) {
-        h = add_d(h, value);
-    }
-    for (uint32_t value : fixedArray) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    for (char value : letters) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    for (auto const &entry : mapping) {
-        h = mix64(h ^ hashString(entry.first) ^ (uint64_t)entry.second);
-    }
-    h = mix64(h ^ hashString(label));
-    return h;
+    printIntContainer("deque", dq);
+
+    dq.pop_front();
+    dq.pop_back();
+    printIntContainer("after pop_front/pop_back", dq);
+
+    int dqSum = std::accumulate(dq.begin(), dq.end(), 0);
+    std::cout << "deque sum: " << dqSum << "\n";
+    checksum += static_cast<uint64_t>(dqSum < 0 ? -dqSum : dqSum);
+
+    return checksum;
 }
 
-static uint64_t combineSequences(const std::string &a,
-                                 const std::string &b,
-                                 const std::vector<std::pair<std::string, int>> &pairs,
-                                 const std::map<int, int> &indexMap,
-                                 const std::array<int, 6> &values) {
-    uint64_t h = 0x1234deadbeef5678ULL;
-    h = mix64(h ^ hashString(a));
-    h = mix64(h ^ hashString(b));
-    for (auto const &element : pairs) {
-        h = mix64(h ^ hashString(element.first) ^ (uint64_t)element.second);
+// ---------------------------------------------------------------------------
+// Section 4: std::list
+// ---------------------------------------------------------------------------
+uint64_t listSection() {
+    std::cout << "\n-- std::list --\n";
+    uint64_t checksum = 0;
+
+    std::list<int> lst;
+    for (int i = 10; i >= 1; --i) {
+        lst.push_back(i);
     }
-    for (auto const &entry : indexMap) {
-        h = mix64(h ^ (uint64_t)entry.first ^ (uint64_t)entry.second);
-    }
-    for (int x : values) {
-        h = mix64(h ^ (uint64_t)x);
-    }
-    return h;
+    printIntContainer("list", lst);
+
+    lst.sort();
+    printIntContainer("sorted list", lst);
+
+    std::list<int> secondList = {100, 200, 300};
+    auto it = lst.begin();
+    std::advance(it, 3);
+    lst.splice(it, secondList);
+    printIntContainer("after splice", lst);
+
+    lst.remove(200);
+    printIntContainer("after remove(200)", lst);
+
+    lst.unique();
+    printIntContainer("after unique", lst);
+
+    int lstSum = std::accumulate(lst.begin(), lst.end(), 0);
+    std::cout << "list sum: " << lstSum << "\n";
+    checksum += static_cast<uint64_t>(lstSum);
+
+    return checksum;
 }
 
-// List operations
-static uint64_t listOperations(const std::list<int> &data) {
-    uint64_t h = 0xfee1deadbadc0ffeULL;
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    // Simulate various list operations
-    std::list<int> working = data;
-    working.reverse();
-    
-    for (int value : working) {
-        h = mix64(h ^ (uint64_t)(value + 1));
-    }
-    
-    working.sort();
-    for (int value : working) {
-        h = mix64(h ^ (uint64_t)(value + 2));
-    }
-    
-    return h;
+// ---------------------------------------------------------------------------
+// Section 5: std::set / std::multiset
+// ---------------------------------------------------------------------------
+uint64_t setSection() {
+    std::cout << "\n-- std::set / std::multiset --\n";
+    uint64_t checksum = 0;
+
+    std::set<int> setA = {5, 3, 8, 1, 9, 3, 5};
+    printIntContainer("setA (deduped, ordered)", setA);
+
+    setA.insert(100);
+    setA.erase(1);
+    printIntContainer("setA after insert/erase", setA);
+
+    bool has8 = setA.find(8) != setA.end();
+    std::cout << "contains 8: " << (has8 ? "true" : "false") << "\n";
+    checksum += has8 ? 1 : 0;
+
+    std::set<int> setB = {3, 8, 20, 30};
+    std::vector<int> unionResult;
+    std::set_union(setA.begin(), setA.end(), setB.begin(), setB.end(), std::back_inserter(unionResult));
+    printIntContainer("union(setA, setB)", unionResult);
+
+    std::vector<int> intersectionResult;
+    std::set_intersection(setA.begin(), setA.end(), setB.begin(), setB.end(), std::back_inserter(intersectionResult));
+    printIntContainer("intersection(setA, setB)", intersectionResult);
+
+    std::multiset<int> multi = {4, 4, 2, 2, 2, 7};
+    printIntContainer("multiset", multi);
+    std::cout << "count of 2 in multiset: " << multi.count(2) << "\n";
+    checksum += static_cast<uint64_t>(multi.count(2));
+
+    return checksum;
 }
 
-// Forward list operations
-static uint64_t forwardListOperations(const std::forward_list<int> &data) {
-    uint64_t h = 0xdeadcafebabefaceULL;
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
+// ---------------------------------------------------------------------------
+// Section 6: std::map / std::multimap
+// ---------------------------------------------------------------------------
+uint64_t mapSection() {
+    std::cout << "\n-- std::map / std::multimap --\n";
+    uint64_t checksum = 0;
+
+    std::map<std::string, int> ages;
+    ages["Alice"] = 30;
+    ages["Bob"] = 25;
+    ages["Carol"] = 35;
+    ages["Dave"] = 28;
+
+    for (const auto& entry : ages) {
+        std::cout << "  " << entry.first << " -> " << entry.second << "\n";
+        checksum += static_cast<uint64_t>(entry.second);
     }
-    
-    std::forward_list<int> working = data;
-    working.reverse();
-    
-    for (int value : working) {
-        h = mix64(h ^ (uint64_t)(value + 3));
+
+    auto it = ages.find("Bob");
+    bool foundBob = (it != ages.end());
+    std::cout << "found Bob: " << (foundBob ? "true" : "false") << "\n";
+
+    ages.erase("Carol");
+    std::cout << "size after erase: " << ages.size() << "\n";
+    checksum += ages.size();
+
+    if (ages.count("Alice") > 0) {
+        std::cout << "Alice via at(): " << ages.at("Alice") << "\n";
     }
-    
-    working.sort();
-    for (int value : working) {
-        h = mix64(h ^ (uint64_t)(value + 4));
+
+    std::multimap<std::string, int> scores;
+    scores.insert({"Team A", 10});
+    scores.insert({"Team A", 15});
+    scores.insert({"Team B", 20});
+    for (const auto& entry : scores) {
+        std::cout << "  " << entry.first << " -> " << entry.second << "\n";
+        checksum += static_cast<uint64_t>(entry.second);
     }
-    
-    return h;
+
+    return checksum;
 }
 
-// Unordered map operations
-static uint64_t unorderedMapOperations(const std::unordered_map<std::string, int> &data) {
-    uint64_t h = 0xcafebabedeadbeefULL;
-    
-    for (auto const &entry : data) {
-        h = mix64(h ^ hashString(entry.first) ^ (uint64_t)entry.second);
+// ---------------------------------------------------------------------------
+// Section 7: unordered containers (order-independent output only)
+// ---------------------------------------------------------------------------
+uint64_t unorderedSection() {
+    std::cout << "\n-- std::unordered_set / std::unordered_map --\n";
+    uint64_t checksum = 0;
+
+    std::unordered_set<int> uset = {15, 3, 27, 9, 42, 1};
+    std::vector<int> sortedFromSet(uset.begin(), uset.end());
+    std::sort(sortedFromSet.begin(), sortedFromSet.end());
+    printIntContainer("unordered_set contents (sorted for determinism)", sortedFromSet);
+    checksum += sortedFromSet.size();
+
+    std::unordered_map<std::string, int> umap;
+    umap["zebra"] = 1;
+    umap["apple"] = 2;
+    umap["mango"] = 3;
+    umap["kiwi"] = 4;
+
+    std::vector<std::pair<std::string, int>> sortedFromMap(umap.begin(), umap.end());
+    std::sort(sortedFromMap.begin(), sortedFromMap.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& entry : sortedFromMap) {
+        std::cout << "  " << entry.first << " -> " << entry.second << "\n";
+        checksum += static_cast<uint64_t>(entry.second);
     }
-    
-    return h;
+
+    bool hasKiwi = umap.find("kiwi") != umap.end();
+    std::cout << "contains kiwi: " << (hasKiwi ? "true" : "false") << "\n";
+    checksum += hasKiwi ? 1 : 0;
+
+    return checksum;
 }
 
-// Unordered set operations
-static uint64_t unorderedSetOperations(const std::unordered_set<int> &data) {
-    uint64_t h = 0xfacedeadcafebabeULL;
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    return h;
-}
+// ---------------------------------------------------------------------------
+// Section 8: stack / queue / priority_queue
+// ---------------------------------------------------------------------------
+uint64_t adapterSection() {
+    std::cout << "\n-- std::stack / std::queue / std::priority_queue --\n";
+    uint64_t checksum = 0;
 
-// Stack operations
-static uint64_t stackOperations(const std::vector<int> &input) {
-    uint64_t h = 0x0badf00d1337c0deULL;
-    std::stack<int> s;
-    
-    for (int value : input) {
-        s.push(value);
+    std::stack<int> stk;
+    for (int i = 1; i <= 6; ++i) stk.push(i * 10);
+    std::cout << "stack pop order: ";
+    while (!stk.empty()) {
+        std::cout << stk.top() << " ";
+        checksum += static_cast<uint64_t>(stk.top());
+        stk.pop();
     }
-    
-    while (!s.empty()) {
-        h = mix64(h ^ (uint64_t)s.top());
-        s.pop();
-    }
-    
-    return h;
-}
+    std::cout << "\n";
 
-// Queue operations
-static uint64_t queueOperations(const std::vector<int> &input) {
-    uint64_t h = 0xc0deface12345678ULL;
     std::queue<int> q;
-    
-    for (int value : input) {
-        q.push(value);
-    }
-    
+    for (int i = 1; i <= 6; ++i) q.push(i * 10);
+    std::cout << "queue pop order: ";
     while (!q.empty()) {
-        h = mix64(h ^ (uint64_t)q.front());
+        std::cout << q.front() << " ";
+        checksum += static_cast<uint64_t>(q.front());
         q.pop();
     }
-    
-    return h;
+    std::cout << "\n";
+
+    std::priority_queue<int> maxHeap;
+    for (int v : {5, 1, 9, 3, 7, 2, 8}) maxHeap.push(v);
+    std::cout << "max-heap pop order: ";
+    while (!maxHeap.empty()) {
+        std::cout << maxHeap.top() << " ";
+        checksum += static_cast<uint64_t>(maxHeap.top());
+        maxHeap.pop();
+    }
+    std::cout << "\n";
+
+    std::priority_queue<int, std::vector<int>, std::greater<int>> minHeap;
+    for (int v : {5, 1, 9, 3, 7, 2, 8}) minHeap.push(v);
+    std::cout << "min-heap pop order: ";
+    while (!minHeap.empty()) {
+        std::cout << minHeap.top() << " ";
+        checksum += static_cast<uint64_t>(minHeap.top());
+        minHeap.pop();
+    }
+    std::cout << "\n";
+
+    return checksum;
 }
 
-// Priority queue operations
-static uint64_t priorityQueueOperations(const std::vector<int> &input) {
-    uint64_t h = 0x1337beefdeadfaceULL;
-    std::priority_queue<int> pq;
-    
-    for (int value : input) {
-        pq.push(value);
+// ---------------------------------------------------------------------------
+// Section 9: pair / tuple
+// ---------------------------------------------------------------------------
+uint64_t pairTupleSection() {
+    std::cout << "\n-- std::pair / std::tuple --\n";
+    uint64_t checksum = 0;
+
+    std::pair<std::string, int> p1{"width", 1920};
+    std::pair<std::string, int> p2{"height", 1080};
+    std::cout << p1.first << "=" << p1.second << ", " << p2.first << "=" << p2.second << "\n";
+    checksum += static_cast<uint64_t>(p1.second + p2.second);
+
+    std::vector<std::pair<std::string, int>> pairs = {
+        {"charlie", 3}, {"alpha", 1}, {"bravo", 2}, {"delta", 1}
+    };
+    std::stable_sort(pairs.begin(), pairs.end(),
+                      [](const auto& a, const auto& b) { return a.second < b.second; });
+    for (const auto& p : pairs) {
+        std::cout << "  " << p.first << " : " << p.second << "\n";
     }
-    
-    while (!pq.empty()) {
-        h = mix64(h ^ (uint64_t)pq.top());
-        pq.pop();
-    }
-    
-    return h;
+
+    std::tuple<int, double, std::string> record{7, 3.5, "sample"};
+    auto [id, value, label] = record;
+    std::cout << "tuple -> id=" << id << " value=" << std::fixed << std::setprecision(2)
+              << value << " label=" << label << "\n";
+    checksum += static_cast<uint64_t>(id);
+
+    bool pairsEqual = (p1 == std::pair<std::string, int>{"width", 1920});
+    std::cout << "pair equality check: " << (pairsEqual ? "true" : "false") << "\n";
+    checksum += pairsEqual ? 1 : 0;
+
+    return checksum;
 }
 
-// Tuple operations
-static uint64_t tupleOperations(const std::vector<std::tuple<int, double, std::string>> &data) {
-    uint64_t h = 0xfacefeed0ddba11eULL;
-    
-    for (auto const &t : data) {
-        int i = std::get<0>(t);
-        double d = std::get<1>(t);
-        std::string s = std::get<2>(t);
-        
-        h = mix64(h ^ (uint64_t)i);
-        h = add_d(h, d);
-        h = mix64(h ^ hashString(s));
-    }
-    
-    return h;
+// ---------------------------------------------------------------------------
+// Section 10: std::bitset
+// ---------------------------------------------------------------------------
+uint64_t bitsetSection() {
+    std::cout << "\n-- std::bitset --\n";
+    uint64_t checksum = 0;
+
+    std::bitset<16> bits(0);
+    bits.set(0);
+    bits.set(4);
+    bits.set(8);
+    bits.set(15);
+    std::cout << "bits: " << bits.to_string() << "\n";
+    std::cout << "count: " << bits.count() << "\n";
+    checksum += bits.count();
+
+    bits.flip();
+    std::cout << "flipped: " << bits.to_string() << "\n";
+
+    bits.reset();
+    std::cout << "reset: " << bits.to_string() << "\n";
+
+    std::bitset<8> fromNumber(200);
+    std::cout << "200 as bitset<8>: " << fromNumber.to_string() << "\n";
+    checksum += fromNumber.to_ulong();
+
+    return checksum;
 }
 
-// Multi-map operations
-static uint64_t multimapOperations(const std::multimap<int, std::string> &data) {
-    uint64_t h = 0xbaddcafebabe1337ULL;
-    
-    for (auto const &entry : data) {
-        h = mix64(h ^ (uint64_t)entry.first);
-        h = mix64(h ^ hashString(entry.second));
-    }
-    
-    return h;
+// ---------------------------------------------------------------------------
+// Section 11: numeric algorithms
+// ---------------------------------------------------------------------------
+uint64_t numericAlgorithmsSection() {
+    std::cout << "\n-- Numeric algorithms --\n";
+    uint64_t checksum = 0;
+
+    std::vector<int> data = {3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5};
+
+    int total = std::accumulate(data.begin(), data.end(), 0);
+    std::cout << "accumulate: " << total << "\n";
+    checksum += static_cast<uint64_t>(total);
+
+    int product = std::accumulate(data.begin(), data.begin() + 5, 1, std::multiplies<int>());
+    std::cout << "product of first 5: " << product << "\n";
+    checksum += static_cast<uint64_t>(product);
+
+    int innerProd = std::inner_product(data.begin(), data.begin() + 5, data.begin(), 0);
+    std::cout << "inner_product (first 5, self): " << innerProd << "\n";
+    checksum += static_cast<uint64_t>(innerProd);
+
+    std::vector<int> partialSums(data.size());
+    std::partial_sum(data.begin(), data.end(), partialSums.begin());
+    printIntContainer("partial_sum", partialSums);
+
+    std::vector<int> adjDiff(data.size());
+    std::adjacent_difference(data.begin(), data.end(), adjDiff.begin());
+    printIntContainer("adjacent_difference", adjDiff);
+
+    std::vector<int> transformed(data.size());
+    std::transform(data.begin(), data.end(), transformed.begin(), [](int x) { return x * x; });
+    printIntContainer("transformed (squares)", transformed);
+
+    return checksum;
 }
 
-// Multi-set operations
-static uint64_t multisetOperations(const std::multiset<int> &data) {
-    uint64_t h = 0xc0dedeadbadf00dULL;
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
+// ---------------------------------------------------------------------------
+// Section 12: struct sorting / searching, nested containers
+// ---------------------------------------------------------------------------
+uint64_t structAndNestedSection() {
+    std::cout << "\n-- Struct sorting and nested containers --\n";
+    uint64_t checksum = 0;
+
+    std::vector<Person> people = {
+        {"Alice", 30}, {"Bob", 25}, {"Carol", 25}, {"Dave", 40}, {"Eve", 30}
+    };
+    std::sort(people.begin(), people.end(), comparePersonByAgeThenName);
+    for (const auto& p : people) {
+        std::cout << "  " << p.name << " (" << p.age << ")\n";
+        checksum += static_cast<uint64_t>(p.age);
     }
-    
-    return h;
+
+    auto foundIt = std::find_if(people.begin(), people.end(),
+                                 [](const Person& p) { return p.name == "Carol"; });
+    std::cout << "found Carol: " << (foundIt != people.end() ? "true" : "false") << "\n";
+
+    std::map<std::string, std::vector<int>> groupedScores;
+    groupedScores["team_a"] = {90, 85, 88};
+    groupedScores["team_b"] = {70, 75};
+    groupedScores["team_c"] = {100, 95, 92, 88};
+
+    for (const auto& entry : groupedScores) {
+        int groupSum = std::accumulate(entry.second.begin(), entry.second.end(), 0);
+        std::cout << "  " << entry.first << " sum=" << groupSum << "\n";
+        checksum += static_cast<uint64_t>(groupSum);
+    }
+
+    std::array<Person, 3> peopleArray = {
+        Person{"Frank", 50}, Person{"Grace", 22}, Person{"Heidi", 33}
+    };
+    std::sort(peopleArray.begin(), peopleArray.end(), comparePersonByAgeThenName);
+    for (const auto& p : peopleArray) {
+        std::cout << "  array person: " << p.name << " (" << p.age << ")\n";
+    }
+
+    return checksum;
 }
 
-// Vector transformations
-static uint64_t vectorTransformations(const std::vector<int> &input) {
-    uint64_t h = 0xfeedfacedeadbeefULL;
-    std::vector<int> transformed;
-    
-    // Transform: multiply by 2
-    std::transform(input.begin(), input.end(), std::back_inserter(transformed),
-                   [](int x) { return x * 2; });
-    
-    for (int value : transformed) {
-        h = mix64(h ^ (uint64_t)value);
+// ---------------------------------------------------------------------------
+// Section 13: deterministic data via LCG combined with containers
+// ---------------------------------------------------------------------------
+uint64_t generatedDataSection() {
+    std::cout << "\n-- Deterministically generated dataset --\n";
+    uint64_t checksum = 0;
+
+    Lcg rng(123456789ULL);
+    std::vector<int> generated;
+    generated.reserve(30);
+    for (int i = 0; i < 30; ++i) {
+        generated.push_back(rng.nextInt(1, 1000));
     }
-    
-    // Accumulate
-    int sum = std::accumulate(transformed.begin(), transformed.end(), 0);
-    h = mix64(h ^ (uint64_t)sum);
-    
-    // Count if
-    int count = std::count_if(transformed.begin(), transformed.end(),
-                             [](int x) { return x > 10; });
-    h = mix64(h ^ (uint64_t)count);
-    
-    return h;
+    printIntContainer("generated", generated);
+
+    std::vector<int> sortedGenerated = generated;
+    std::sort(sortedGenerated.begin(), sortedGenerated.end());
+    printIntContainer("sorted generated", sortedGenerated);
+
+    int genSum = std::accumulate(generated.begin(), generated.end(), 0);
+    std::cout << "generated sum: " << genSum << "\n";
+    checksum += static_cast<uint64_t>(genSum);
+
+    std::set<int> uniqueValues(generated.begin(), generated.end());
+    std::cout << "unique value count: " << uniqueValues.size() << "\n";
+    checksum += uniqueValues.size();
+
+    return checksum;
 }
 
-// String operations
-static uint64_t stringOperations(const std::vector<std::string> &strings) {
-    uint64_t h = 0xfaceface12345678ULL;
-    
-    for (auto const &s : strings) {
-        h = mix64(h ^ hashString(s));
-        
-        // String length
-        h = mix64(h ^ (uint64_t)s.length());
-        
-        // Find operation
-        size_t pos = s.find('a');
-        if (pos != std::string::npos) {
-            h = mix64(h ^ (uint64_t)pos);
-        }
-        
-        // Substring
-        if (s.length() > 3) {
-            std::string sub = s.substr(0, 3);
-            h = mix64(h ^ hashString(sub));
-        }
-    }
-    
-    return h;
-}
-
-// Map transformations
-static uint64_t mapTransformations(const std::map<int, double> &input) {
-    uint64_t h = 0xdeadbeeffacefeedULL;
-    
-    for (auto const &entry : input) {
-        h = mix64(h ^ (uint64_t)entry.first);
-        h = add_d(h, entry.second);
-    }
-    
-    // Find and count
-    auto it = input.find(5);
-    if (it != input.end()) {
-        h = add_d(h, it->second);
-    }
-    
-    size_t count = input.count(10);
-    h = mix64(h ^ (uint64_t)count);
-    
-    return h;
-}
-
-// Set operations
-static uint64_t setOperations(const std::set<int> &a, const std::set<int> &b) {
-    uint64_t h = 0xc0ffeebabebad0ULL;
-    
-    // Union operation simulation
-    std::vector<int> unionResult;
-    std::set_union(a.begin(), a.end(), b.begin(), b.end(),
-                  std::back_inserter(unionResult));
-    
-    for (int value : unionResult) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    // Intersection operation simulation
-    std::vector<int> intersectResult;
-    std::set_intersection(a.begin(), a.end(), b.begin(), b.end(),
-                         std::back_inserter(intersectResult));
-    
-    for (int value : intersectResult) {
-        h = mix64(h ^ (uint64_t)(value + 1000));
-    }
-    
-    return h;
-}
-
-// Deque operations
-static uint64_t dequeOperations(std::deque<int> data) {
-    uint64_t h = 0x13371337deadbeefULL;
-    
-    // Push front and back
-    data.push_front(100);
-    data.push_back(200);
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    // Pop operations
-    if (!data.empty()) {
-        data.pop_front();
-        data.pop_back();
-    }
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)(value + 1));
-    }
-    
-    return h;
-}
-
-// Array operations
-static uint64_t arrayOperations(const std::array<int, 10> &data) {
-    uint64_t h = 0xbadfeedfacade123ULL;
-    
-    for (size_t i = 0; i < data.size(); ++i) {
-        h = mix64(h ^ (uint64_t)(data[i] + i));
-    }
-    
-    // Array fill
-    std::array<int, 10> filled;
-    filled.fill(42);
-    
-    for (int value : filled) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    return h;
-}
-
-// Nested containers
-static uint64_t nestedContainerOperations(const std::vector<std::vector<int>> &matrix) {
-    uint64_t h = 0xface1234dead5678ULL;
-    
-    for (auto const &row : matrix) {
-        int rowSum = 0;
-        for (int value : row) {
-            rowSum += value;
-            h = mix64(h ^ (uint64_t)value);
-        }
-        h = mix64(h ^ (uint64_t)rowSum);
-    }
-    
-    return h;
-}
-
-// Map of vectors
-static uint64_t mapOfVectors(const std::map<std::string, std::vector<int>> &data) {
-    uint64_t h = 0xcafe1234dead5678ULL;
-    
-    for (auto const &entry : data) {
-        h = mix64(h ^ hashString(entry.first));
-        
-        for (int value : entry.second) {
-            h = mix64(h ^ (uint64_t)value);
-        }
-    }
-    
-    return h;
-}
-
-// Vector of maps
-static uint64_t vectorOfMaps(const std::vector<std::map<int, std::string>> &data) {
-    uint64_t h = 0xdead1234face5678ULL;
-    
-    for (auto const &m : data) {
-        for (auto const &entry : m) {
-            h = mix64(h ^ (uint64_t)entry.first);
-            h = mix64(h ^ hashString(entry.second));
-        }
-    }
-    
-    return h;
-}
-
-// Complex container algorithm
-static uint64_t complexContainerAlgorithm(const std::vector<int> &data) {
-    uint64_t h = 0x1337deadbeef1337ULL;
-    
-    // Create frequency map
-    std::map<int, int> frequency;
-    for (int value : data) {
-        frequency[value]++;
-    }
-    
-    for (auto const &entry : frequency) {
-        h = mix64(h ^ (uint64_t)entry.first);
-        h = mix64(h ^ (uint64_t)entry.second);
-    }
-    
-    // Find most frequent
-    int maxFreq = 0;
-    int mostFrequent = 0;
-    for (auto const &entry : frequency) {
-        if (entry.second > maxFreq) {
-            maxFreq = entry.second;
-            mostFrequent = entry.first;
-        }
-    }
-    
-    h = mix64(h ^ (uint64_t)mostFrequent);
-    h = mix64(h ^ (uint64_t)maxFreq);
-    
-    return h;
-}
-
-// Container comparison
-static uint64_t containerComparison(const std::vector<int> &a, const std::vector<int> &b) {
-    uint64_t h = 0xfacedeadbeefcafeULL;
-    
-    // Lexicographical comparison
-    bool less = std::lexicographical_compare(a.begin(), a.end(),
-                                            b.begin(), b.end());
-    h = mix64(h ^ (uint64_t)less);
-    
-    // Element-wise comparison
-    size_t minSize = std::min(a.size(), b.size());
-    for (size_t i = 0; i < minSize; ++i) {
-        h = mix64(h ^ (uint64_t)(a[i] == b[i]));
-    }
-    
-    return h;
-}
-
-// Container rotation
-static uint64_t containerRotation(std::vector<int> data, int positions) {
-    uint64_t h = 0xdeadfacecafe1234ULL;
-    
-    std::rotate(data.begin(), data.begin() + positions, data.end());
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    return h;
-}
-
-// Container partition
-static uint64_t containerPartition(std::vector<int> data) {
-    uint64_t h = 0xcafebeefdeadfaceULL;
-    
-    auto pivot = std::partition(data.begin(), data.end(), [](int x) { return x % 2 == 0; });
-    
-    for (auto it = data.begin(); it != pivot; ++it) {
-        h = mix64(h ^ (uint64_t)(*it + 100));
-    }
-    
-    for (auto it = pivot; it != data.end(); ++it) {
-        h = mix64(h ^ (uint64_t)(*it + 200));
-    }
-    
-    return h;
-}
-
-// Container merge
-static uint64_t containerMerge(const std::vector<int> &a, const std::vector<int> &b) {
-    uint64_t h = 0xfeeddeadcafebeefULL;
-    
-    std::vector<int> merged;
-    std::merge(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(merged));
-    
-    for (int value : merged) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    return h;
-}
-
-// Container unique
-static uint64_t containerUnique(std::vector<int> data) {
-    uint64_t h = 0xbadfeedfacadebadULL;
-    
-    std::sort(data.begin(), data.end());
-    auto last = std::unique(data.begin(), data.end());
-    
-    for (auto it = data.begin(); it != last; ++it) {
-        h = mix64(h ^ (uint64_t)(*it));
-    }
-    
-    return h;
-}
-
-// Container reverse
-static uint64_t containerReverse(std::vector<int> data) {
-    uint64_t h = 0xfacadebadfeed123ULL;
-    
-    std::reverse(data.begin(), data.end());
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    return h;
-}
-
-// Container shuffle simulation (deterministic)
-static uint64_t containerShuffleSimulation(std::vector<int> data) {
-    uint64_t h = 0xdeadcafe12345678ULL;
-    
-    // Deterministic "shuffle" using swap pattern
-    for (size_t i = 0; i < data.size(); ++i) {
-        size_t j = (i * 7) % data.size();
-        std::swap(data[i], data[j]);
-    }
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    return h;
-}
-
-// Container search
-static uint64_t containerSearch(const std::vector<int> &data, int target) {
-    uint64_t h = 0xbeefdeadface1234ULL;
-    
-    auto it = std::find(data.begin(), data.end(), target);
-    if (it != data.end()) {
-        h = mix64(h ^ (uint64_t)std::distance(data.begin(), it));
-    } else {
-        h = mix64(h ^ 0xFFFFFFFFULL);
-    }
-    
-    // Binary search (requires sorted container)
-    std::vector<int> sorted = data;
-    std::sort(sorted.begin(), sorted.end());
-    bool found = std::binary_search(sorted.begin(), sorted.end(), target);
-    h = mix64(h ^ (uint64_t)found);
-    
-    return h;
-}
-
-// Container fill
-static uint64_t containerFill(std::vector<int> data, int value, size_t count) {
-    uint64_t h = 0xcafe1234dead5678ULL;
-    
-    if (count <= data.size()) {
-        std::fill_n(data.begin(), count, value);
-    }
-    
-    for (int v : data) {
-        h = mix64(h ^ (uint64_t)v);
-    }
-    
-    return h;
-}
-
-// Container generate
-static uint64_t containerGenerate(std::vector<int> data) {
-    uint64_t h = 0xface5678dead1234ULL;
-    
-    int seed = 42;
-    std::generate(data.begin(), data.end(), [&seed]() {
-        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-        return seed;
-    });
-    
-    for (int value : data) {
-        h = mix64(h ^ (uint64_t)value);
-    }
-    
-    return h;
-}
-
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
-    std::vector<int> values(16);
-    std::iota(values.begin(), values.end(), 1);
 
-    std::deque<double> doubles;
-    for (int i = 0; i < 12; ++i)
-        doubles.push_back(1.25 + 0.75 * i);
+    std::cout << "=== Comprehensive std:: Containers Test ===\n\n";
 
-    std::array<uint32_t, 8> fixedArray = {0u, 1u, 2u, 3u, 5u, 8u, 13u, 21u};
+    uint64_t checksum = 0;
+    checksum += vectorSection();
+    checksum += arraySection();
+    checksum += dequeSection();
+    checksum += listSection();
+    checksum += setSection();
+    checksum += mapSection();
+    checksum += unorderedSection();
+    checksum += adapterSection();
+    checksum += pairTupleSection();
+    checksum += bitsetSection();
+    checksum += numericAlgorithmsSection();
+    checksum += structAndNestedSection();
+    checksum += generatedDataSection();
 
-    std::set<char> letters = {'A', 'B', 'C', 'D', 'E', 'F'};
-
-    std::map<std::string, int> mapping;
-    mapping["alpha"] = 10;
-    mapping["beta"] = 20;
-    mapping["gamma"] = 30;
-    mapping["delta"] = 40;
-
-    std::vector<std::pair<std::string, int>> pairs;
-    pairs.emplace_back("one", 1);
-    pairs.emplace_back("two", 2);
-    pairs.emplace_back("three", 3);
-    pairs.emplace_back("four", 4);
-
-    std::map<int, int> indexMap;
-    indexMap[0] = 100;
-    indexMap[1] = 101;
-    indexMap[2] = 103;
-    indexMap[3] = 107;
-
-    std::array<int, 6> values6 = {2, 3, 5, 7, 11, 13};
-
-    // Additional test data
-    std::list<int> listData = {5, 3, 8, 1, 9, 2, 7, 4, 6};
-    std::forward_list<int> fwdListData = {10, 20, 30, 40, 50, 60, 70, 80};
-
-    std::unordered_map<std::string, int> unorderedMap;
-    unorderedMap["apple"] = 5;
-    unorderedMap["banana"] = 3;
-    unorderedMap["cherry"] = 8;
-    unorderedMap["date"] = 2;
-
-    std::unordered_set<int> unorderedSet = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-
-    std::vector<std::tuple<int, double, std::string>> tupleData;
-    tupleData.emplace_back(1, 1.5, "first");
-    tupleData.emplace_back(2, 2.5, "second");
-    tupleData.emplace_back(3, 3.5, "third");
-    tupleData.emplace_back(4, 4.5, "fourth");
-
-    std::multimap<int, std::string> multimap;
-    multimap.insert({1, "one"});
-    multimap.insert({2, "two"});
-    multimap.insert({1, "uno"});
-    multimap.insert({3, "three"});
-    multimap.insert({2, "dos"});
-
-    std::multiset<int> multiset = {1, 2, 2, 3, 3, 3, 4, 4, 4, 4};
-
-    std::vector<std::string> strings = {"hello", "world", "test", "container", "obfuscation"};
-
-    std::map<int, double> intDoubleMap;
-    for (int i = 0; i < 10; ++i) {
-        intDoubleMap[i] = i * 1.5;
-    }
-
-    std::set<int> setA = {1, 2, 3, 4, 5, 6, 7, 8};
-    std::set<int> setB = {5, 6, 7, 8, 9, 10, 11, 12};
-
-    std::array<int, 10> arrayData;
-    for (int i = 0; i < 10; ++i) {
-        arrayData[i] = i * i;
-    }
-
-    std::vector<std::vector<int>> matrix = {
-        {1, 2, 3},
-        {4, 5, 6},
-        {7, 8, 9}
-    };
-
-    std::map<std::string, std::vector<int>> mapOfVec;
-    mapOfVec["first"] = {1, 2, 3};
-    mapOfVec["second"] = {4, 5, 6};
-    mapOfVec["third"] = {7, 8, 9};
-
-    std::vector<std::map<int, std::string>> vecOfMap;
-    std::map<int, std::string> temp1;
-    temp1[1] = "a";
-    temp1[2] = "b";
-    vecOfMap.push_back(temp1);
-    std::map<int, std::string> temp2;
-    temp2[3] = "c";
-    temp2[4] = "d";
-    vecOfMap.push_back(temp2);
-
-    std::vector<int> freqData = {1, 2, 2, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 5};
-
-    std::vector<int> compA = {1, 3, 5, 7, 9};
-    std::vector<int> compB = {2, 4, 6, 8, 10};
-
-    std::vector<int> mergeA = {1, 3, 5, 7, 9};
-    std::vector<int> mergeB = {2, 4, 6, 8, 10};
-
-    std::vector<int> uniqueData = {1, 2, 2, 3, 3, 3, 4, 4, 4, 4};
-
-    uint64_t checksum = 0x0ULL;
-    
-    // Original tests
-    checksum ^= hashContainer(values, doubles, fixedArray, letters, mapping, "container-test");
-    checksum ^= combineSequences("first-label", "second-label", pairs, indexMap, values6);
-    checksum ^= hashContainer({3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3}, doubles, fixedArray, letters, mapping, "std-containers");
-    
-    // New container tests
-    checksum ^= listOperations(listData);
-    checksum ^= forwardListOperations(fwdListData);
-    checksum ^= unorderedMapOperations(unorderedMap);
-    checksum ^= unorderedSetOperations(unorderedSet);
-    checksum ^= stackOperations(values);
-    checksum ^= queueOperations(values);
-    checksum ^= priorityQueueOperations(values);
-    checksum ^= tupleOperations(tupleData);
-    checksum ^= multimapOperations(multimap);
-    checksum ^= multisetOperations(multiset);
-    checksum ^= vectorTransformations(values);
-    checksum ^= stringOperations(strings);
-    checksum ^= mapTransformations(intDoubleMap);
-    checksum ^= setOperations(setA, setB);
-    checksum ^= dequeOperations({1, 2, 3, 4, 5, 6, 7, 8});
-    checksum ^= arrayOperations(arrayData);
-    checksum ^= nestedContainerOperations(matrix);
-    checksum ^= mapOfVectors(mapOfVec);
-    checksum ^= vectorOfMaps(vecOfMap);
-    checksum ^= complexContainerAlgorithm(freqData);
-    checksum ^= containerComparison(compA, compB);
-    checksum ^= containerRotation(values, 3);
-    checksum ^= containerPartition(values);
-    checksum ^= containerMerge(mergeA, mergeB);
-    checksum ^= containerUnique(uniqueData);
-    checksum ^= containerReverse(values);
-    checksum ^= containerShuffleSimulation(values);
-    checksum ^= containerSearch(values, 5);
-    checksum ^= containerFill(values, 42, 5);
-    checksum ^= containerGenerate(values);
-    
-    checksum = mix64(checksum);
-
-    std::printf("CHECKSUM: 0x%016llx\n", (unsigned long long)checksum);
+    std::cout << "\n=== Final checksum ===\n";
+    std::cout << "TOTAL_CHECKSUM: " << checksum << "\n";
 
     auto end = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-    printf("%ld\n", diff);
+    std::cout << diff << "\n";
+
     return 0;
 }

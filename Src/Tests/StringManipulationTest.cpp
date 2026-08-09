@@ -1,673 +1,733 @@
-// String manipulation stress test for the Leet obfuscator.
-// Focuses on complex string operations including concatenation,
-// searching, transformation, encoding, and parsing.
-// Deterministic output for verification.
+// test_strings.cpp - std::string and const char* manipulation test
+//
+// Compile:  g++ -O2 -std=c++17 -fno-exceptions -o test_strings test_strings.cpp
+//
+// Design notes:
+//  - Never uses std::stoi/std::stod/.at() with data that could be invalid,
+//    since those throw and this file targets -fno-exceptions.
+//  - Never uses std::tolower/std::isalpha/etc. with a plain (possibly
+//    negative) char -- always casts to unsigned char first, which is the
+//    standard way to avoid UB in <cctype>.
+//  - Never uses strcpy/strcat/sprintf (unbounded); always snprintf or
+//    manual bounds-checked loops, with explicit null termination.
+//  - No dependency on std::hash (implementation defined); uses a hand
+//    rolled deterministic FNV-1a hash instead.
+//  - No unordered_map/unordered_set is used for anything that affects
+//    printed order, so output ordering is always deterministic.
 
-#include <array>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
+#include <iostream>
+#include <iomanip>
 #include <string>
-#include <vector>
-#include <algorithm>
+#include <cstring>
+#include <cstdio>
 #include <cctype>
+#include <vector>
+#include <map>
+#include <algorithm>
+#include <sstream>
 #include <chrono>
 
+#define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
-static inline uint64_t mix64(uint64_t x) {
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9ULL;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebULL;
-    x ^= x >> 31;
-    return x;
-}
-
-static inline uint64_t add_f(uint64_t h, float f) {
-    uint32_t u;
-    std::memcpy(&u, &f, sizeof(u));
-    return mix64(h ^ u);
-}
-
-static inline uint64_t add_d(uint64_t h, double d) {
-    uint64_t u;
-    std::memcpy(&u, &d, sizeof(u));
-    return mix64(h ^ u);
-}
-
-static uint64_t hashString(const std::string &value) {
-    uint64_t h = 0x13579bdf2468ace0ULL;
-    for (unsigned char c : value) {
-        h = mix64(h ^ (uint64_t)c);
+// ---------------------------------------------------------------------------
+// Deterministic hashing (FNV-1a) -- avoids relying on std::hash internals
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+uint64_t fnv1aHash(const std::string& s) {
+    uint64_t hash = 14695981039346656037ULL;
+    const uint64_t prime = 1099511628211ULL;
+    for (unsigned char c : s) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= prime;
     }
-    return h;
+    return hash;
 }
 
-// String concatenation with various patterns
-static uint64_t stringConcatenation(const std::vector<std::string> &parts) {
-    uint64_t h = 0xdeadbeefcafebabeULL;
-    std::string result;
-    
-    for (const auto &part : parts) {
-        result += part;
-        h = mix64(h ^ hashString(result));
+__attribute__((noinline))
+uint64_t fnv1aHashCStr(const char* s) {
+    uint64_t hash = 14695981039346656037ULL;
+    const uint64_t prime = 1099511628211ULL;
+    while (*s != '\0') {
+        hash ^= static_cast<uint64_t>(static_cast<unsigned char>(*s));
+        hash *= prime;
+        ++s;
     }
-    
-    // Reverse concatenation
-    std::string reverseResult;
-    for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
-        reverseResult += *it;
-        h = mix64(h ^ hashString(reverseResult));
-    }
-    
-    return h;
+    return hash;
 }
 
-// String searching with multiple patterns
-static uint64_t stringSearching(const std::string &text, const std::vector<std::string> &patterns) {
-    uint64_t h = 0xfeedfacebadc0ffeULL;
-    
-    for (const auto &pattern : patterns) {
-        size_t pos = text.find(pattern);
-        if (pos != std::string::npos) {
-            h = mix64(h ^ (uint64_t)pos);
-            h = mix64(h ^ hashString(pattern));
-        } else {
-            h = mix64(h ^ 0xFFFFFFFFULL);
+// ---------------------------------------------------------------------------
+// Safe C-string helpers (bounds checked, always null-terminated)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+size_t safeStrLen(const char* s, size_t maxLen) {
+    size_t len = 0;
+    while (len < maxLen && s[len] != '\0') {
+        ++len;
+    }
+    return len;
+}
+
+// Copies at most (destSize - 1) characters and always null-terminates.
+__attribute__((noinline))
+void safeStrCopy(char* dest, size_t destSize, const char* src) {
+    if (destSize == 0) return;
+    size_t i = 0;
+    while (i + 1 < destSize && src[i] != '\0') {
+        dest[i] = src[i];
+        ++i;
+    }
+    dest[i] = '\0';
+}
+
+// Appends at most enough of src to keep dest within destSize, null-terminated.
+__attribute__((noinline))
+void safeStrAppend(char* dest, size_t destSize, const char* src) {
+    size_t destLen = safeStrLen(dest, destSize);
+    if (destLen >= destSize - 1) return;
+    size_t i = 0;
+    while (destLen + i + 1 < destSize && src[i] != '\0') {
+        dest[destLen + i] = src[i];
+        ++i;
+    }
+    dest[destLen + i] = '\0';
+}
+
+// ---------------------------------------------------------------------------
+// Case conversion (unsigned char cast required for correctness / no UB)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::string toUpperStr(const std::string& s) {
+    std::string result = s;
+    for (char& c : result) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    return result;
+}
+
+__attribute__((noinline))
+std::string toLowerStr(const std::string& s) {
+    std::string result = s;
+    for (char& c : result) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Reverse
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::string reverseStr(const std::string& s) {
+    std::string result = s;
+    std::reverse(result.begin(), result.end());
+    return result;
+}
+
+__attribute__((noinline))
+void reverseCStrInPlace(char* s, size_t len) {
+    if (len == 0) return;
+    size_t left = 0;
+    size_t right = len - 1;
+    while (left < right) {
+        char tmp = s[left];
+        s[left] = s[right];
+        s[right] = tmp;
+        ++left;
+        --right;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Palindrome checking (case-insensitive, alnum-only)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isAlnumChar(char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) != 0;
+}
+
+__attribute__((noinline))
+char normalizeChar(char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+}
+
+__attribute__((noinline))
+bool isPalindrome(const std::string& s) {
+    std::vector<char> filtered;
+    filtered.reserve(s.size());
+    for (char c : s) {
+        if (isAlnumChar(c)) {
+            filtered.push_back(normalizeChar(c));
         }
-        
-        // Find from end
-        size_t rpos = text.rfind(pattern);
-        if (rpos != std::string::npos) {
-            h = mix64(h ^ (uint64_t)rpos);
-        }
-        
-        // Count occurrences
-        size_t count = 0;
-        size_t searchPos = 0;
-        while ((searchPos = text.find(pattern, searchPos)) != std::string::npos) {
-            count++;
-            searchPos += pattern.length();
-        }
-        h = mix64(h ^ (uint64_t)count);
     }
-    
-    return h;
-}
-
-// String transformation operations
-static uint64_t stringTransformations(std::string text) {
-    uint64_t h = 0x0badf00d1337c0deULL;
-    
-    // To upper
-    std::string upper = text;
-    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-    h = mix64(h ^ hashString(upper));
-    
-    // To lower
-    std::string lower = text;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    h = mix64(h ^ hashString(lower));
-    
-    // Reverse
-    std::string reversed = text;
-    std::reverse(reversed.begin(), reversed.end());
-    h = mix64(h ^ hashString(reversed));
-    
-    // Sort characters (use stable_sort for determinism)
-    std::string sorted = text;
-    std::stable_sort(sorted.begin(), sorted.end());
-    h = mix64(h ^ hashString(sorted));
-    
-    return h;
-}
-
-// String slicing and substring operations
-static uint64_t stringSlicing(const std::string &text, const std::array<int, 10> &positions) {
-    uint64_t h = 0xcafebabedeadfaceULL;
-    
-    for (int pos : positions) {
-        if (pos >= 0 && pos < (int)text.length()) {
-            std::string substr = text.substr(pos, text.length() - pos);
-            h = mix64(h ^ hashString(substr));
-            
-            if (pos + 5 < (int)text.length()) {
-                std::string substr5 = text.substr(pos, 5);
-                h = mix64(h ^ hashString(substr5));
-            }
-        }
+    size_t left = 0;
+    size_t right = filtered.empty() ? 0 : filtered.size() - 1;
+    while (left < right) {
+        if (filtered[left] != filtered[right]) return false;
+        ++left;
+        --right;
     }
-    
-    // Get first and last characters
-    if (!text.empty()) {
-        h = mix64(h ^ (uint64_t)text[0]);
-        h = mix64(h ^ (uint64_t)text[text.length() - 1]);
-    }
-    
-    return h;
+    return true;
 }
 
-// String replacement operations
-static uint64_t stringReplacement(std::string text, const std::vector<std::pair<std::string, std::string>> &replacements) {
-    uint64_t h = 0xfacefeed0ddba11eULL;
-    
-    for (const auto &rep : replacements) {
-        std::string current = text;  // Start fresh for each replacement pattern
-        size_t pos = 0;
-        while ((pos = current.find(rep.first, pos)) != std::string::npos) {
-            current.replace(pos, rep.first.length(), rep.second);
-            pos += rep.second.length();
-        }
-        h = mix64(h ^ hashString(current));
-    }
-    
-    return h;
-}
-
-// String trimming operations
-static uint64_t stringTrimming(const std::string &text) {
-    uint64_t h = 0xbaddcafebabe1337ULL;
-    
-    // Trim left
-    std::string leftTrimmed = text;
-    leftTrimmed.erase(leftTrimmed.begin(), 
-                     std::find_if(leftTrimmed.begin(), leftTrimmed.end(), 
-                                 [](int c) { return !std::isspace(c); }));
-    h = mix64(h ^ hashString(leftTrimmed));
-    
-    // Trim right
-    std::string rightTrimmed = text;
-    rightTrimmed.erase(std::find_if(rightTrimmed.rbegin(), rightTrimmed.rend(),
-                                    [](int c) { return !std::isspace(c); }).base(),
-                      rightTrimmed.end());
-    h = mix64(h ^ hashString(rightTrimmed));
-    
-    // Trim both
-    std::string trimmed = leftTrimmed;
-    trimmed.erase(std::find_if(trimmed.rbegin(), trimmed.rend(),
-                              [](int c) { return !std::isspace(c); }).base(),
-                trimmed.end());
-    h = mix64(h ^ hashString(trimmed));
-    
-    return h;
-}
-
-// String splitting operations
-static uint64_t stringSplitting(const std::string &text, const std::vector<char> &delimiters) {
-    uint64_t h = 0xc0dedeadbadf00dULL;
-    
-    for (char delim : delimiters) {
-        std::vector<std::string> parts;
-        std::string current;
-        
-        for (char c : text) {
-            if (c == delim) {
-                parts.push_back(current);
-                current.clear();
-            } else {
-                current += c;
-            }
-        }
-        if (!current.empty()) {
+// ---------------------------------------------------------------------------
+// Split / join
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::vector<std::string> splitStr(const std::string& s, char delimiter) {
+    std::vector<std::string> parts;
+    std::string current;
+    for (char c : s) {
+        if (c == delimiter) {
             parts.push_back(current);
-        }
-        
-        for (const auto &part : parts) {
-            h = mix64(h ^ hashString(part));
-        }
-        
-        h = mix64(h ^ (uint64_t)parts.size());
-    }
-    
-    return h;
-}
-
-// String padding operations
-static uint64_t stringPadding(const std::string &text, int targetLength, char padChar) {
-    uint64_t h = 0xfeedfacedeadbeefULL;
-    
-    // Pad left
-    std::string leftPadded = text;
-    if ((int)leftPadded.length() < targetLength) {
-        leftPadded = std::string(targetLength - leftPadded.length(), padChar) + leftPadded;
-    }
-    h = mix64(h ^ hashString(leftPadded));
-    
-    // Pad right
-    std::string rightPadded = text;
-    if ((int)rightPadded.length() < targetLength) {
-        rightPadded += std::string(targetLength - rightPadded.length(), padChar);
-    }
-    h = mix64(h ^ hashString(rightPadded));
-    
-    return h;
-}
-
-// String comparison operations
-static uint64_t stringComparison(const std::string &a, const std::string &b) {
-    uint64_t h = 0xfaceface12345678ULL;
-    
-    // Equality
-    bool equal = (a == b);
-    h = mix64(h ^ (uint64_t)equal);
-    
-    // Less than
-    bool less = (a < b);
-    h = mix64(h ^ (uint64_t)less);
-    
-    // Compare
-    int cmp = a.compare(b);
-    int ordered = (cmp > 0) - (cmp < 0);
-    h = mix64(h ^ (uint64_t)ordered);
-    
-    // Lexicographical compare
-    auto lexicographical = std::lexicographical_compare(
-        a.begin(), a.end(), b.begin(), b.end());
-    h = mix64(h ^ (uint64_t)lexicographical);
-    
-    return h;
-}
-
-// String encoding simulation (Base64-like)
-static uint64_t stringEncodingSimulation(const std::string &text) {
-    uint64_t h = 0xdead1234face5678ULL;
-    std::string encoded;
-    
-    for (char c : text) {
-        // Simple encoding: add 1 to each character
-        encoded += (char)(c + 1);
-    }
-    
-    h = mix64(h ^ hashString(encoded));
-    
-    // Decode
-    std::string decoded;
-    for (char c : encoded) {
-        decoded += (char)(c - 1);
-    }
-    
-    h = mix64(h ^ hashString(decoded));
-    
-    return h;
-}
-
-// String character analysis
-static uint64_t stringCharacterAnalysis(const std::string &text) {
-    uint64_t h = 0x1337deadbeef1337ULL;
-    
-    int uppercase = 0;
-    int lowercase = 0;
-    int digits = 0;
-    int spaces = 0;
-    int special = 0;
-    
-    for (char c : text) {
-        if (std::isupper(c)) uppercase++;
-        else if (std::islower(c)) lowercase++;
-        else if (std::isdigit(c)) digits++;
-        else if (std::isspace(c)) spaces++;
-        else special++;
-    }
-    
-    h = mix64(h ^ (uint64_t)uppercase);
-    h = mix64(h ^ (uint64_t)lowercase);
-    h = mix64(h ^ (uint64_t)digits);
-    h = mix64(h ^ (uint64_t)spaces);
-    h = mix64(h ^ (uint64_t)special);
-    
-    return h;
-}
-
-// String repeat operations
-static uint64_t stringRepeat(const std::string &text, int count) {
-    uint64_t h = 0xfacedeadbeefcafeULL;
-    std::string repeated;
-    
-    for (int i = 0; i < count; ++i) {
-        repeated += text;
-    }
-    
-    h = mix64(h ^ hashString(repeated));
-    h = mix64(h ^ (uint64_t)repeated.length());
-    
-    return h;
-}
-
-// String insert and erase operations
-static uint64_t stringInsertErase(std::string text, const std::array<int, 5> &positions) {
-    uint64_t h = 0xdeadcafe12345678ULL;
-    
-    for (int pos : positions) {
-        std::string working = text;  // Fresh copy for each position
-        if (pos >= 0 && pos <= (int)working.length()) {
-            working.insert(pos, "X");
-            h = mix64(h ^ hashString(working));
-            
-            if (pos < (int)working.length() - 1) {
-                working.erase(pos, 1);
-                h = mix64(h ^ hashString(working));
-            }
-        }
-    }
-    
-    return h;
-}
-
-// String replace with different lengths
-static uint64_t stringVariableReplace(std::string text) {
-    uint64_t h = 0xbeefdeadface1234ULL;
-    
-    // Replace single character with multiple (use copy to avoid interference)
-    std::string text1 = text;
-    size_t pos = 0;
-    while ((pos = text1.find('a', pos)) != std::string::npos) {
-        text1.replace(pos, 1, "xyz");
-        pos += 3;
-    }
-    h = mix64(h ^ hashString(text1));
-    
-    // Replace multiple characters with single (use original text)
-    std::string text2 = text;
-    pos = 0;
-    while ((pos = text2.find("xyz", pos)) != std::string::npos) {
-        text2.replace(pos, 3, "A");
-        pos += 1;
-    }
-    h = mix64(h ^ hashString(text2));
-    
-    return h;
-}
-
-// String pattern matching
-static uint64_t stringPatternMatching(const std::string &text, const std::string &pattern) {
-    uint64_t h = 0xcafebeefdeadfaceULL;
-    
-    // Simple wildcard matching (single character)
-    int wildcardMatches = 0;
-    for (size_t i = 0; i < text.length(); ++i) {
-        bool match = true;
-        for (size_t j = 0; j < pattern.length(); ++j) {
-            if (i + j >= text.length()) {
-                match = false;
-                break;
-            }
-            if (pattern[j] != '?' && pattern[j] != text[i + j]) {
-                match = false;
-                break;
-            }
-        }
-        if (match) wildcardMatches++;
-    }
-    
-    h = mix64(h ^ (uint64_t)wildcardMatches);
-    
-    return h;
-}
-
-// String case conversion
-static uint64_t stringCaseConversion(const std::string &text) {
-    uint64_t h = 0xfeeddeadcafebeefULL;
-    
-    std::string converted;
-    for (char c : text) {
-        if (std::islower(c)) {
-            converted += std::toupper(c);
-        } else if (std::isupper(c)) {
-            converted += std::tolower(c);
+            current.clear();
         } else {
-            converted += c;
+            current.push_back(c);
         }
     }
-    
-    h = mix64(h ^ hashString(converted));
-    
-    return h;
+    parts.push_back(current);
+    return parts;
 }
 
-// String trimming of specific characters
-static uint64_t stringTrimChars(const std::string &text, char trimChar) {
-    uint64_t h = 0x0badf00d12345678ULL;
-    
-    // Trim left
-    std::string leftTrimmed = text;
-    leftTrimmed.erase(leftTrimmed.begin(), 
-                     std::find_if(leftTrimmed.begin(), leftTrimmed.end(), 
-                                 [trimChar](int c) { return c != trimChar; }));
-    h = mix64(h ^ hashString(leftTrimmed));
-    
-    // Trim right
-    std::string rightTrimmed = text;
-    rightTrimmed.erase(std::find_if(rightTrimmed.rbegin(), rightTrimmed.rend(),
-                                    [trimChar](int c) { return c != trimChar; }).base(),
-                      rightTrimmed.end());
-    h = mix64(h ^ hashString(rightTrimmed));
-    
-    return h;
-}
-
-// String unique characters
-static uint64_t stringUniqueCharacters(const std::string &text) {
-    uint64_t h = 0xfacefacecafe1234ULL;
-    
-    std::string unique;
-    for (char c : text) {
-        if (unique.find(c) == std::string::npos) {
-            unique += c;
-        }
-    }
-    
-    h = mix64(h ^ hashString(unique));
-    h = mix64(h ^ (uint64_t)unique.length());
-    
-    return h;
-}
-
-// String rotation
-static uint64_t stringRotation(std::string text, int positions) {
-    uint64_t h = 0xdeadbeeffacefaceULL;
-    
-    if (!text.empty()) {
-        positions = positions % text.length();
-        std::rotate(text.begin(), text.begin() + positions, text.end());
-    }
-    
-    h = mix64(h ^ hashString(text));
-    
-    return h;
-}
-
-// String shuffle simulation (deterministic)
-static uint64_t stringShuffleSimulation(std::string text) {
-    uint64_t h = 0xcafebabedead1234ULL;
-    
-    // Deterministic shuffle using swap pattern
-    for (size_t i = 0; i < text.length(); ++i) {
-        size_t j = (i * 7) % text.length();
-        std::swap(text[i], text[j]);
-    }
-    
-    h = mix64(h ^ hashString(text));
-    
-    return h;
-}
-
-// String partition
-static uint64_t stringPartition(const std::string &text, char delimiter) {
-    uint64_t h = 0xfeedfacecafe5678ULL;
-    
-    size_t pos = text.find(delimiter);
-    if (pos != std::string::npos) {
-        std::string before = text.substr(0, pos);
-        std::string after = text.substr(pos + 1);
-        
-        h = mix64(h ^ hashString(before));
-        h = mix64(h ^ hashString(after));
-    } else {
-        h = mix64(h ^ hashString(text));
-    }
-    
-    return h;
-}
-
-// String join operations
-static uint64_t stringJoin(const std::vector<std::string> &parts, const std::string &delimiter) {
-    uint64_t h = 0xdeadcafeface1234ULL;
+__attribute__((noinline))
+std::string joinStr(const std::vector<std::string>& parts, const std::string& delimiter) {
     std::string result;
-    
     for (size_t i = 0; i < parts.size(); ++i) {
-        if (i > 0) {
+        result += parts[i];
+        if (i + 1 < parts.size()) {
             result += delimiter;
         }
-        result += parts[i];
     }
-    
-    h = mix64(h ^ hashString(result));
-    
-    return h;
+    return result;
 }
 
-// String center operation
-static uint64_t stringCenter(const std::string &text, int width, char fillChar) {
-    uint64_t h = 0xbeefdeadcafe5678ULL;
-    
-    if ((int)text.length() >= width) {
-        h = mix64(h ^ hashString(text));
-        return h;
-    }
-    
-    int totalPadding = width - text.length();
-    int leftPadding = totalPadding / 2;
-    int rightPadding = totalPadding - leftPadding;
-    
-    std::string centered = std::string(leftPadding, fillChar) + text + 
-                          std::string(rightPadding, fillChar);
-    
-    h = mix64(h ^ hashString(centered));
-    
-    return h;
+// ---------------------------------------------------------------------------
+// Trim whitespace
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isSpaceChar(char c) {
+    return std::isspace(static_cast<unsigned char>(c)) != 0;
 }
 
-// String expand tabs
-static uint64_t stringExpandTabs(const std::string &text, int tabSize) {
-    uint64_t h = 0xfacefeeddead5678ULL;
-    std::string expanded;
-    
-    int column = 0;
-    for (char c : text) {
-        if (c == '\t') {
-            int spaces = tabSize - (column % tabSize);
-            expanded += std::string(spaces, ' ');
-            column += spaces;
-        } else {
-            expanded += c;
-            column++;
-            if (c == '\n') column = 0;
-        }
-    }
-    
-    h = mix64(h ^ hashString(expanded));
-    
-    return h;
+__attribute__((noinline))
+std::string trimStr(const std::string& s) {
+    size_t start = 0;
+    size_t end = s.size();
+    while (start < end && isSpaceChar(s[start])) ++start;
+    while (end > start && isSpaceChar(s[end - 1])) --end;
+    return s.substr(start, end - start);
 }
 
-// String word count
-static uint64_t stringWordCount(const std::string &text) {
-    uint64_t h = 0x13371337deadfaceULL;
-    int words = 0;
-    bool inWord = false;
-    
-    for (char c : text) {
-        if (std::isalnum(c)) {
-            if (!inWord) {
-                words++;
-                inWord = true;
+// ---------------------------------------------------------------------------
+// Tokenizing with multiple delimiters
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::vector<std::string> tokenize(const std::string& s, const std::string& delimiters) {
+    std::vector<std::string> tokens;
+    std::string current;
+    for (char c : s) {
+        bool isDelim = delimiters.find(c) != std::string::npos;
+        if (isDelim) {
+            if (!current.empty()) {
+                tokens.push_back(current);
+                current.clear();
             }
         } else {
-            inWord = false;
+            current.push_back(c);
         }
     }
-    
-    h = mix64(h ^ (uint64_t)words);
-    
-    return h;
+    if (!current.empty()) {
+        tokens.push_back(current);
+    }
+    return tokens;
 }
 
-// String line count
-static uint64_t stringLineCount(const std::string &text) {
-    uint64_t h = 0xc0dec0dedeadbeefULL;
-    int lines = 1;
-    
-    for (char c : text) {
-        if (c == '\n') {
-            lines++;
+// ---------------------------------------------------------------------------
+// Word frequency counter (std::map keeps deterministic, sorted iteration)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::map<std::string, int> wordFrequency(const std::vector<std::string>& words) {
+    std::map<std::string, int> freq;
+    for (const auto& w : words) {
+        std::string lower = toLowerStr(w);
+        freq[lower] += 1;
+    }
+    return freq;
+}
+
+// ---------------------------------------------------------------------------
+// Longest common prefix
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::string longestCommonPrefix(const std::vector<std::string>& strs) {
+    if (strs.empty()) return "";
+    std::string prefix = strs[0];
+    for (size_t i = 1; i < strs.size(); ++i) {
+        size_t j = 0;
+        size_t maxLen = std::min(prefix.size(), strs[i].size());
+        while (j < maxLen && prefix[j] == strs[i][j]) {
+            ++j;
+        }
+        prefix = prefix.substr(0, j);
+        if (prefix.empty()) break;
+    }
+    return prefix;
+}
+
+// ---------------------------------------------------------------------------
+// Manual integer <-> string conversion (avoids exception-throwing stoi)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool parseIntSafe(const std::string& s, long& outValue) {
+    if (s.empty()) return false;
+    size_t i = 0;
+    bool negative = false;
+    if (s[0] == '-' || s[0] == '+') {
+        negative = (s[0] == '-');
+        i = 1;
+    }
+    if (i >= s.size()) return false;
+    long value = 0;
+    for (; i < s.size(); ++i) {
+        char c = s[i];
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + (c - '0');
+    }
+    outValue = negative ? -value : value;
+    return true;
+}
+
+__attribute__((noinline))
+std::string intToStringManual(long value) {
+    char buffer[32];
+    int written = std::snprintf(buffer, sizeof(buffer), "%ld", value);
+    if (written < 0) return "";
+    return std::string(buffer);
+}
+
+// ---------------------------------------------------------------------------
+// Caesar cipher (deterministic wraparound using unsigned arithmetic)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::string caesarShift(const std::string& s, int shift) {
+    std::string result = s;
+    int normalizedShift = ((shift % 26) + 26) % 26;
+    for (char& c : result) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc >= 'a' && uc <= 'z') {
+            int offset = static_cast<int>(uc - 'a');
+            offset = (offset + normalizedShift) % 26;
+            c = static_cast<char>('a' + offset);
+        } else if (uc >= 'A' && uc <= 'Z') {
+            int offset = static_cast<int>(uc - 'A');
+            offset = (offset + normalizedShift) % 26;
+            c = static_cast<char>('A' + offset);
+        }
+        // non-alphabetic characters are left untouched
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Simple deterministic Base64-like encoder / decoder
+// ---------------------------------------------------------------------------
+const char* BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+__attribute__((noinline))
+std::string base64Encode(const std::string& input) {
+    std::string output;
+    output.reserve(((input.size() + 2) / 3) * 4);
+
+    size_t i = 0;
+    size_t len = input.size();
+    while (i + 2 < len) {
+        unsigned char b0 = static_cast<unsigned char>(input[i]);
+        unsigned char b1 = static_cast<unsigned char>(input[i + 1]);
+        unsigned char b2 = static_cast<unsigned char>(input[i + 2]);
+        output.push_back(BASE64_ALPHABET[(b0 >> 2) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[((b0 << 4) | (b1 >> 4)) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[((b1 << 2) | (b2 >> 6)) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[b2 & 0x3F]);
+        i += 3;
+    }
+
+    size_t remaining = len - i;
+    if (remaining == 1) {
+        unsigned char b0 = static_cast<unsigned char>(input[i]);
+        output.push_back(BASE64_ALPHABET[(b0 >> 2) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[(b0 << 4) & 0x3F]);
+        output.push_back('=');
+        output.push_back('=');
+    } else if (remaining == 2) {
+        unsigned char b0 = static_cast<unsigned char>(input[i]);
+        unsigned char b1 = static_cast<unsigned char>(input[i + 1]);
+        output.push_back(BASE64_ALPHABET[(b0 >> 2) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[((b0 << 4) | (b1 >> 4)) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[(b1 << 2) & 0x3F]);
+        output.push_back('=');
+    }
+    return output;
+}
+
+__attribute__((noinline))
+int base64CharIndex(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+__attribute__((noinline))
+std::string base64Decode(const std::string& input) {
+    std::string output;
+    output.reserve((input.size() / 4) * 3);
+
+    unsigned int buffer = 0;
+    int bitsCollected = 0;
+    for (char c : input) {
+        if (c == '=' || c == '\0') break;
+        int idx = base64CharIndex(c);
+        if (idx < 0) continue;
+        buffer = (buffer << 6) | static_cast<unsigned int>(idx);
+        bitsCollected += 6;
+        if (bitsCollected >= 8) {
+            bitsCollected -= 8;
+            char outByte = static_cast<char>((buffer >> bitsCollected) & 0xFF);
+            output.push_back(outByte);
         }
     }
-    
-    h = mix64(h ^ (uint64_t)lines);
-    
-    return h;
+    return output;
 }
 
+// ---------------------------------------------------------------------------
+// Sorting strings with a custom comparator (length then lexicographic)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool compareByLengthThenAlpha(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return a.size() < b.size();
+    return a < b;
+}
+
+// ---------------------------------------------------------------------------
+// Anagram check
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isAnagram(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    std::string sa = toLowerStr(a);
+    std::string sb = toLowerStr(b);
+    std::sort(sa.begin(), sa.end());
+    std::sort(sb.begin(), sb.end());
+    return sa == sb;
+}
+
+// ---------------------------------------------------------------------------
+// Longest palindromic substring (brute force, deterministic on ties: first
+// found wins)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isPalindromeRange(const std::string& s, size_t left, size_t right) {
+    while (left < right) {
+        if (s[left] != s[right]) return false;
+        ++left;
+        --right;
+    }
+    return true;
+}
+
+__attribute__((noinline))
+std::string longestPalindromicSubstring(const std::string& s) {
+    if (s.empty()) return "";
+    size_t bestStart = 0;
+    size_t bestLen = 1;
+    size_t n = s.size();
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = i; j < n; ++j) {
+            size_t candidateLen = j - i + 1;
+            if (candidateLen > bestLen && isPalindromeRange(s, i, j)) {
+                bestLen = candidateLen;
+                bestStart = i;
+            }
+        }
+    }
+    return s.substr(bestStart, bestLen);
+}
+
+// ---------------------------------------------------------------------------
+// Levenshtein edit distance (DP)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+size_t levenshteinDistance(const std::string& a, const std::string& b) {
+    size_t n = a.size();
+    size_t m = b.size();
+    std::vector<std::vector<size_t>> dp(n + 1, std::vector<size_t>(m + 1, 0));
+
+    for (size_t i = 0; i <= n; ++i) dp[i][0] = i;
+    for (size_t j = 0; j <= m; ++j) dp[0][j] = j;
+
+    for (size_t i = 1; i <= n; ++i) {
+        for (size_t j = 1; j <= m; ++j) {
+            if (a[i - 1] == b[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1];
+            } else {
+                size_t deletion = dp[i - 1][j] + 1;
+                size_t insertion = dp[i][j - 1] + 1;
+                size_t substitution = dp[i - 1][j - 1] + 1;
+                size_t best = deletion;
+                if (insertion < best) best = insertion;
+                if (substitution < best) best = substitution;
+                dp[i][j] = best;
+            }
+        }
+    }
+    return dp[n][m];
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
-    // Initialize test data
-    std::vector<std::string> concatParts = {"Hello", " ", "World", " ", "Test", " ", "String"};
-    std::string searchText = "The quick brown fox jumps over the lazy dog. The fox is very quick.";
-    std::vector<std::string> searchPatterns = {"fox", "quick", "lazy", "dog", "the"};
-    std::string transformText = "Hello World Test String";
-    std::array<int, 10> slicePositions = {0, 5, 10, 15, 20, 25, 30, 35, 40, 45};
-    std::vector<std::pair<std::string, std::string>> replacements = {
-        {"fox", "cat"},
-        {"quick", "slow"},
-        {"lazy", "active"}
-    };
-    std::string trimText = "   \t  Hello World  \t   ";
-    std::vector<char> splitDelimiters = {' ', ',', '.', ';'};
-    std::vector<std::string> numberStrings = {"123", "456", "789", "3.14", "2.718", "-42", "0"};
-    std::array<int, 5> insertPositions = {0, 5, 10, 15, 20};
-    std::string patternText = "The quick brown fox jumps over the lazy dog";
-    std::string pattern = "q?ick";
-    std::vector<std::string> joinParts = {"part1", "part2", "part3", "part4", "part5"};
-    
-    uint64_t checksum = 0xdeadbeefdeadbeefULL;
-    
-    // Run all string manipulation tests
-    checksum ^= stringConcatenation(concatParts);
-    checksum ^= stringSearching(searchText, searchPatterns);
-    checksum ^= stringTransformations(transformText);
-    checksum ^= stringSlicing(patternText, slicePositions);
-    checksum ^= stringReplacement(searchText, replacements);  // searchText is not modified here anymore
-    checksum ^= stringTrimming(trimText);
-    checksum ^= stringSplitting(patternText, splitDelimiters);
-    checksum ^= stringPadding("test", 10, '*');
-    checksum ^= stringPadding("hello", 8, '-');
-    checksum ^= stringComparison("hello", "world");
-    checksum ^= stringComparison("test", "test");
-    checksum ^= stringEncodingSimulation("Hello World");
-    checksum ^= stringCharacterAnalysis(patternText);
-    checksum ^= stringRepeat("abc", 5);
-    checksum ^= stringInsertErase("Hello World Test", insertPositions);
-    checksum ^= stringVariableReplace("a quick brown fox");
-    checksum ^= stringPatternMatching(patternText, pattern);
-    checksum ^= stringCaseConversion("HeLLo WoRLd");
-    checksum ^= stringTrimChars("XXXHello WorldXXX", 'X');
-    checksum ^= stringUniqueCharacters("abracadabra");
-    checksum ^= stringRotation("Hello World", 3);
-    checksum ^= stringShuffleSimulation("abcdefgh");
-    checksum ^= stringPartition("hello:world", ':');
-    checksum ^= stringJoin(joinParts, "-");
-    checksum ^= stringCenter("test", 10, '*');
-    checksum ^= stringExpandTabs("Hello\tWorld\tTest", 4);
-    checksum ^= stringWordCount(patternText);
-    checksum ^= stringLineCount("Line1\nLine2\nLine3\nLine4");
-    
-    checksum = mix64(checksum);
 
-    std::printf("CHECKSUM: 0x%016llx\n", (unsigned long long)checksum);
+    uint64_t checksum = 0;
+
+    std::cout << "=== String / C-string Manipulation Test ===\n\n";
+
+    // --- Basic C-string operations ---
+    std::cout << "-- C-string basics --\n";
+    char buffer[128];
+    safeStrCopy(buffer, sizeof(buffer), "Hello, obfuscator world!");
+    std::cout << "buffer: " << buffer << "\n";
+    safeStrAppend(buffer, sizeof(buffer), " -- appended text.");
+    std::cout << "buffer after append: " << buffer << "\n";
+    size_t len = safeStrLen(buffer, sizeof(buffer));
+    std::cout << "buffer length: " << len << "\n";
+    checksum += static_cast<uint64_t>(len);
+
+    const char* literalA = "compare_me";
+    const char* literalB = "compare_me";
+    const char* literalC = "compare_you";
+    int cmpAB = std::strcmp(literalA, literalB);
+    int cmpAC = std::strcmp(literalA, literalC);
+    int ncmpAC = std::strncmp(literalA, literalC, 7);
+    std::cout << "strcmp(A,B) == 0: " << (cmpAB == 0 ? "true" : "false") << "\n";
+    std::cout << "strcmp(A,C) != 0: " << (cmpAC != 0 ? "true" : "false") << "\n";
+    std::cout << "strncmp(A,C,7) == 0: " << (ncmpAC == 0 ? "true" : "false") << "\n";
+    checksum += static_cast<uint64_t>(cmpAB == 0) + static_cast<uint64_t>(cmpAC != 0);
+
+    char toReverse[] = "reverse-this-buffer";
+    size_t revLen = safeStrLen(toReverse, sizeof(toReverse));
+    reverseCStrInPlace(toReverse, revLen);
+    std::cout << "reversed C-string: " << toReverse << "\n";
+    checksum += fnv1aHashCStr(toReverse) % 1000000ULL;
+
+    // --- std::string basics ---
+    std::cout << "\n-- std::string basics --\n";
+    std::string s1 = "The Quick Brown Fox";
+    std::string s2 = " Jumps Over The Lazy Dog";
+    std::string concatenated = s1 + s2;
+    std::cout << "concatenated: " << concatenated << "\n";
+
+    std::string upper = toUpperStr(concatenated);
+    std::string lower = toLowerStr(concatenated);
+    std::cout << "upper: " << upper << "\n";
+    std::cout << "lower: " << lower << "\n";
+    checksum += fnv1aHash(upper) % 1000000ULL;
+    checksum += fnv1aHash(lower) % 1000000ULL;
+
+    std::string sub = concatenated.substr(4, 5);
+    std::cout << "substr(4,5): " << sub << "\n";
+    size_t foundPos = concatenated.find("Lazy");
+    std::cout << "find(\"Lazy\"): " << foundPos << "\n";
+    checksum += foundPos;
+
+    std::string replaced = concatenated;
+    size_t replacePos = replaced.find("Fox");
+    if (replacePos != std::string::npos) {
+        replaced.replace(replacePos, 3, "Cat");
+    }
+    std::cout << "replaced: " << replaced << "\n";
+
+    std::string reversedStr = reverseStr(concatenated);
+    std::cout << "reversed: " << reversedStr << "\n";
+    checksum += fnv1aHash(reversedStr) % 1000000ULL;
+
+    // --- Palindrome checking ---
+    std::cout << "\n-- Palindrome checks --\n";
+    std::vector<std::string> palindromeCandidates = {
+        "A man a plan a canal Panama",
+        "Not a palindrome",
+        "racecar",
+        "Was it a car or a cat I saw",
+        "Obfuscation"
+    };
+    for (const auto& candidate : palindromeCandidates) {
+        bool result = isPalindrome(candidate);
+        std::cout << "\"" << candidate << "\" is palindrome: " << (result ? "true" : "false") << "\n";
+        checksum += result ? 1 : 0;
+    }
+
+    // --- Split / join ---
+    std::cout << "\n-- Split / join --\n";
+    std::string csvLine = "alpha,beta,gamma,delta,epsilon";
+    std::vector<std::string> splitParts = splitStr(csvLine, ',');
+    std::cout << "split count: " << splitParts.size() << "\n";
+    for (const auto& part : splitParts) {
+        std::cout << "  part: " << part << "\n";
+    }
+    std::string rejoined = joinStr(splitParts, " | ");
+    std::cout << "rejoined: " << rejoined << "\n";
+    checksum += fnv1aHash(rejoined) % 1000000ULL;
+
+    // --- Trim ---
+    std::cout << "\n-- Trim --\n";
+    std::string padded = "   \t  padded string with spaces  \n  ";
+    std::string trimmed = trimStr(padded);
+    std::cout << "trimmed: [" << trimmed << "]\n";
+    checksum += trimmed.size();
+
+    // --- Tokenizing ---
+    std::cout << "\n-- Tokenizing --\n";
+    std::string sentence = "one, two;three   four,,five";
+    std::vector<std::string> tokens = tokenize(sentence, ", ;");
+    std::cout << "token count: " << tokens.size() << "\n";
+    for (const auto& t : tokens) {
+        std::cout << "  token: " << t << "\n";
+    }
+    checksum += tokens.size();
+
+    // --- Word frequency ---
+    std::cout << "\n-- Word frequency --\n";
+    std::vector<std::string> paragraph = {
+        "the", "quick", "brown", "fox", "the", "lazy", "dog",
+        "The", "Fox", "jumps", "over", "the", "dog"
+    };
+    std::map<std::string, int> freq = wordFrequency(paragraph);
+    for (const auto& entry : freq) {
+        std::cout << "  " << entry.first << ": " << entry.second << "\n";
+        checksum += static_cast<uint64_t>(entry.second);
+    }
+
+    // --- Longest common prefix ---
+    std::cout << "\n-- Longest common prefix --\n";
+    std::vector<std::string> prefixCandidates = {"interstellar", "interval", "internet", "internal"};
+    std::string commonPrefix = longestCommonPrefix(prefixCandidates);
+    std::cout << "common prefix: " << commonPrefix << "\n";
+    checksum += commonPrefix.size();
+
+    // --- Manual number <-> string conversion ---
+    std::cout << "\n-- Manual number/string conversion --\n";
+    std::vector<std::string> numberStrings = {"42", "-17", "1000", "notanumber", "+256"};
+    for (const auto& ns : numberStrings) {
+        long parsed = 0;
+        bool ok = parseIntSafe(ns, parsed);
+        std::cout << "  parse(\"" << ns << "\") -> ok=" << (ok ? "true" : "false");
+        if (ok) {
+            std::cout << " value=" << parsed << " roundtrip=" << intToStringManual(parsed);
+            checksum += static_cast<uint64_t>(parsed < 0 ? -parsed : parsed);
+        }
+        std::cout << "\n";
+    }
+
+    // --- Caesar cipher ---
+    std::cout << "\n-- Caesar cipher --\n";
+    std::string plain = "Attack at Dawn, Obfuscator!";
+    std::string encrypted = caesarShift(plain, 7);
+    std::string decrypted = caesarShift(encrypted, -7);
+    std::cout << "plain:     " << plain << "\n";
+    std::cout << "encrypted: " << encrypted << "\n";
+    std::cout << "decrypted: " << decrypted << "\n";
+    std::cout << "roundtrip matches: " << (decrypted == plain ? "true" : "false") << "\n";
+    checksum += fnv1aHash(encrypted) % 1000000ULL;
+    checksum += (decrypted == plain) ? 1 : 0;
+
+    // --- Base64 ---
+    std::cout << "\n-- Base64 --\n";
+    std::string toEncode = "Deterministic obfuscation testing, 1234567890!";
+    std::string encoded = base64Encode(toEncode);
+    std::string decoded = base64Decode(encoded);
+    std::cout << "original: " << toEncode << "\n";
+    std::cout << "encoded:  " << encoded << "\n";
+    std::cout << "decoded:  " << decoded << "\n";
+    std::cout << "roundtrip matches: " << (decoded == toEncode ? "true" : "false") << "\n";
+    checksum += fnv1aHash(encoded) % 1000000ULL;
+    checksum += (decoded == toEncode) ? 1 : 0;
+
+    // --- Sorting with custom comparator ---
+    std::cout << "\n-- Sorted word list --\n";
+    std::vector<std::string> wordsToSort = {
+        "beta", "a", "gamma", "delta", "xy", "alpha", "hi", "z"
+    };
+    std::vector<std::string> sortedWords = wordsToSort;
+    std::sort(sortedWords.begin(), sortedWords.end(), compareByLengthThenAlpha);
+    for (const auto& w : sortedWords) {
+        std::cout << "  " << w << "\n";
+    }
+    checksum += fnv1aHash(joinStr(sortedWords, ",")) % 1000000ULL;
+
+    // --- Anagram check ---
+    std::cout << "\n-- Anagram checks --\n";
+    std::vector<std::pair<std::string, std::string>> anagramPairs = {
+        {"listen", "silent"},
+        {"triangle", "integral"},
+        {"hello", "world"},
+        {"Dormitory", "DirtyRoom"}
+    };
+    for (const auto& p : anagramPairs) {
+        bool result = isAnagram(p.first, p.second);
+        std::cout << "  " << p.first << " / " << p.second << " -> " << (result ? "true" : "false") << "\n";
+        checksum += result ? 1 : 0;
+    }
+
+    // --- Longest palindromic substring ---
+    std::cout << "\n-- Longest palindromic substring --\n";
+    std::string palinSource = "forgeeksskeegfortestcaseabccba";
+    std::string longestPalin = longestPalindromicSubstring(palinSource);
+    std::cout << "source: " << palinSource << "\n";
+    std::cout << "longest palindromic substring: " << longestPalin << "\n";
+    checksum += longestPalin.size();
+
+    // --- Levenshtein distance ---
+    std::cout << "\n-- Levenshtein edit distance --\n";
+    std::vector<std::pair<std::string, std::string>> distPairs = {
+        {"kitten", "sitting"},
+        {"flaw", "lawn"},
+        {"intention", "execution"},
+        {"obfuscate", "obfuscated"}
+    };
+    for (const auto& p : distPairs) {
+        size_t dist = levenshteinDistance(p.first, p.second);
+        std::cout << "  distance(" << p.first << ", " << p.second << ") = " << dist << "\n";
+        checksum += dist;
+    }
+
+    // --- ostringstream-based building ---
+    std::cout << "\n-- ostringstream formatting --\n";
+    std::ostringstream oss;
+    oss << "Report: " << std::setw(6) << std::setfill('0') << 42
+        << " items, total value $" << std::fixed << std::setprecision(2) << 1234.5;
+    std::string report = oss.str();
+    std::cout << report << "\n";
+    checksum += fnv1aHash(report) % 1000000ULL;
+
+    // --- Hash demonstration ---
+    std::cout << "\n-- Deterministic hashing --\n";
+    std::vector<std::string> hashSamples = {"alpha", "beta", "gamma", "obfuscator", "determinism"};
+    for (const auto& sample : hashSamples) {
+        uint64_t h = fnv1aHash(sample);
+        std::cout << "  fnv1a(\"" << sample << "\") = " << h << "\n";
+        checksum += h % 1000000ULL;
+    }
+
+    // --- Final checksum ---
+    std::cout << "\n=== Final checksum ===\n";
+    std::cout << "TOTAL_CHECKSUM: " << checksum << "\n";
 
     auto end = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-    printf("%ld\n", diff);
+    std::cout << diff << "\n";
+
     return 0;
 }

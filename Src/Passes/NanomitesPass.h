@@ -20,7 +20,7 @@ namespace LeetObfuscator
         void ObfuscateFunction(llvm::Function* function, std::vector<llvm::Constant*>& nanomitesEntries);
         void CreateGlobalNanomitesTable(llvm::Module& module, std::vector<llvm::Constant*>& nanomitesEntries);
 
-        uint32_t GenerateUniqueNanomiteId(RandomNumberGenerator& generator);
+        uint32_t GenerateUniqueNanomiteId(llvm::Module& module, RandomNumberGenerator& generator);
         llvm::Function* CreateForwardFunction(llvm::Module& module, llvm::Function* realFunc, uint32_t id);
 
         SettingsParser::PassArguments m_Arguments;

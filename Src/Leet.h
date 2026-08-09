@@ -7,15 +7,37 @@
 #define LEET_MBA_PROBABILITY(value) __attribute__((annotate("leet.MBAPass.probability=" #value)))
 
 #define LEET_BLOCK_SPLITTER_PROBABILITY(value) __attribute__((annotate("leet.BlockSplitterPass.probability=" #value)))
+#define LEET_BLOCK_SPLITTER_SPLIT_SIZE(value) __attribute__((annotate("leet.BlockSplitterPass.blockSplitSize=" #value)))
 
 #define LEET_DISPATCHER_PROBABILITY(value) __attribute__((annotate("leet.DispatcherPass.probability=" #value)))
 
-#define LEET_BOGUS_BLOCK_COUNT(value) __attribute__((annotate("leet.AntiAnalysisPass.bogusBlockCount=" #value)))
-#define LEET_VALID_BOGUS_BLOCKS_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.validBogusBlocksProbability=" #value)))
-#define LEET_INVALID_BOGUS_BLOCKS_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.invalidBogusBlocksProbability=" #value)))
+#define LEET_ANTI_ANALYSIS_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.probability=" #value)))
+#define LEET_ANTI_ANALYSIS_BOGUS_INSERT_POSITION(value) __attribute__((annotate("leet.AntiAnalysisPass.bogusInsertPosition=" value)))
+#define LEET_ANTI_ANALYSIS_RDTSC_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.rdtscProbability=" #value)))
+#define LEET_ANTI_ANALYSIS_VALID_BOGUS_BLOCKS_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.validBogusBlocksProbability=" #value)))
+#define LEET_ANTI_ANALYSIS_INVALID_BOGUS_BLOCKS_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.invalidBogusBlocksProbability=" #value)))
+
+#define LEET_ANTI_ALIASING_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.probability=" #value)))
 
 #define LEET_AAMBA_PROBABILITY(value) __attribute__((annotate("leet.AAMBAPass.probability=" #value)))
 #define LEET_AAMBA_TARGET_OPS(values) __attribute__((annotate("leet.AAMBAPass.targetOps=" values)))
+
+#define LEET_NANOMITES_PROBABILITY(value) __attribute__((annotate("leet.NanomitesPass.probability=" #value)))
+
+__attribute__((noinline))
+__attribute__((optnone))
+extern "C" void __leet_nanomite_marker()
+{
+    
+}
+
+// Macro to mark individual call sites for nanomite obfuscation
+// Usage: LEET_NANOMITE_CALL(targetFunction(args))
+// This adds a marker call that the NanomitesPass will detect and apply nanomite protection to the following call
+#define LEET_NANOMITE_CALL(func) ({ \
+    __leet_nanomite_marker(); \
+    func; \
+})
 
 #define LEET_PASS_LIST(X, ...) \
     X("StringEncryptionPass", __VA_ARGS__) \
@@ -24,7 +46,8 @@
     X("DispatcherPass", __VA_ARGS__) \
     X("AntiAnalysisPass", __VA_ARGS__) \
     X("AntiAliasingPass", __VA_ARGS__) \
-    X("AAMBAPass", __VA_ARGS__)
+    X("AAMBAPass", __VA_ARGS__) \
+    X("NanomitesPass", __VA_ARGS__)
 
 #define LEET_SKIP_PASS(pass) __attribute__((annotate("leet." pass ".skip")))
 #define LEET_FORCE_PASS(pass) __attribute__((annotate("leet." pass ".forcePass")))
@@ -52,6 +75,8 @@
 #define LEET_MAX_FUNCTION_SIZE_ALL(size) LEET_PASS_LIST(LEET_MAX_FUNCTION_SIZE_EXPAND, size)
 #define LEET_MIN_BLOCK_SIZE_ALL(size) LEET_PASS_LIST(LEET_MIN_BLOCK_SIZE_EXPAND, size)
 #define LEET_MAX_BLOCK_SIZE_ALL(size) LEET_PASS_LIST(LEET_MAX_BLOCK_SIZE_EXPAND, size)
+
+#ifdef LEET_IMPLEMENTATION
 
 #include <stdio.h>
 #include <signal.h>
@@ -152,3 +177,5 @@ static void __leet_exception_handler_init()
     if (!__leet_exception_handler_setup())
         exit(1);
 }
+
+#endif

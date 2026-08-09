@@ -1,682 +1,733 @@
-// Deterministic branch-and-recursion test for the Leet obfuscator.
-// Uses recursion, switch, and many scalar parameters to ensure stability.
-// Expanded to stress test control flow obfuscation with complex branching patterns.
+// test_strings.cpp - std::string and const char* manipulation test
+//
+// Compile:  g++ -O2 -std=c++17 -fno-exceptions -o test_strings test_strings.cpp
+//
+// Design notes:
+//  - Never uses std::stoi/std::stod/.at() with data that could be invalid,
+//    since those throw and this file targets -fno-exceptions.
+//  - Never uses std::tolower/std::isalpha/etc. with a plain (possibly
+//    negative) char -- always casts to unsigned char first, which is the
+//    standard way to avoid UB in <cctype>.
+//  - Never uses strcpy/strcat/sprintf (unbounded); always snprintf or
+//    manual bounds-checked loops, with explicit null termination.
+//  - No dependency on std::hash (implementation defined); uses a hand
+//    rolled deterministic FNV-1a hash instead.
+//  - No unordered_map/unordered_set is used for anything that affects
+//    printed order, so output ordering is always deterministic.
 
-#include <array>
-#include <cstdint>
-#include <cstdio>
-#include <cmath>
+#include <iostream>
+#include <iomanip>
+#include <string>
 #include <cstring>
-
+#include <cstdio>
+#include <cctype>
+#include <vector>
+#include <map>
+#include <algorithm>
+#include <sstream>
 #include <chrono>
+
+#define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
-static inline uint64_t mix64(uint64_t x) {
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9ULL;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebULL;
-    x ^= x >> 31;
-    return x;
+// ---------------------------------------------------------------------------
+// Deterministic hashing (FNV-1a) -- avoids relying on std::hash internals
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+uint64_t fnv1aHash(const std::string& s) {
+    uint64_t hash = 14695981039346656037ULL;
+    const uint64_t prime = 1099511628211ULL;
+    for (unsigned char c : s) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= prime;
+    }
+    return hash;
 }
 
-static inline uint64_t add_f(uint64_t h, float f) {
-    uint32_t u;
-    std::memcpy(&u, &f, sizeof(u));
-    return mix64(h ^ u);
+__attribute__((noinline))
+uint64_t fnv1aHashCStr(const char* s) {
+    uint64_t hash = 14695981039346656037ULL;
+    const uint64_t prime = 1099511628211ULL;
+    while (*s != '\0') {
+        hash ^= static_cast<uint64_t>(static_cast<unsigned char>(*s));
+        hash *= prime;
+        ++s;
+    }
+    return hash;
 }
 
-static inline uint64_t add_d(uint64_t h, double d) {
-    uint64_t u;
-    std::memcpy(&u, &d, sizeof(u));
-    return mix64(h ^ u);
+// ---------------------------------------------------------------------------
+// Safe C-string helpers (bounds checked, always null-terminated)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+size_t safeStrLen(const char* s, size_t maxLen) {
+    size_t len = 0;
+    while (len < maxLen && s[len] != '\0') {
+        ++len;
+    }
+    return len;
 }
 
-// Complex recursive branching function with multiple decision points
-static uint64_t branchWorker(int depth,
-                             int a0, int a1, int a2, int a3, int a4,
-                             int a5, int a6, int a7, int a8, int a9,
-                             bool chooseLeft,
-                             const std::array<int, 16> &table,
-                             double factor,
-                             double offset) {
-    uint64_t h = 0x0f0f0f0f0f0f0f0fULL;
-    if (depth == 0) {
-        for (unsigned i = 0; i < table.size(); ++i)
-            h = mix64(h ^ (uint64_t)(table[i] + a0 + a1 + a2 + a3 + a4));
-        h = add_d(h, factor + offset + a5 + a6 + a7 + a8 + a9);
-        return h;
+// Copies at most (destSize - 1) characters and always null-terminates.
+__attribute__((noinline))
+void safeStrCopy(char* dest, size_t destSize, const char* src) {
+    if (destSize == 0) return;
+    size_t i = 0;
+    while (i + 1 < destSize && src[i] != '\0') {
+        dest[i] = src[i];
+        ++i;
     }
-
-    int decision = (a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + depth) & 3;
-    switch (decision) {
-    case 0:
-        h = mix64(h ^ branchWorker(depth - 1, a1, a2, a3, a4, a5,
-                                  a6, a7, a8, a9, a0, !chooseLeft,
-                                  table, factor + 0.5, offset - 0.25));
-        break;
-    case 1:
-        h = mix64(h ^ branchWorker(depth - 1, a9, a8, a7, a6, a5,
-                                  a4, a3, a2, a1, a0, chooseLeft,
-                                  table, factor - 0.5, offset + 0.75));
-        break;
-    case 2:
-        h = mix64(h ^ branchWorker(depth - 1, a2, a4, a6, a8, a0,
-                                  a1, a3, a5, a7, a9, !chooseLeft,
-                                  table, factor * 1.25, offset * 0.5));
-        break;
-    default:
-        h = mix64(h ^ branchWorker(depth - 1, a5, a4, a3, a2, a1,
-                                  a0, a9, a8, a7, a6, chooseLeft,
-                                  table, factor + 1.0, offset + 1.0));
-        break;
-    }
-
-    if (chooseLeft) {
-        h = add_d(h, factor - offset);
-    } else {
-        h = add_d(h, offset - factor);
-    }
-    h = mix64(h ^ (uint64_t)(a0 ^ a1 ^ a2 ^ a3 ^ a4 ^ a5 ^ a6 ^ a7 ^ a8 ^ a9));
-    return h;
+    dest[i] = '\0';
 }
 
-// Extended switch worker with more cases and complex logic
-static uint64_t switchWorker(int code,
-                             const std::array<int, 20> &values,
-                             int extra0, int extra1,
-                             int extra2, int extra3,
-                             int extra4, int extra5) {
-    uint64_t h = 0x1122334455667788ULL;
-    switch (code) {
-    case 0:
-    case 1:
-        for (unsigned i = 0; i < values.size(); ++i)
-            h = mix64(h ^ (uint64_t)(values[i] + extra0 + i));
-        break;
-    case 2:
-    case 3:
-        for (unsigned i = 0; i < values.size(); ++i)
-            h = add_d(h, (double)values[i] * 0.125 + extra1);
-        break;
-    case 4:
-    case 5:
-        for (unsigned i = 0; i < values.size(); i += 2)
-            h = mix64(h ^ (uint64_t)(values[i] ^ extra2));
-        break;
-    case 6:
-    case 7:
-        for (unsigned i = 1; i < values.size(); i += 2)
-            h = add_d(h, (double)(values[i] + extra3) * 0.25);
-        break;
-    case 8:
-    case 9:
-        for (unsigned i = 0; i < values.size(); ++i)
-            h = mix64(h ^ (uint64_t)(values[i] * extra4));
-        break;
-    case 10:
-    case 11:
-        for (unsigned i = 0; i < values.size(); ++i)
-            h = add_d(h, (double)(values[i] + extra5) * 0.5);
-        break;
-    default:
-        for (unsigned i = 0; i < values.size(); ++i)
-            h = mix64(h ^ (uint64_t)(values[i] + extra4 + extra5 * i));
-        break;
+// Appends at most enough of src to keep dest within destSize, null-terminated.
+__attribute__((noinline))
+void safeStrAppend(char* dest, size_t destSize, const char* src) {
+    size_t destLen = safeStrLen(dest, destSize);
+    if (destLen >= destSize - 1) return;
+    size_t i = 0;
+    while (destLen + i + 1 < destSize && src[i] != '\0') {
+        dest[destLen + i] = src[i];
+        ++i;
     }
-    h = mix64(h ^ (uint64_t)code);
-    h = add_d(h, extra0 + extra1 + extra2 + extra3 + extra4 + extra5);
-    return h;
+    dest[destLen + i] = '\0';
 }
 
-// Nested branching with multiple conditions
-static uint64_t nestedBranchWorker(int level,
-                                   int value,
-                                   const std::array<int, 12> &data,
-                                   float multiplier,
-                                   double divisor) {
-    uint64_t h = 0xdeadbeefcafebabeULL;
-    
-    if (level > 5) {
-        h = mix64(h ^ (uint64_t)value);
-        return h;
+// ---------------------------------------------------------------------------
+// Case conversion (unsigned char cast required for correctness / no UB)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::string toUpperStr(const std::string& s) {
+    std::string result = s;
+    for (char& c : result) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     }
-    
-    int idx = value % data.size();
-    h = mix64(h ^ (uint64_t)data[idx]);
-    
-    if (data[idx] % 3 == 0) {
-        h = mix64(h ^ nestedBranchWorker(level + 1, data[idx] + 1, data, multiplier * 1.1f, divisor / 1.1));
-    } else if (data[idx] % 3 == 1) {
-        h = add_f(h, multiplier * (float)data[idx]);
-        h = mix64(h ^ nestedBranchWorker(level + 1, data[idx] + 2, data, multiplier * 0.9f, divisor * 1.2));
-    } else {
-        h = add_d(h, (double)data[idx] / divisor);
-        h = mix64(h ^ nestedBranchWorker(level + 1, data[idx] + 3, data, multiplier, divisor));
-    }
-    
-    return h;
+    return result;
 }
 
-// Complex conditional chain
-static uint64_t conditionalChainWorker(int input,
-                                       const std::array<double, 8> &thresholds,
-                                       const std::array<int, 8> &outputs) {
-    uint64_t h = 0xabcdef0123456789ULL;
-    double dinput = (double)input;
-    
-    if (dinput < thresholds[0]) {
-        h = mix64(h ^ (uint64_t)outputs[0]);
-    } else if (dinput < thresholds[1]) {
-        h = mix64(h ^ (uint64_t)outputs[1]);
-        h = add_d(h, thresholds[0]);
-    } else if (dinput < thresholds[2]) {
-        h = mix64(h ^ (uint64_t)outputs[2]);
-        h = add_d(h, thresholds[1]);
-    } else if (dinput < thresholds[3]) {
-        h = mix64(h ^ (uint64_t)outputs[3]);
-        h = add_d(h, thresholds[2]);
-    } else if (dinput < thresholds[4]) {
-        h = mix64(h ^ (uint64_t)outputs[4]);
-        h = add_d(h, thresholds[3]);
-    } else if (dinput < thresholds[5]) {
-        h = mix64(h ^ (uint64_t)outputs[5]);
-        h = add_d(h, thresholds[4]);
-    } else if (dinput < thresholds[6]) {
-        h = mix64(h ^ (uint64_t)outputs[6]);
-        h = add_d(h, thresholds[5]);
-    } else if (dinput < thresholds[7]) {
-        h = mix64(h ^ (uint64_t)outputs[7]);
-        h = add_d(h, thresholds[6]);
-    } else {
-        h = mix64(h ^ (uint64_t)(outputs[0] + outputs[7]));
-        h = add_d(h, thresholds[7]);
+__attribute__((noinline))
+std::string toLowerStr(const std::string& s) {
+    std::string result = s;
+    for (char& c : result) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
-    
-    return h;
+    return result;
 }
 
-// Multi-level recursion with branching
-static uint64_t multiLevelRecursion(int depth, int maxDepth,
-                                    int branchMask,
-                                    const std::array<int, 10> &values,
-                                    double weight) {
-    uint64_t h = 0x13579bdf2468ace0ULL;
-    
-    if (depth >= maxDepth) {
-        h = mix64(h ^ (uint64_t)depth);
-        for (unsigned i = 0; i < values.size(); ++i) {
-            h = mix64(h ^ (uint64_t)(values[i] + depth));
-        }
-        return h;
-    }
-    
-    int branch = (depth + branchMask) & 7;
-    switch (branch) {
-    case 0:
-        h = mix64(h ^ multiLevelRecursion(depth + 1, maxDepth, branchMask ^ 1, values, weight * 1.1));
-        break;
-    case 1:
-        h = mix64(h ^ multiLevelRecursion(depth + 2, maxDepth, branchMask ^ 2, values, weight * 0.9));
-        break;
-    case 2:
-        h = add_d(h, weight);
-        h = mix64(h ^ multiLevelRecursion(depth + 1, maxDepth, branchMask ^ 4, values, weight * 1.05));
-        break;
-    case 3:
-        h = add_d(h, weight * 2.0);
-        h = mix64(h ^ multiLevelRecursion(depth + 3, maxDepth, branchMask ^ 8, values, weight * 0.95));
-        break;
-    case 4:
-        for (unsigned i = 0; i < values.size(); ++i) {
-            h = mix64(h ^ (uint64_t)values[i]);
-        }
-        h = mix64(h ^ multiLevelRecursion(depth + 1, maxDepth, branchMask ^ 16, values, weight));
-        break;
-    case 5:
-        for (unsigned i = 0; i < values.size(); i += 2) {
-            h = mix64(h ^ (uint64_t)(values[i] * values[i + 1]));
-        }
-        h = mix64(h ^ multiLevelRecursion(depth + 2, maxDepth, branchMask ^ 32, values, weight * 1.2));
-        break;
-    case 6:
-        h = add_d(h, weight * 0.5);
-        h = mix64(h ^ multiLevelRecursion(depth + 1, maxDepth, branchMask ^ 64, values, weight * 0.8));
-        break;
-    default:
-        h = mix64(h ^ (uint64_t)branchMask);
-        h = mix64(h ^ multiLevelRecursion(depth + 1, maxDepth, branchMask ^ 128, values, weight * 1.15));
-        break;
-    }
-    
-    return h;
+// ---------------------------------------------------------------------------
+// Reverse
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::string reverseStr(const std::string& s) {
+    std::string result = s;
+    std::reverse(result.begin(), result.end());
+    return result;
 }
 
-// Complex switch with fallthrough patterns
-static uint64_t switchFallthroughWorker(int pattern,
-                                       const std::array<int, 15> &data,
-                                       int modifier) {
-    uint64_t h = 0xfedcba9876543210ULL;
-    
-    switch (pattern % 10) {
-    case 0:
-        h = mix64(h ^ (uint64_t)data[0]);
-        // fallthrough
-    case 1:
-        h = mix64(h ^ (uint64_t)data[1]);
-        modifier += 1;
-        // fallthrough
-    case 2:
-        h = mix64(h ^ (uint64_t)data[2]);
-        modifier += 2;
-        break;
-    case 3:
-        h = mix64(h ^ (uint64_t)data[3]);
-        modifier += 3;
-        // fallthrough
-    case 4:
-        h = mix64(h ^ (uint64_t)data[4]);
-        modifier += 4;
-        // fallthrough
-    case 5:
-        h = mix64(h ^ (uint64_t)data[5]);
-        modifier += 5;
-        break;
-    case 6:
-        h = mix64(h ^ (uint64_t)data[6]);
-        modifier += 6;
-        // fallthrough
-    case 7:
-        h = mix64(h ^ (uint64_t)data[7]);
-        modifier += 7;
-        // fallthrough
-    case 8:
-        h = mix64(h ^ (uint64_t)data[8]);
-        modifier += 8;
-        break;
-    case 9:
-        h = mix64(h ^ (uint64_t)data[9]);
-        modifier += 9;
-        break;
-    default:
-        h = mix64(h ^ (uint64_t)data[10]);
-        modifier += 10;
-        break;
+__attribute__((noinline))
+void reverseCStrInPlace(char* s, size_t len) {
+    if (len == 0) return;
+    size_t left = 0;
+    size_t right = len - 1;
+    while (left < right) {
+        char tmp = s[left];
+        s[left] = s[right];
+        s[right] = tmp;
+        ++left;
+        --right;
     }
-    
-    h = mix64(h ^ (uint64_t)modifier);
-    for (unsigned i = 10; i < data.size(); ++i) {
-        h = mix64(h ^ (uint64_t)(data[i] + modifier));
-    }
-    
-    return h;
 }
 
-// Recursive tree traversal simulation
-static uint64_t treeTraversalWorker(int nodeId,
-                                   int depth,
-                                   const std::array<int, 32> &treeData,
-                                   bool goLeft) {
-    uint64_t h = 0x1234567890abcdefULL;
-    
-    if (depth > 8 || nodeId >= (int)treeData.size()) {
-        return h;
-    }
-    
-    h = mix64(h ^ (uint64_t)treeData[nodeId]);
-    
-    int leftChild = (nodeId * 2 + 1) % treeData.size();
-    int rightChild = (nodeId * 2 + 2) % treeData.size();
-    
-    if (goLeft) {
-        h = mix64(h ^ treeTraversalWorker(leftChild, depth + 1, treeData, !goLeft));
-        h = mix64(h ^ treeTraversalWorker(rightChild, depth + 1, treeData, goLeft));
-    } else {
-        h = mix64(h ^ treeTraversalWorker(rightChild, depth + 1, treeData, goLeft));
-        h = mix64(h ^ treeTraversalWorker(leftChild, depth + 1, treeData, !goLeft));
-    }
-    
-    return h;
+// ---------------------------------------------------------------------------
+// Palindrome checking (case-insensitive, alnum-only)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isAlnumChar(char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) != 0;
 }
 
-// State machine simulation
-static uint64_t stateMachineWorker(int initialState,
-                                  const std::array<int, 16> &transitions,
-                                  int steps) {
-    uint64_t h = 0xaaaabbbbccccddddULL;
-    int state = initialState;
-    
-    for (int i = 0; i < steps; ++i) {
-        int input = transitions[i % transitions.size()];
-        
-        switch (state) {
-        case 0:
-            if (input % 2 == 0) state = 1;
-            else state = 3;
-            break;
-        case 1:
-            if (input % 3 == 0) state = 2;
-            else state = 4;
-            break;
-        case 2:
-            if (input % 5 == 0) state = 0;
-            else state = 5;
-            break;
-        case 3:
-            if (input % 7 == 0) state = 6;
-            else state = 1;
-            break;
-        case 4:
-            if (input % 2 == 0) state = 7;
-            else state = 2;
-            break;
-        case 5:
-            if (input % 3 == 0) state = 8;
-            else state = 0;
-            break;
-        case 6:
-            if (input % 5 == 0) state = 9;
-            else state = 3;
-            break;
-        case 7:
-            if (input % 7 == 0) state = 10;
-            else state = 4;
-            break;
-        case 8:
-            if (input % 2 == 0) state = 11;
-            else state = 5;
-            break;
-        case 9:
-            if (input % 3 == 0) state = 12;
-            else state = 6;
-            break;
-        case 10:
-            if (input % 5 == 0) state = 13;
-            else state = 7;
-            break;
-        case 11:
-            if (input % 7 == 0) state = 14;
-            else state = 8;
-            break;
-        case 12:
-            if (input % 2 == 0) state = 15;
-            else state = 9;
-            break;
-        case 13:
-            if (input % 3 == 0) state = 0;
-            else state = 10;
-            break;
-        case 14:
-            if (input % 5 == 0) state = 1;
-            else state = 11;
-            break;
-        case 15:
-            if (input % 7 == 0) state = 2;
-            else state = 12;
-            break;
-        default:
-            state = 0;
-            break;
-        }
-        
-        h = mix64(h ^ (uint64_t)(state + input));
-    }
-    
-    return h;
+__attribute__((noinline))
+char normalizeChar(char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 }
 
-// Complex branching with mathematical operations
-static uint64_t mathBranchWorker(int operation,
-                                 double x, double y,
-                                 const std::array<double, 8> &constants) {
-    uint64_t h = 0x1111222233334444ULL;
-    
-    switch (operation % 8) {
-    case 0:
-        h = add_d(h, x + y);
-        h = add_d(h, constants[0]);
-        break;
-    case 1:
-        h = add_d(h, x - y);
-        h = add_d(h, constants[1]);
-        break;
-    case 2:
-        h = add_d(h, x * y);
-        h = add_d(h, constants[2]);
-        break;
-    case 3:
-        if (y != 0.0) {
-            h = add_d(h, x / y);
-        }
-        h = add_d(h, constants[3]);
-        break;
-    case 4:
-        h = add_d(h, std::pow(x, y));
-        h = add_d(h, constants[4]);
-        break;
-    case 5:
-        h = add_d(h, std::fmod(x, y));
-        h = add_d(h, constants[5]);
-        break;
-    case 6:
-        h = add_d(h, std::sqrt(x * x + y * y));
-        h = add_d(h, constants[6]);
-        break;
-    case 7:
-        h = add_d(h, std::fabs(x - y));
-        h = add_d(h, constants[7]);
-        break;
-    }
-    
-    return h;
-}
-
-// Recursive divide and conquer simulation
-static uint64_t divideAndConquerWorker(int left, int right,
-                                       const std::array<int, 64> &data,
-                                       int depth) {
-    uint64_t h = 0x5555666677778888ULL;
-    
-    if (depth > 6 || left >= right) {
-        if (left < (int)data.size()) {
-            h = mix64(h ^ (uint64_t)data[left]);
-        }
-        return h;
-    }
-    
-    int mid = (left + right) / 2;
-    
-    if (depth % 2 == 0) {
-        h = mix64(h ^ divideAndConquerWorker(left, mid, data, depth + 1));
-        h = mix64(h ^ divideAndConquerWorker(mid + 1, right, data, depth + 1));
-    } else {
-        h = mix64(h ^ divideAndConquerWorker(mid + 1, right, data, depth + 1));
-        h = mix64(h ^ divideAndConquerWorker(left, mid, data, depth + 1));
-    }
-    
-    if (mid < (int)data.size()) {
-        h = mix64(h ^ (uint64_t)data[mid]);
-    }
-    
-    return h;
-}
-
-// Nested loop with branching
-static uint64_t nestedLoopBranchWorker(int iterations,
-                                      const std::array<int, 10> &multipliers,
-                                      const std::array<float, 5> &floats) {
-    uint64_t h = 0x9999aaaabbbbccccULL;
-    
-    for (int i = 0; i < iterations; ++i) {
-        for (int j = 0; j < 5; ++j) {
-            int val = i * multipliers[j % multipliers.size()];
-            
-            if (val % 2 == 0) {
-                h = mix64(h ^ (uint64_t)val);
-            } else if (val % 3 == 0) {
-                h = add_f(h, floats[j % floats.size()] * (float)val);
-            } else if (val % 5 == 0) {
-                h = mix64(h ^ (uint64_t)(val * 2));
-            } else {
-                h = mix64(h ^ (uint64_t)(val + 1));
-            }
-            
-            for (int k = 0; k < 3; ++k) {
-                if ((i + j + k) % 4 == 0) {
-                    h = mix64(h ^ (uint64_t)(i + j + k));
-                } else {
-                    h = mix64(h ^ (uint64_t)(i * j * k));
-                }
-            }
+__attribute__((noinline))
+bool isPalindrome(const std::string& s) {
+    std::vector<char> filtered;
+    filtered.reserve(s.size());
+    for (char c : s) {
+        if (isAlnumChar(c)) {
+            filtered.push_back(normalizeChar(c));
         }
     }
-    
-    return h;
+    size_t left = 0;
+    size_t right = filtered.empty() ? 0 : filtered.size() - 1;
+    while (left < right) {
+        if (filtered[left] != filtered[right]) return false;
+        ++left;
+        --right;
+    }
+    return true;
 }
 
-// Complex pattern matching
-static uint64_t patternMatchWorker(const std::array<int, 20> &pattern,
-                                   const std::array<int, 20> &input,
-                                   int threshold) {
-    uint64_t h = 0xddddeeeeffff0000ULL;
-    int matches = 0;
-    
-    for (unsigned i = 0; i < pattern.size(); ++i) {
-        if (pattern[i] == input[i]) {
-            matches++;
-            h = mix64(h ^ (uint64_t)i);
-        } else if (std::abs(pattern[i] - input[i]) < threshold) {
-            h = mix64(h ^ (uint64_t)(i + 1000));
+// ---------------------------------------------------------------------------
+// Split / join
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::vector<std::string> splitStr(const std::string& s, char delimiter) {
+    std::vector<std::string> parts;
+    std::string current;
+    for (char c : s) {
+        if (c == delimiter) {
+            parts.push_back(current);
+            current.clear();
         } else {
-            h = mix64(h ^ (uint64_t)(i + 2000));
-        }
-        
-        switch (matches % 5) {
-        case 0:
-            h = mix64(h ^ (uint64_t)pattern[i]);
-            break;
-        case 1:
-            h = mix64(h ^ (uint64_t)input[i]);
-            break;
-        case 2:
-            h = mix64(h ^ (uint64_t)(pattern[i] + input[i]));
-            break;
-        case 3:
-            h = mix64(h ^ (uint64_t)(pattern[i] * input[i]));
-            break;
-        case 4:
-            h = mix64(h ^ (uint64_t)(pattern[i] ^ input[i]));
-            break;
+            current.push_back(c);
         }
     }
-    
-    h = mix64(h ^ (uint64_t)matches);
-    return h;
+    parts.push_back(current);
+    return parts;
 }
 
+__attribute__((noinline))
+std::string joinStr(const std::vector<std::string>& parts, const std::string& delimiter) {
+    std::string result;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        result += parts[i];
+        if (i + 1 < parts.size()) {
+            result += delimiter;
+        }
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Trim whitespace
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isSpaceChar(char c) {
+    return std::isspace(static_cast<unsigned char>(c)) != 0;
+}
+
+__attribute__((noinline))
+std::string trimStr(const std::string& s) {
+    size_t start = 0;
+    size_t end = s.size();
+    while (start < end && isSpaceChar(s[start])) ++start;
+    while (end > start && isSpaceChar(s[end - 1])) --end;
+    return s.substr(start, end - start);
+}
+
+// ---------------------------------------------------------------------------
+// Tokenizing with multiple delimiters
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::vector<std::string> tokenize(const std::string& s, const std::string& delimiters) {
+    std::vector<std::string> tokens;
+    std::string current;
+    for (char c : s) {
+        bool isDelim = delimiters.find(c) != std::string::npos;
+        if (isDelim) {
+            if (!current.empty()) {
+                tokens.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(c);
+        }
+    }
+    if (!current.empty()) {
+        tokens.push_back(current);
+    }
+    return tokens;
+}
+
+// ---------------------------------------------------------------------------
+// Word frequency counter (std::map keeps deterministic, sorted iteration)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::map<std::string, int> wordFrequency(const std::vector<std::string>& words) {
+    std::map<std::string, int> freq;
+    for (const auto& w : words) {
+        std::string lower = toLowerStr(w);
+        freq[lower] += 1;
+    }
+    return freq;
+}
+
+// ---------------------------------------------------------------------------
+// Longest common prefix
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::string longestCommonPrefix(const std::vector<std::string>& strs) {
+    if (strs.empty()) return "";
+    std::string prefix = strs[0];
+    for (size_t i = 1; i < strs.size(); ++i) {
+        size_t j = 0;
+        size_t maxLen = std::min(prefix.size(), strs[i].size());
+        while (j < maxLen && prefix[j] == strs[i][j]) {
+            ++j;
+        }
+        prefix = prefix.substr(0, j);
+        if (prefix.empty()) break;
+    }
+    return prefix;
+}
+
+// ---------------------------------------------------------------------------
+// Manual integer <-> string conversion (avoids exception-throwing stoi)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool parseIntSafe(const std::string& s, long& outValue) {
+    if (s.empty()) return false;
+    size_t i = 0;
+    bool negative = false;
+    if (s[0] == '-' || s[0] == '+') {
+        negative = (s[0] == '-');
+        i = 1;
+    }
+    if (i >= s.size()) return false;
+    long value = 0;
+    for (; i < s.size(); ++i) {
+        char c = s[i];
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + (c - '0');
+    }
+    outValue = negative ? -value : value;
+    return true;
+}
+
+__attribute__((noinline))
+std::string intToStringManual(long value) {
+    char buffer[32];
+    int written = std::snprintf(buffer, sizeof(buffer), "%ld", value);
+    if (written < 0) return "";
+    return std::string(buffer);
+}
+
+// ---------------------------------------------------------------------------
+// Caesar cipher (deterministic wraparound using unsigned arithmetic)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+std::string caesarShift(const std::string& s, int shift) {
+    std::string result = s;
+    int normalizedShift = ((shift % 26) + 26) % 26;
+    for (char& c : result) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc >= 'a' && uc <= 'z') {
+            int offset = static_cast<int>(uc - 'a');
+            offset = (offset + normalizedShift) % 26;
+            c = static_cast<char>('a' + offset);
+        } else if (uc >= 'A' && uc <= 'Z') {
+            int offset = static_cast<int>(uc - 'A');
+            offset = (offset + normalizedShift) % 26;
+            c = static_cast<char>('A' + offset);
+        }
+        // non-alphabetic characters are left untouched
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Simple deterministic Base64-like encoder / decoder
+// ---------------------------------------------------------------------------
+const char* BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+__attribute__((noinline))
+std::string base64Encode(const std::string& input) {
+    std::string output;
+    output.reserve(((input.size() + 2) / 3) * 4);
+
+    size_t i = 0;
+    size_t len = input.size();
+    while (i + 2 < len) {
+        unsigned char b0 = static_cast<unsigned char>(input[i]);
+        unsigned char b1 = static_cast<unsigned char>(input[i + 1]);
+        unsigned char b2 = static_cast<unsigned char>(input[i + 2]);
+        output.push_back(BASE64_ALPHABET[(b0 >> 2) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[((b0 << 4) | (b1 >> 4)) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[((b1 << 2) | (b2 >> 6)) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[b2 & 0x3F]);
+        i += 3;
+    }
+
+    size_t remaining = len - i;
+    if (remaining == 1) {
+        unsigned char b0 = static_cast<unsigned char>(input[i]);
+        output.push_back(BASE64_ALPHABET[(b0 >> 2) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[(b0 << 4) & 0x3F]);
+        output.push_back('=');
+        output.push_back('=');
+    } else if (remaining == 2) {
+        unsigned char b0 = static_cast<unsigned char>(input[i]);
+        unsigned char b1 = static_cast<unsigned char>(input[i + 1]);
+        output.push_back(BASE64_ALPHABET[(b0 >> 2) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[((b0 << 4) | (b1 >> 4)) & 0x3F]);
+        output.push_back(BASE64_ALPHABET[(b1 << 2) & 0x3F]);
+        output.push_back('=');
+    }
+    return output;
+}
+
+__attribute__((noinline))
+int base64CharIndex(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+__attribute__((noinline))
+std::string base64Decode(const std::string& input) {
+    std::string output;
+    output.reserve((input.size() / 4) * 3);
+
+    unsigned int buffer = 0;
+    int bitsCollected = 0;
+    for (char c : input) {
+        if (c == '=' || c == '\0') break;
+        int idx = base64CharIndex(c);
+        if (idx < 0) continue;
+        buffer = (buffer << 6) | static_cast<unsigned int>(idx);
+        bitsCollected += 6;
+        if (bitsCollected >= 8) {
+            bitsCollected -= 8;
+            char outByte = static_cast<char>((buffer >> bitsCollected) & 0xFF);
+            output.push_back(outByte);
+        }
+    }
+    return output;
+}
+
+// ---------------------------------------------------------------------------
+// Sorting strings with a custom comparator (length then lexicographic)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool compareByLengthThenAlpha(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return a.size() < b.size();
+    return a < b;
+}
+
+// ---------------------------------------------------------------------------
+// Anagram check
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isAnagram(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    std::string sa = toLowerStr(a);
+    std::string sb = toLowerStr(b);
+    std::sort(sa.begin(), sa.end());
+    std::sort(sb.begin(), sb.end());
+    return sa == sb;
+}
+
+// ---------------------------------------------------------------------------
+// Longest palindromic substring (brute force, deterministic on ties: first
+// found wins)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+bool isPalindromeRange(const std::string& s, size_t left, size_t right) {
+    while (left < right) {
+        if (s[left] != s[right]) return false;
+        ++left;
+        --right;
+    }
+    return true;
+}
+
+__attribute__((noinline))
+std::string longestPalindromicSubstring(const std::string& s) {
+    if (s.empty()) return "";
+    size_t bestStart = 0;
+    size_t bestLen = 1;
+    size_t n = s.size();
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = i; j < n; ++j) {
+            size_t candidateLen = j - i + 1;
+            if (candidateLen > bestLen && isPalindromeRange(s, i, j)) {
+                bestLen = candidateLen;
+                bestStart = i;
+            }
+        }
+    }
+    return s.substr(bestStart, bestLen);
+}
+
+// ---------------------------------------------------------------------------
+// Levenshtein edit distance (DP)
+// ---------------------------------------------------------------------------
+__attribute__((noinline))
+size_t levenshteinDistance(const std::string& a, const std::string& b) {
+    size_t n = a.size();
+    size_t m = b.size();
+    std::vector<std::vector<size_t>> dp(n + 1, std::vector<size_t>(m + 1, 0));
+
+    for (size_t i = 0; i <= n; ++i) dp[i][0] = i;
+    for (size_t j = 0; j <= m; ++j) dp[0][j] = j;
+
+    for (size_t i = 1; i <= n; ++i) {
+        for (size_t j = 1; j <= m; ++j) {
+            if (a[i - 1] == b[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1];
+            } else {
+                size_t deletion = dp[i - 1][j] + 1;
+                size_t insertion = dp[i][j - 1] + 1;
+                size_t substitution = dp[i - 1][j - 1] + 1;
+                size_t best = deletion;
+                if (insertion < best) best = insertion;
+                if (substitution < best) best = substitution;
+                dp[i][j] = best;
+            }
+        }
+    }
+    return dp[n][m];
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
-    std::array<int, 16> table;
-    for (unsigned i = 0; i < table.size(); ++i)
-        table[i] = (int)(i * 7 + 11);
 
-    std::array<int, 20> values;
-    for (unsigned i = 0; i < values.size(); ++i)
-        values[i] = (int)(i * 13 + 5);
+    uint64_t checksum = 0;
 
-    std::array<int, 12> nestedData;
-    for (unsigned i = 0; i < nestedData.size(); ++i)
-        nestedData[i] = (int)(i * 17 + 23);
+    std::cout << "=== String / C-string Manipulation Test ===\n\n";
 
-    std::array<double, 8> thresholds;
-    for (unsigned i = 0; i < thresholds.size(); ++i)
-        thresholds[i] = 10.0 + i * 15.5;
+    // --- Basic C-string operations ---
+    std::cout << "-- C-string basics --\n";
+    char buffer[128];
+    safeStrCopy(buffer, sizeof(buffer), "Hello, obfuscator world!");
+    std::cout << "buffer: " << buffer << "\n";
+    safeStrAppend(buffer, sizeof(buffer), " -- appended text.");
+    std::cout << "buffer after append: " << buffer << "\n";
+    size_t len = safeStrLen(buffer, sizeof(buffer));
+    std::cout << "buffer length: " << len << "\n";
+    checksum += static_cast<uint64_t>(len);
 
-    std::array<int, 8> thresholdOutputs;
-    for (unsigned i = 0; i < thresholdOutputs.size(); ++i)
-        thresholdOutputs[i] = (int)(i * 31 + 47);
+    const char* literalA = "compare_me";
+    const char* literalB = "compare_me";
+    const char* literalC = "compare_you";
+    int cmpAB = std::strcmp(literalA, literalB);
+    int cmpAC = std::strcmp(literalA, literalC);
+    int ncmpAC = std::strncmp(literalA, literalC, 7);
+    std::cout << "strcmp(A,B) == 0: " << (cmpAB == 0 ? "true" : "false") << "\n";
+    std::cout << "strcmp(A,C) != 0: " << (cmpAC != 0 ? "true" : "false") << "\n";
+    std::cout << "strncmp(A,C,7) == 0: " << (ncmpAC == 0 ? "true" : "false") << "\n";
+    checksum += static_cast<uint64_t>(cmpAB == 0) + static_cast<uint64_t>(cmpAC != 0);
 
-    std::array<int, 10> multiLevelValues;
-    for (unsigned i = 0; i < multiLevelValues.size(); ++i)
-        multiLevelValues[i] = (int)(i * 19 + 37);
+    char toReverse[] = "reverse-this-buffer";
+    size_t revLen = safeStrLen(toReverse, sizeof(toReverse));
+    reverseCStrInPlace(toReverse, revLen);
+    std::cout << "reversed C-string: " << toReverse << "\n";
+    checksum += fnv1aHashCStr(toReverse) % 1000000ULL;
 
-    std::array<int, 15> switchData;
-    for (unsigned i = 0; i < switchData.size(); ++i)
-        switchData[i] = (int)(i * 23 + 41);
+    // --- std::string basics ---
+    std::cout << "\n-- std::string basics --\n";
+    std::string s1 = "The Quick Brown Fox";
+    std::string s2 = " Jumps Over The Lazy Dog";
+    std::string concatenated = s1 + s2;
+    std::cout << "concatenated: " << concatenated << "\n";
 
-    std::array<int, 32> treeData;
-    for (unsigned i = 0; i < treeData.size(); ++i)
-        treeData[i] = (int)(i * 29 + 53);
+    std::string upper = toUpperStr(concatenated);
+    std::string lower = toLowerStr(concatenated);
+    std::cout << "upper: " << upper << "\n";
+    std::cout << "lower: " << lower << "\n";
+    checksum += fnv1aHash(upper) % 1000000ULL;
+    checksum += fnv1aHash(lower) % 1000000ULL;
 
-    std::array<int, 16> transitions;
-    for (unsigned i = 0; i < transitions.size(); ++i)
-        transitions[i] = (int)(i * 11 + 19);
+    std::string sub = concatenated.substr(4, 5);
+    std::cout << "substr(4,5): " << sub << "\n";
+    size_t foundPos = concatenated.find("Lazy");
+    std::cout << "find(\"Lazy\"): " << foundPos << "\n";
+    checksum += foundPos;
 
-    std::array<double, 8> constants;
-    for (unsigned i = 0; i < constants.size(); ++i)
-        constants[i] = 1.0 + i * 0.7;
+    std::string replaced = concatenated;
+    size_t replacePos = replaced.find("Fox");
+    if (replacePos != std::string::npos) {
+        replaced.replace(replacePos, 3, "Cat");
+    }
+    std::cout << "replaced: " << replaced << "\n";
 
-    std::array<int, 64> divideData;
-    for (unsigned i = 0; i < divideData.size(); ++i)
-        divideData[i] = (int)(i * 3 + 7);
+    std::string reversedStr = reverseStr(concatenated);
+    std::cout << "reversed: " << reversedStr << "\n";
+    checksum += fnv1aHash(reversedStr) % 1000000ULL;
 
-    std::array<int, 10> multipliers;
-    for (unsigned i = 0; i < multipliers.size(); ++i)
-        multipliers[i] = (int)(i * 5 + 13);
+    // --- Palindrome checking ---
+    std::cout << "\n-- Palindrome checks --\n";
+    std::vector<std::string> palindromeCandidates = {
+        "A man a plan a canal Panama",
+        "Not a palindrome",
+        "racecar",
+        "Was it a car or a cat I saw",
+        "Obfuscation"
+    };
+    for (const auto& candidate : palindromeCandidates) {
+        bool result = isPalindrome(candidate);
+        std::cout << "\"" << candidate << "\" is palindrome: " << (result ? "true" : "false") << "\n";
+        checksum += result ? 1 : 0;
+    }
 
-    std::array<float, 5> floats;
-    for (unsigned i = 0; i < floats.size(); ++i)
-        floats[i] = 1.5f + i * 0.3f;
+    // --- Split / join ---
+    std::cout << "\n-- Split / join --\n";
+    std::string csvLine = "alpha,beta,gamma,delta,epsilon";
+    std::vector<std::string> splitParts = splitStr(csvLine, ',');
+    std::cout << "split count: " << splitParts.size() << "\n";
+    for (const auto& part : splitParts) {
+        std::cout << "  part: " << part << "\n";
+    }
+    std::string rejoined = joinStr(splitParts, " | ");
+    std::cout << "rejoined: " << rejoined << "\n";
+    checksum += fnv1aHash(rejoined) % 1000000ULL;
 
-    std::array<int, 20> pattern;
-    for (unsigned i = 0; i < pattern.size(); ++i)
-        pattern[i] = (int)(i * 2 + 1);
+    // --- Trim ---
+    std::cout << "\n-- Trim --\n";
+    std::string padded = "   \t  padded string with spaces  \n  ";
+    std::string trimmed = trimStr(padded);
+    std::cout << "trimmed: [" << trimmed << "]\n";
+    checksum += trimmed.size();
 
-    std::array<int, 20> inputPattern;
-    for (unsigned i = 0; i < inputPattern.size(); ++i)
-        inputPattern[i] = (int)(i * 2 + 1 + (i % 3));
+    // --- Tokenizing ---
+    std::cout << "\n-- Tokenizing --\n";
+    std::string sentence = "one, two;three   four,,five";
+    std::vector<std::string> tokens = tokenize(sentence, ", ;");
+    std::cout << "token count: " << tokens.size() << "\n";
+    for (const auto& t : tokens) {
+        std::cout << "  token: " << t << "\n";
+    }
+    checksum += tokens.size();
 
-    uint64_t checksum = 0x99aabbccddeeff00ULL;
-    
-    // Original tests
-    checksum ^= branchWorker(5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, true, table, 1.25, 0.75);
-    checksum ^= branchWorker(4, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, false, table, 2.5, 1.5);
-    checksum ^= switchWorker(0, values, 1, 2, 3, 4, 5, 6);
-    checksum ^= switchWorker(7, values, 10, 11, 12, 13, 14, 15);
-    checksum ^= switchWorker(12, values, 20, 21, 22, 23, 24, 25);
-    
-    // New expanded tests
-    checksum ^= nestedBranchWorker(0, 42, nestedData, 1.5f, 2.5);
-    checksum ^= nestedBranchWorker(0, 73, nestedData, 2.3f, 1.7);
-    checksum ^= conditionalChainWorker(25, thresholds, thresholdOutputs);
-    checksum ^= conditionalChainWorker(68, thresholds, thresholdOutputs);
-    checksum ^= conditionalChainWorker(113, thresholds, thresholdOutputs);
-    checksum ^= multiLevelRecursion(0, 6, 0x55, multiLevelValues, 1.0);
-    checksum ^= multiLevelRecursion(0, 8, 0xAA, multiLevelValues, 1.5);
-    checksum ^= switchFallthroughWorker(0, switchData, 5);
-    checksum ^= switchFallthroughWorker(3, switchData, 10);
-    checksum ^= switchFallthroughWorker(7, switchData, 15);
-    checksum ^= treeTraversalWorker(0, 0, treeData, true);
-    checksum ^= treeTraversalWorker(1, 0, treeData, false);
-    checksum ^= stateMachineWorker(0, transitions, 32);
-    checksum ^= stateMachineWorker(5, transitions, 48);
-    checksum ^= stateMachineWorker(10, transitions, 64);
-    checksum ^= mathBranchWorker(0, 3.5, 2.7, constants);
-    checksum ^= mathBranchWorker(4, 5.2, 3.1, constants);
-    checksum ^= mathBranchWorker(7, 7.8, 4.5, constants);
-    checksum ^= divideAndConquerWorker(0, 63, divideData, 0);
-    checksum ^= divideAndConquerWorker(0, 31, divideData, 0);
-    checksum ^= nestedLoopBranchWorker(8, multipliers, floats);
-    checksum ^= nestedLoopBranchWorker(12, multipliers, floats);
-    checksum ^= patternMatchWorker(pattern, inputPattern, 3);
-    checksum ^= patternMatchWorker(pattern, pattern, 0);
-    
-    checksum = mix64(checksum);
+    // --- Word frequency ---
+    std::cout << "\n-- Word frequency --\n";
+    std::vector<std::string> paragraph = {
+        "the", "quick", "brown", "fox", "the", "lazy", "dog",
+        "The", "Fox", "jumps", "over", "the", "dog"
+    };
+    std::map<std::string, int> freq = wordFrequency(paragraph);
+    for (const auto& entry : freq) {
+        std::cout << "  " << entry.first << ": " << entry.second << "\n";
+        checksum += static_cast<uint64_t>(entry.second);
+    }
 
-    std::printf("CHECKSUM: 0x%016llx\n", (unsigned long long)checksum);
+    // --- Longest common prefix ---
+    std::cout << "\n-- Longest common prefix --\n";
+    std::vector<std::string> prefixCandidates = {"interstellar", "interval", "internet", "internal"};
+    std::string commonPrefix = longestCommonPrefix(prefixCandidates);
+    std::cout << "common prefix: " << commonPrefix << "\n";
+    checksum += commonPrefix.size();
+
+    // --- Manual number <-> string conversion ---
+    std::cout << "\n-- Manual number/string conversion --\n";
+    std::vector<std::string> numberStrings = {"42", "-17", "1000", "notanumber", "+256"};
+    for (const auto& ns : numberStrings) {
+        long parsed = 0;
+        bool ok = parseIntSafe(ns, parsed);
+        std::cout << "  parse(\"" << ns << "\") -> ok=" << (ok ? "true" : "false");
+        if (ok) {
+            std::cout << " value=" << parsed << " roundtrip=" << intToStringManual(parsed);
+            checksum += static_cast<uint64_t>(parsed < 0 ? -parsed : parsed);
+        }
+        std::cout << "\n";
+    }
+
+    // --- Caesar cipher ---
+    std::cout << "\n-- Caesar cipher --\n";
+    std::string plain = "Attack at Dawn, Obfuscator!";
+    std::string encrypted = caesarShift(plain, 7);
+    std::string decrypted = caesarShift(encrypted, -7);
+    std::cout << "plain:     " << plain << "\n";
+    std::cout << "encrypted: " << encrypted << "\n";
+    std::cout << "decrypted: " << decrypted << "\n";
+    std::cout << "roundtrip matches: " << (decrypted == plain ? "true" : "false") << "\n";
+    checksum += fnv1aHash(encrypted) % 1000000ULL;
+    checksum += (decrypted == plain) ? 1 : 0;
+
+    // --- Base64 ---
+    std::cout << "\n-- Base64 --\n";
+    std::string toEncode = "Deterministic obfuscation testing, 1234567890!";
+    std::string encoded = base64Encode(toEncode);
+    std::string decoded = base64Decode(encoded);
+    std::cout << "original: " << toEncode << "\n";
+    std::cout << "encoded:  " << encoded << "\n";
+    std::cout << "decoded:  " << decoded << "\n";
+    std::cout << "roundtrip matches: " << (decoded == toEncode ? "true" : "false") << "\n";
+    checksum += fnv1aHash(encoded) % 1000000ULL;
+    checksum += (decoded == toEncode) ? 1 : 0;
+
+    // --- Sorting with custom comparator ---
+    std::cout << "\n-- Sorted word list --\n";
+    std::vector<std::string> wordsToSort = {
+        "beta", "a", "gamma", "delta", "xy", "alpha", "hi", "z"
+    };
+    std::vector<std::string> sortedWords = wordsToSort;
+    std::sort(sortedWords.begin(), sortedWords.end(), compareByLengthThenAlpha);
+    for (const auto& w : sortedWords) {
+        std::cout << "  " << w << "\n";
+    }
+    checksum += fnv1aHash(joinStr(sortedWords, ",")) % 1000000ULL;
+
+    // --- Anagram check ---
+    std::cout << "\n-- Anagram checks --\n";
+    std::vector<std::pair<std::string, std::string>> anagramPairs = {
+        {"listen", "silent"},
+        {"triangle", "integral"},
+        {"hello", "world"},
+        {"Dormitory", "DirtyRoom"}
+    };
+    for (const auto& p : anagramPairs) {
+        bool result = isAnagram(p.first, p.second);
+        std::cout << "  " << p.first << " / " << p.second << " -> " << (result ? "true" : "false") << "\n";
+        checksum += result ? 1 : 0;
+    }
+
+    // --- Longest palindromic substring ---
+    std::cout << "\n-- Longest palindromic substring --\n";
+    std::string palinSource = "forgeeksskeegfortestcaseabccba";
+    std::string longestPalin = longestPalindromicSubstring(palinSource);
+    std::cout << "source: " << palinSource << "\n";
+    std::cout << "longest palindromic substring: " << longestPalin << "\n";
+    checksum += longestPalin.size();
+
+    // --- Levenshtein distance ---
+    std::cout << "\n-- Levenshtein edit distance --\n";
+    std::vector<std::pair<std::string, std::string>> distPairs = {
+        {"kitten", "sitting"},
+        {"flaw", "lawn"},
+        {"intention", "execution"},
+        {"obfuscate", "obfuscated"}
+    };
+    for (const auto& p : distPairs) {
+        size_t dist = levenshteinDistance(p.first, p.second);
+        std::cout << "  distance(" << p.first << ", " << p.second << ") = " << dist << "\n";
+        checksum += dist;
+    }
+
+    // --- ostringstream-based building ---
+    std::cout << "\n-- ostringstream formatting --\n";
+    std::ostringstream oss;
+    oss << "Report: " << std::setw(6) << std::setfill('0') << 42
+        << " items, total value $" << std::fixed << std::setprecision(2) << 1234.5;
+    std::string report = oss.str();
+    std::cout << report << "\n";
+    checksum += fnv1aHash(report) % 1000000ULL;
+
+    // --- Hash demonstration ---
+    std::cout << "\n-- Deterministic hashing --\n";
+    std::vector<std::string> hashSamples = {"alpha", "beta", "gamma", "obfuscator", "determinism"};
+    for (const auto& sample : hashSamples) {
+        uint64_t h = fnv1aHash(sample);
+        std::cout << "  fnv1a(\"" << sample << "\") = " << h << "\n";
+        checksum += h % 1000000ULL;
+    }
+
+    // --- Final checksum ---
+    std::cout << "\n=== Final checksum ===\n";
+    std::cout << "TOTAL_CHECKSUM: " << checksum << "\n";
 
     auto end = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-    printf("%ld\n", diff);
+    std::cout << diff << "\n";
+
     return 0;
 }

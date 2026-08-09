@@ -6,5 +6,5 @@ __attribute__((noinline))
 int Foo(int x, int y)
 {
     std::cout << "Hello" << std::endl;
-    return (x^y) * 10 / (x^x) + 5;
+    return (x^y) * 10 / ((x^y) + 1) + 5;
 }

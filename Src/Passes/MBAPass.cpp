@@ -79,7 +79,7 @@ void LeetObfuscator::MBAPass::ObfuscateFunction(llvm::Function& function)
 
     for (auto& instruction : instructionsToObfuscate)
     {
-        if (generator->DrawRange(0u, 100u) > attributes.mbaProbability)
+        if (generator->DrawRange(1u, 100u) > attributes.mbaProbability)
             continue;
         
         ObfuscateInstruction(instruction, attributes.mbaExpansionCount);

@@ -1,5 +1,6 @@
 #include "StringEncryptionPass.h"
 
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/ReplaceConstant.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -7,13 +8,23 @@
 #include "llvm/IR/Module.h"
 #include "SettingsParser.h"
 #include "RandomNumberGenerator.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
+
+#include "../../build/LeetObfuscator/leet_string_encryption_template.inc" // template bitcode
 
 llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running StringEncryptionPass\n";
     m_Logger.LogModule(module, "Starting pass", 0);
 
-    srand(time(nullptr));
+    EmittedTemplate templates = GetTemplateFunctions(module);
+
+    if (!templates.decryptFunction || !templates.getKeyFunction || !templates.module)
+    {
+        llvm::errs() << "ERROR: Failed to import template functions for string obfuscation. Skipping the pass.\n";
+        return llvm::PreservedAnalyses::all();
+    }
+
     std::vector<StringGlobalInfo> stringGlobals;
     for (auto& global : module.globals())
     {
@@ -22,10 +33,32 @@ llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &
             SettingsParser::GlobalAttributes globalAttributes = SettingsParser::ParseGlobalAttributes();
             std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
 
-            if (generator->DrawRange(0u, 100u) > globalAttributes.stringEncryptionProbability)
+            if (generator->DrawRange(1u, 100u) > globalAttributes.stringEncryptionProbability)
                 continue;
 
-            uint32_t key = generator->DrawRange(0u, std::numeric_limits<uint32_t>::max());
+            uint32_t key;
+            
+            while(true)
+            {
+                key = generator->DrawRange(1u, std::numeric_limits<uint32_t>::max());
+                key = (uint32_t)llvm::hash_combine(module.getModuleIdentifier(), key);
+
+                // Check for collision
+                bool collision = false;
+                for (const auto& existingGlobal : stringGlobals)
+                {
+                    if (existingGlobal.key == key)
+                    {
+                        collision = true;
+                        break;
+                    }
+                }
+                if (collision)
+                    continue;
+                else
+                    break;
+            }
+            
             m_Logger.LogValue(global, "Encrypting string global", 1);
             stringGlobals.push_back({&global, key});
         }
@@ -40,8 +73,11 @@ llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &
     for(auto& stringGlobal : stringGlobals)
     {
         m_Logger.LogValue(*stringGlobal.globalVar, "Encrypting and patching uses", 2);
-        EncryptGlobalAndPatchAllUses(stringGlobal);
+        EncryptGlobalAndPatchAllUses(stringGlobal, templates);
     }
+
+    templates.decryptFunction->eraseFromParent();
+    templates.getKeyFunction->eraseFromParent();
 
     return llvm::PreservedAnalyses::none();
 }
@@ -61,7 +97,7 @@ bool LeetObfuscator::StringEncryptionPass::IsEncryptableStringGlobal(llvm::Globa
     return true;
 }
 
-void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGlobalInfo &stringInfo)
+void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGlobalInfo &stringInfo, const EmittedTemplate& templates)
 {
     llvm::GlobalVariable* globalVar = stringInfo.globalVar;
     uint32_t key = stringInfo.key;
@@ -110,7 +146,7 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
     globalVar->setInitializer(newInitialzer);
 
     // Replace all uses with decrypt function
-    llvm::Function* decryptFunction = GetDecryptFunction(*globalVar->getParent(), key);
+    llvm::Function* decryptFunction = GetDecryptFunction(*globalVar->getParent(), key, templates);
     for (llvm::Use* use : usesToPatch)
     {
         llvm::Instruction* instruction = llvm::cast<llvm::Instruction>(use->getUser());
@@ -118,6 +154,9 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
 
         llvm::IRBuilder<> builder(&parentFunction->getEntryBlock(), parentFunction->getEntryBlock().getFirstInsertionPt());
         llvm::AllocaInst* stackBuffer = builder.CreateAlloca(builder.getInt8Ty(), builder.getInt32(bytesCount));
+
+        // Compiler will sometimes aligns strings into 16 bytes to lower memcpy into an xmm move, so this stack buffer also has to be aligned
+        stackBuffer->setAlignment(globalVar->getAlign().valueOrOne());
 
         // If this use feeds a PHI node, the decrypt call must be inserted at the
         // end of the corresponding predecessor block (before its terminator),
@@ -135,82 +174,172 @@ void LeetObfuscator::StringEncryptionPass::EncryptGlobalAndPatchAllUses(StringGl
     }
 }
 
-llvm::Function *LeetObfuscator::StringEncryptionPass::GetDecryptFunction(llvm::Module &module, uint32_t key)
+// // Emits this
+// // extern "C" uint8_t* __leet_decrypt_string(uint8_t* enc, uint8_t* out, uint32_t len)
+// // {
+// //     for (uint32_t i = 0; i < len; ++i) {
+// //         uint8_t keyByte = uint8_t((key >> (8 * (i % 4))) & 0xFF);
+// //         out[i] = enc[i] ^ keyByte;
+// //     }
+// //     return out;
+// // }
+
+// llvm::Function *LeetObfuscator::StringEncryptionPass::GetDecryptFunction(llvm::Module &module, uint32_t key, const EmittedTemplate& templates)
+// {
+//     llvm::LLVMContext &context = module.getContext();
+//     llvm::IRBuilder<> builder(context);
+
+//     // Types
+//     llvm::Type *typeInt8 = builder.getInt8Ty();
+//     llvm::Type *typeInt32 = builder.getInt32Ty();
+//     llvm::Type *typePtr = builder.getPtrTy();
+
+//     // Function type: ptr (ptr, ptr, i32)
+//     llvm::FunctionType *functionType = llvm::FunctionType::get(typePtr, {typePtr, typePtr, typeInt32}, false);
+
+//     llvm::Function *function = llvm::Function::Create(
+//         functionType,
+//         llvm::GlobalValue::InternalLinkage,
+//         "__leet_decrypt_string",
+//         &module
+//     );
+//     function->setCallingConv(llvm::CallingConv::C);
+
+//     // Name the arguments
+//     auto argumentIterator = function->arg_begin();
+//     llvm::Value *encrypted = argumentIterator++;
+//     encrypted->setName("enc");
+//     llvm::Value *output = argumentIterator++;
+//     output->setName("out");
+//     llvm::Value *length = argumentIterator++;
+//     length->setName("len");
+
+//     // Basic blocks
+//     llvm::BasicBlock *entryBlock = llvm::BasicBlock::Create(context, "entry", function);
+//     llvm::BasicBlock *loopBlock = llvm::BasicBlock::Create(context, "loop", function);
+//     llvm::BasicBlock *bodyBlock = llvm::BasicBlock::Create(context, "body", function);
+//     llvm::BasicBlock *exitBlock = llvm::BasicBlock::Create(context, "exit", function);
+
+//     // entry
+//     builder.SetInsertPoint(entryBlock);
+//     builder.CreateBr(loopBlock);
+
+//     // loop header (phi + condition)
+//     builder.SetInsertPoint(loopBlock);
+//     llvm::PHINode *index = builder.CreatePHI(typeInt32, 2, "i");
+//     index->addIncoming(builder.getInt32(0), entryBlock);
+
+//     llvm::Value *comparison = builder.CreateICmpULT(index, length, "cmp");
+//     builder.CreateCondBr(comparison, bodyBlock, exitBlock);
+
+//     // loop body
+//     builder.SetInsertPoint(bodyBlock);
+
+//     // keyByte = (key >> (8 * (i % 4))) & 0xFF
+//     llvm::Value *modulo = builder.CreateURem(index, builder.getInt32(4), "mod");
+//     llvm::Value *shiftAmount = builder.CreateMul(modulo, builder.getInt32(8), "shift");
+//     llvm::Value *keyConstant = builder.getInt32(key);
+//     llvm::Value *shifted = builder.CreateLShr(keyConstant, shiftAmount, "shr");
+//     llvm::Value *keyByte32 = builder.CreateAnd(shifted, builder.getInt32(0xFF), "keybyte32");
+//     llvm::Value *keyByte = builder.CreateTrunc(keyByte32, typeInt8, "keybyte");
+
+//     // enc[i]
+//     llvm::Value *encryptedGep = builder.CreateGEP(typeInt8, encrypted, index, "enc.gep");
+//     llvm::Value *encryptedByte = builder.CreateLoad(typeInt8, encryptedGep, "enc.byte");
+
+//     // out[i] = enc[i] ^ keyByte
+//     llvm::Value *xored = builder.CreateXor(encryptedByte, keyByte, "xored");
+//     llvm::Value *outputGep = builder.CreateGEP(typeInt8, output, index, "out.gep");
+//     builder.CreateStore(xored, outputGep);
+
+//     // i = i + 1
+//     llvm::Value *nextIndex = builder.CreateAdd(index, builder.getInt32(1), "next");
+//     index->addIncoming(nextIndex, bodyBlock);
+//     builder.CreateBr(loopBlock);
+
+//     // exit
+//     builder.SetInsertPoint(exitBlock);
+//     builder.CreateRet(output);
+
+//     return function;
+// }
+
+llvm::Function *LeetObfuscator::StringEncryptionPass::GetDecryptFunction(llvm::Module &module, uint32_t key, const EmittedTemplate& templates)
 {
-    llvm::LLVMContext &context = module.getContext();
-    llvm::IRBuilder<> builder(context);
+    llvm::Function* templateFunction = templates.decryptFunction;
 
-    // Types
-    llvm::Type *typeInt8 = builder.getInt8Ty();
-    llvm::Type *typeInt32 = builder.getInt32Ty();
-    llvm::Type *typePtr = builder.getPtrTy();
+    llvm::LLVMContext& context = module.getContext();
+    llvm::Type* bytePtrType = llvm::PointerType::getUnqual(context);
+    llvm::Type* i32Type = llvm::Type::getInt32Ty(context);
 
-    // Function type: ptr (ptr, ptr, i32)
-    llvm::FunctionType *functionType = llvm::FunctionType::get(typePtr, {typePtr, typePtr, typeInt32}, false);
+    // basically `ptr __leet_decrypt_string(ptr encryptedStr, ptr outStr, i64 lenStr)`
+    llvm::FunctionType* functionType = llvm::FunctionType::get(bytePtrType, {bytePtrType, bytePtrType, i32Type}, false);
 
-    llvm::Function *function = llvm::Function::Create(
-        functionType,
-        llvm::GlobalValue::ExternalLinkage,
-        "__leet_decrypt_string",
-        &module
-    );
-    function->setCallingConv(llvm::CallingConv::C);
+    llvm::ValueToValueMapTy vmap;
+    llvm::SmallVector<llvm::ReturnInst*, 8> returns;
+    llvm::Function* clone = llvm::Function::Create(functionType, llvm::GlobalValue::InternalLinkage, templateFunction->getName() + std::to_string(key), module);
+    // For whatever reason you have to manually copy arguments...
+    auto destArgIt = clone->arg_begin();
+    for(auto& oldArg : templateFunction->args())
+    {
+        destArgIt->setName(oldArg.getName());
+        vmap[&oldArg] = destArgIt;
+        destArgIt++;
+    }
+    llvm::CloneFunctionInto(clone, templateFunction, vmap, llvm::CloneFunctionChangeType::DifferentModule, returns);
 
-    // Name the arguments
-    auto argumentIterator = function->arg_begin();
-    llvm::Value *encrypted = argumentIterator++;
-    encrypted->setName("enc");
-    llvm::Value *output = argumentIterator++;
-    output->setName("out");
-    llvm::Value *length = argumentIterator++;
-    length->setName("len");
+    if (clone->isDeclaration())
+    {
+        llvm::errs() << "ERROR: Clone of the template is only a declaration!\n";
+        return nullptr;
+    }
 
-    // Basic blocks
-    llvm::BasicBlock *entryBlock = llvm::BasicBlock::Create(context, "entry", function);
-    llvm::BasicBlock *loopBlock = llvm::BasicBlock::Create(context, "loop", function);
-    llvm::BasicBlock *bodyBlock = llvm::BasicBlock::Create(context, "body", function);
-    llvm::BasicBlock *exitBlock = llvm::BasicBlock::Create(context, "exit", function);
+    // Find all getKeys inside the clone and replace them with the actual key
+    std::vector<llvm::CallInst*> callsToReplace;
+    for (auto& basicBlock : *clone)
+    {
+        for (auto& instruction : basicBlock)
+        {
+            if (auto* callInst = llvm::dyn_cast<llvm::CallInst>(&instruction))
+            {
+                llvm::Function* calledFunction = callInst->getCalledFunction();
+                if (calledFunction && calledFunction->getName() == templates.getKeyFunction->getName())
+                {
+                    callsToReplace.push_back(callInst);
+                }
+            }
+        }
+    }
+    for (auto* callInst : callsToReplace)
+    {
+        llvm::IRBuilder<> builder(callInst);
+        callInst->replaceAllUsesWith(builder.getInt32(key));
+        callInst->eraseFromParent();
+    }
 
-    // entry
-    builder.SetInsertPoint(entryBlock);
-    builder.CreateBr(loopBlock);
+    clone->addFnAttr(llvm::Attribute::NoInline);
+    clone->addFnAttr(llvm::Attribute::OptimizeNone); // It's already optimized bitcode, and the optimizer will try to do some dumb shit without this 
+    return clone;
+}
 
-    // loop header (phi + condition)
-    builder.SetInsertPoint(loopBlock);
-    llvm::PHINode *index = builder.CreatePHI(typeInt32, 2, "i");
-    index->addIncoming(builder.getInt32(0), entryBlock);
+LeetObfuscator::StringEncryptionPass::EmittedTemplate LeetObfuscator::StringEncryptionPass::GetTemplateFunctions(llvm::Module &module)
+{
+    EmittedTemplate result;
+    llvm::LLVMContext& context = module.getContext();
 
-    llvm::Value *comparison = builder.CreateICmpULT(index, length, "cmp");
-    builder.CreateCondBr(comparison, bodyBlock, exitBlock);
+    // Create a dummy module with template functions
+    llvm::StringRef data(reinterpret_cast<const char*>(leet_string_encryption_template_bc), leet_string_encryption_template_bc_len);
+    std::unique_ptr<llvm::MemoryBuffer> buffer = llvm::MemoryBuffer::getMemBuffer(data, "leet_obf_runtime", false);
+    auto modOrErr = llvm::parseBitcodeFile(buffer->getMemBufferRef(), context);
+    if (!modOrErr)
+    {
+        llvm::errs() << modOrErr.takeError() << "\n";
+        return result;
+    }
+    result.module = std::move(modOrErr.get());
 
-    // loop body
-    builder.SetInsertPoint(bodyBlock);
+    result.decryptFunction = result.module->getFunction("__leet_decrypt_string");
+    result.getKeyFunction  = result.module->getFunction("__leet_get_key");
 
-    // keyByte = (key >> (8 * (i % 4))) & 0xFF
-    llvm::Value *modulo = builder.CreateURem(index, builder.getInt32(4), "mod");
-    llvm::Value *shiftAmount = builder.CreateMul(modulo, builder.getInt32(8), "shift");
-    llvm::Value *keyConstant = builder.getInt32(key);
-    llvm::Value *shifted = builder.CreateLShr(keyConstant, shiftAmount, "shr");
-    llvm::Value *keyByte32 = builder.CreateAnd(shifted, builder.getInt32(0xFF), "keybyte32");
-    llvm::Value *keyByte = builder.CreateTrunc(keyByte32, typeInt8, "keybyte");
-
-    // enc[i]
-    llvm::Value *encryptedGep = builder.CreateGEP(typeInt8, encrypted, index, "enc.gep");
-    llvm::Value *encryptedByte = builder.CreateLoad(typeInt8, encryptedGep, "enc.byte");
-
-    // out[i] = enc[i] ^ keyByte
-    llvm::Value *xored = builder.CreateXor(encryptedByte, keyByte, "xored");
-    llvm::Value *outputGep = builder.CreateGEP(typeInt8, output, index, "out.gep");
-    builder.CreateStore(xored, outputGep);
-
-    // i = i + 1
-    llvm::Value *nextIndex = builder.CreateAdd(index, builder.getInt32(1), "next");
-    index->addIncoming(nextIndex, bodyBlock);
-    builder.CreateBr(loopBlock);
-
-    // exit
-    builder.SetInsertPoint(exitBlock);
-    builder.CreateRet(output);
-
-    return function;
+    return result;
 }

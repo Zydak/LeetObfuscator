@@ -45,7 +45,7 @@ namespace LeetObfuscator
         {
             GlobalParseMode defaultParseMode = GlobalParseMode::All;
             uint64_t defaultRuntimeSeed = 0;
-            uint32_t stringEncryptionProbability;
+            uint32_t stringEncryptionProbability = 100;
             PassArguments parameters;
             std::vector<Pass> passes;
         };
@@ -119,9 +119,8 @@ namespace LeetObfuscator
         template <typename T>
         static bool ParseEnumArgument(
             llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key,
-            T& output, const std::vector<std::pair<llvm::StringRef, T>>& namedValues, llvm::StringRef expected);
-
-        static uint64_t GenerateRuntimeSeed();
+            T& output, const std::vector<std::pair<llvm::StringRef, T>>& namedValues, llvm::StringRef expected
+        );
 
         template <typename T>
         static OptionApplier UnsignedOption(T FunctionAttributes::* field, T maximum = std::numeric_limits<T>::max());

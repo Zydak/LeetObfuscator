@@ -307,7 +307,7 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
-    if (generator->DrawRange(0u, 100u) > attributes.dispatcherProbability)
+    if (generator->DrawRange(1u, 100u) > attributes.dispatcherProbability)
     {
         m_Logger.LogFunction(*function, "Skipping dispatcher insertion due to probability", 2);
         return;
