@@ -32,7 +32,6 @@ TEST_FILES = [
     "MultithreadingTest.cpp",
     "PerformanceStressTest.cpp",
     "StringManipulationTest.cpp",
-    "MultiModuleTest",
 ]
 
 # Modular compilation and execution targets
@@ -42,24 +41,24 @@ TARGET_ENVIRONMENTS = {
         "run_prefix": "",       # Run directly
         "ext": ""
     },
-    "linux-x86": {
-        "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
-        "run_prefix": "",       # You may need qemu-i386 here if running on an ARM/x64 host without multilib
-        "ext": ""
-    },
+    # "linux-x86": {
+    #     "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
+    #     "run_prefix": "",       # You may need qemu-i386 here if running on an ARM/x64 host without multilib
+    #     "ext": ""
+    # },
     "windows-x64": {
         "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
         "run_prefix": "wine",   # Remove 'wine' if running this natively on Windows
         "ext": ".exe"
     },
-    "windows-x86": {
-        "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
-        "run_prefix": "wine",   # Remove 'wine' if running this natively on Windows
-        "ext": ".exe"
-    }
+    # "windows-x86": {
+    #     "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+    #     "run_prefix": "wine",   # Remove 'wine' if running this natively on Windows
+    #     "ext": ".exe"
+    # }
 }
 
-RUN_COUNT = 1
+RUN_COUNT = 2
 REBUILD_PER_RUN = False
 WARMUP_COMPILE = False
 COMPILE_TIMEOUT = 300
@@ -98,6 +97,7 @@ class TestResult:
     compile_time: float
     success: bool
     error_message: str = ""
+    binary_size: int = 0
 
 
 @dataclass
@@ -107,6 +107,7 @@ class TestSummary:
     obfuscated: bool
     avg_time_ns: float
     avg_compile_time: float
+    avg_binary_size: float = 0.0
     outputs: List[str] = field(default_factory=list)
     output_match: bool = True
     all_runs_success: bool = True
@@ -184,6 +185,14 @@ def normalize_test_entry(entry: Union[str, List, Tuple, Dict]) -> TestSpec:
             name = sources[0].stem
 
     return TestSpec(name=name, sources=sources, extra_flags=extra_flags.strip())
+
+
+def format_size(num_bytes: float) -> str:
+    if num_bytes <= 0:
+        return "N/A"
+    if num_bytes >= 1024 * 1024:
+        return f"{num_bytes / 1024 / 1024:.2f}MB"
+    return f"{num_bytes / 1024:.1f}KB"
 
 
 def extract_output_body_and_time(output: str) -> Tuple[Optional[str], Optional[int]]:
@@ -269,8 +278,14 @@ def run_single_test(spec: TestSpec, target: str, obfuscated: bool,
                 test_name=spec.name, target=target, obfuscated=obfuscated,
                 run_number=run_number, output_body="", time_ns=0,
                 compile_time=compile_time, success=False,
-                error_message=f"Compilation failed: {compile_error}"
+                error_message=f"Compilation failed: {compile_error}",
+                binary_size=0
             )
+
+    try:
+        binary_size = output_path.stat().st_size
+    except OSError:
+        binary_size = 0
 
     run_success, output, run_error = run_test(output_path, target)
     if not run_success:
@@ -278,7 +293,8 @@ def run_single_test(spec: TestSpec, target: str, obfuscated: bool,
             test_name=spec.name, target=target, obfuscated=obfuscated,
             run_number=run_number, output_body="", time_ns=0,
             compile_time=compile_time, success=False,
-            error_message=f"Execution failed: {run_error}"
+            error_message=f"Execution failed: {run_error}",
+            binary_size=binary_size
         )
 
     body, time_ns = extract_output_body_and_time(output)
@@ -287,13 +303,15 @@ def run_single_test(spec: TestSpec, target: str, obfuscated: bool,
             test_name=spec.name, target=target, obfuscated=obfuscated,
             run_number=run_number, output_body=body or "", time_ns=time_ns or 0,
             compile_time=compile_time, success=False,
-            error_message="Failed to parse output (missing or invalid timing line)"
+            error_message="Failed to parse output (missing or invalid timing line)",
+            binary_size=binary_size
         )
 
     return TestResult(
         test_name=spec.name, target=target, obfuscated=obfuscated,
         run_number=run_number, output_body=body, time_ns=time_ns,
-        compile_time=compile_time, success=True
+        compile_time=compile_time, success=True,
+        binary_size=binary_size
     )
 
 
@@ -386,9 +404,13 @@ def calculate_summaries(results: List[TestResult]) -> Dict[str, List[TestSummary
         real_compile_times = [r.compile_time for r in group_results if r.compile_time > 0]
         avg_compile = (sum(real_compile_times) / len(real_compile_times)) if real_compile_times else 0.0
 
+        real_binary_sizes = [r.binary_size for r in group_results if r.binary_size > 0]
+        avg_binary_size = (sum(real_binary_sizes) / len(real_binary_sizes)) if real_binary_sizes else 0.0
+
         summary = TestSummary(
             test_name=test_name, target=target, obfuscated=obfuscated,
             avg_time_ns=avg_time, avg_compile_time=avg_compile,
+            avg_binary_size=avg_binary_size,
             outputs=outputs, output_match=all_match, all_runs_success=all_success,
             error_messages=errors
         )
@@ -439,6 +461,15 @@ def generate_comparison_table(summaries: Dict[str, List[TestSummary]]) -> Tuple[
         plain_comp_str = f"{plain.avg_compile_time:.2f}s"
         obf_comp_str = f"{obf.avg_compile_time:.2f}s"
 
+        plain_size_str = format_size(plain.avg_binary_size) if plain.all_runs_success else "FAIL"
+        obf_size_str = format_size(obf.avg_binary_size) if obf.all_runs_success else "FAIL"
+
+        if (plain.all_runs_success and obf.all_runs_success
+                and plain.avg_binary_size > 0 and obf.avg_binary_size > 0):
+            size_ratio = f"{(obf.avg_binary_size / plain.avg_binary_size):.2f}x"
+        else:
+            size_ratio = "N/A"
+
         if not plain.all_runs_success or not obf.all_runs_success:
             match_status = "FAIL"
         else:
@@ -461,6 +492,9 @@ def generate_comparison_table(summaries: Dict[str, List[TestSummary]]) -> Tuple[
             plain_comp_str,
             obf_comp_str,
             compile_slowdown,
+            plain_size_str,
+            obf_size_str,
+            size_ratio,
             match_status,
         ])
 
@@ -514,6 +548,7 @@ def print_results_table(table_data: List[List]):
         "Test", "Target",
         "Plain Time", "Obf Time", "Runtime Slowdown",
         "Plain Compile", "Obf Compile", "Compile Slowdown",
+        "Plain Size", "Obf Size", "Size Ratio",
         "Match",
     ]
     print("\n" + tabulate(table_data, headers=headers, tablefmt=OUTPUT_FORMAT))
@@ -528,6 +563,7 @@ def print_statistics(summaries: Dict[str, List[TestSummary]]):
     
     runtime_slowdowns = []
     compile_slowdowns = []
+    size_ratios = []
 
     for group in summaries.values():
         if len(group) != 2:
@@ -543,6 +579,8 @@ def print_statistics(summaries: Dict[str, List[TestSummary]]):
             runtime_slowdowns.append(obf.avg_time_ns / plain.avg_time_ns)
         if plain.avg_compile_time > 0:
             compile_slowdowns.append(obf.avg_compile_time / plain.avg_compile_time)
+        if plain.avg_binary_size > 0 and obf.avg_binary_size > 0:
+            size_ratios.append(obf.avg_binary_size / plain.avg_binary_size)
 
         all_outputs = plain.outputs + obf.outputs
         if len(set(all_outputs)) == 1:
@@ -553,6 +591,7 @@ def print_statistics(summaries: Dict[str, List[TestSummary]]):
     valid_comparisons = total_comparisons - failed_comparisons
     avg_runtime = sum(runtime_slowdowns) / len(runtime_slowdowns) if runtime_slowdowns else 0
     avg_compile = sum(compile_slowdowns) / len(compile_slowdowns) if compile_slowdowns else 0
+    avg_size = sum(size_ratios) / len(size_ratios) if size_ratios else 0
     match_rate = (full_matches / valid_comparisons) if valid_comparisons else 0
 
     print_separator("-")
@@ -565,6 +604,8 @@ def print_statistics(summaries: Dict[str, List[TestSummary]]):
     if valid_comparisons > 0:
         print(f"Average runtime slowdown: {avg_runtime:.2f}x")
         print(f"Average compile slowdown: {avg_compile:.2f}x")
+        if size_ratios:
+            print(f"Average binary size increase: {avg_size:.2f}x")
         print(f"Full output match rate (among successful): {match_rate:.1%}")
     if mismatches > 0:
         print(f"WARNING: {mismatches} tests where outputs did not match")

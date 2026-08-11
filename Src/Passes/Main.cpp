@@ -35,8 +35,12 @@
 //                     passManager.addPass(LeetObfuscator::AnnotationPass());
 
 //                     LeetObfuscator::SettingsParser::GlobalAttributes globalSettings = LeetObfuscator::SettingsParser::ParseGlobalAttributes();
-//                     LeetObfuscator::RandomNumberGenerator::CreateGlobalRandomNumberGenerator(globalSettings.defaultRuntimeSeed);
-//                     std::cout << "RUNTIME SEED: " << globalSettings.defaultRuntimeSeed << std::endl;
+//                     uint64_t runtimeSeed = 0;
+//                     const auto* seedArg = LeetObfuscator::SettingsParser::FindArgument(globalSettings.parameters, "runtimeSeed");
+//                     if (seedArg && !seedArg->empty())
+//                         runtimeSeed = std::stoull(seedArg->front());
+//                     LeetObfuscator::RandomNumberGenerator::CreateGlobalRandomNumberGenerator(runtimeSeed);
+//                     std::cout << "RUNTIME SEED: " << runtimeSeed << std::endl;
 
 //                     // add passes according to the config
 //                     for (auto& pass : globalSettings.passes)

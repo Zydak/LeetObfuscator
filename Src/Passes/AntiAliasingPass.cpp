@@ -240,6 +240,7 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
             if (!userInst)
             {
                 llvm::errs() << "Alloca user is not an instruction?\n";
+                continue;
             }
 
             llvm::IRBuilder<> builder(userInst);

@@ -45,6 +45,9 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
         std::vector<llvm::BasicBlock*> blocksToObfuscate;
         for (auto& block : function)
         {
+            if (SettingsParser::ShouldSkipBlock(&block, attributes))
+                continue;
+
             if (generator->DrawRange(1u, 100u) > attributes.antiAnalysisProbability)
                 continue;
             
@@ -96,6 +99,7 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
     llvm::BasicBlock* bogus = CreateInvalidBogusBlock(block->getParent(), generator);
     llvm::BasicBlock* newSplitBlock = nullptr;
 
+    // RDTSC checks don't won't for now, TODO
     if (false)
         newSplitBlock = ChainBogusIntoBlockRdtsc(block, bogus, randomPos, generator);
     else
@@ -272,6 +276,8 @@ bool LeetObfuscator::AntiAnalysisPass::IsSafeToTimeAcross(llvm::Instruction &ins
     if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&instruction))
         if (SI->isVolatile())
             return false;
+    if (llvm::isa<llvm::InlineAsm>(instruction))
+        return false;
     return true;
 }
 
@@ -429,7 +435,8 @@ void LeetObfuscator::AntiDissasemblyEmitter::encodeInstruction(const llvm::MCIns
 {
     static SettingsParser::GlobalAttributes globalSettings = SettingsParser::ParseGlobalAttributes();
     static bool antiAnalysisEnabled = false;
-    if (!antiAnalysisEnabled)
+    static bool alreadySearched = false;
+    if (!antiAnalysisEnabled && !alreadySearched)
     {
         for (auto& pass : globalSettings.passes)
         {
@@ -441,17 +448,21 @@ void LeetObfuscator::AntiDissasemblyEmitter::encodeInstruction(const llvm::MCIns
             }
         }
     }
+    alreadySearched = true;
 
     llvm::SmallVector<char, 16> tmp;
     llvm::SmallVector<llvm::MCFixup, 4> tmpFixups;
     m_Real->encodeInstruction(instruction, tmp, tmpFixups, sti);
 
-    if (!tmp.empty() && (uint8_t)tmp[0] == 0xFF)
+    if (antiAnalysisEnabled)
     {
-        bytes.push_back((char)0xEB);
-        for (auto &F : tmpFixups)
+        if (!tmp.empty() && (uint8_t)tmp[0] == 0xFF)
         {
-            F.setOffset(F.getOffset() + 1);
+            bytes.push_back((char)0xEB);
+            for (auto &F : tmpFixups)
+            {
+                F.setOffset(F.getOffset() + 1);
+            }
         }
     }
     bytes.append(tmp.begin(), tmp.end());
