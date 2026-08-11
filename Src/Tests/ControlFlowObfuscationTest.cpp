@@ -1,8 +1,3 @@
-// Control flow obfuscation stress test for the Leet obfuscator.
-// Focuses on complex control flow patterns including nested loops,
-// conditional jumps, goto simulation, and control flow flattening patterns.
-// Deterministic output for verification.
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -37,7 +32,6 @@ static inline uint64_t add_d(uint64_t h, double d) {
     return mix64(h ^ u);
 }
 
-// Complex nested loop with multiple exit conditions
 __attribute__((noinline))
 static uint64_t nestedLoopComplex(int maxA, int maxB, int maxC) {
     uint64_t h = 0xdeadbeefcafebabeULL;
@@ -84,7 +78,6 @@ static uint64_t nestedLoopComplex(int maxA, int maxB, int maxC) {
     return h;
 }
 
-// State machine with complex transitions
 __attribute__((noinline))
 static uint64_t complexStateMachine(const std::array<int, 20> &inputs, int initialState) {
     uint64_t h = 0xfeedfacebadc0ffeULL;
@@ -172,7 +165,6 @@ static uint64_t complexStateMachine(const std::array<int, 20> &inputs, int initi
     return h;
 }
 
-// Control flow flattening simulation
 __attribute__((noinline))
 static uint64_t controlFlowFlattening(const std::array<int, 16> &data) {
     uint64_t h = 0x0badf00d1337c0deULL;
@@ -240,7 +232,6 @@ static uint64_t controlFlowFlattening(const std::array<int, 16> &data) {
     return h;
 }
 
-// Complex conditional chain
 __attribute__((noinline))
 static uint64_t complexConditionalChain(int input, const std::array<int, 10> &thresholds) {
     uint64_t h = 0xcafebabedeadfaceULL;
@@ -304,7 +295,6 @@ static uint64_t complexConditionalChain(int input, const std::array<int, 10> &th
     return h;
 }
 
-// Loop with complex conditions
 __attribute__((noinline))
 static uint64_t loopWithComplexConditions(const std::array<int, 20> &data) {
     uint64_t h = 0xfacefeed0ddba11eULL;
@@ -359,7 +349,6 @@ static uint64_t loopWithComplexConditions(const std::array<int, 20> &data) {
     return h;
 }
 
-// Switch with fallthrough and complex cases
 __attribute__((noinline))
 static uint64_t complexSwitchFallthrough(int value, const std::array<int, 15> &data) {
     uint64_t h = 0xbaddcafebabe1337ULL;
@@ -368,22 +357,18 @@ static uint64_t complexSwitchFallthrough(int value, const std::array<int, 15> &d
     switch (value % 12) {
     case 0:
         result += data[0];
-        // fallthrough
     case 1:
         result += data[1];
         if (result > 10) {
             result -= 5;
         }
-        // fallthrough
     case 2:
         result += data[2];
         break;
     case 3:
         result += data[3];
-        // fallthrough
     case 4:
         result += data[4];
-        // fallthrough
     case 5:
         result += data[5];
         if (result < 20) {
@@ -392,19 +377,15 @@ static uint64_t complexSwitchFallthrough(int value, const std::array<int, 15> &d
         break;
     case 6:
         result += data[6];
-        // fallthrough
     case 7:
         result += data[7];
-        // fallthrough
     case 8:
         result += data[8];
-        // fallthrough
     case 9:
         result += data[9];
         break;
     case 10:
         result += data[10];
-        // fallthrough
     case 11:
         result += data[11];
         if (result % 2 == 0) {
@@ -420,49 +401,47 @@ static uint64_t complexSwitchFallthrough(int value, const std::array<int, 15> &d
     return h;
 }
 
-// Virtual dispatch simulation
 __attribute__((noinline))
 static uint64_t virtualDispatchSimulation(int operation, int operand) {
     uint64_t h = 0xc0dedeadbadf00dULL;
     int result = 0;
     
-    // Simulate virtual function calls
     switch (operation) {
-    case 0: // "add"
+    case 0:
         result = operand + 10;
         break;
-    case 1: // "subtract"
+    case 1:
         result = operand - 5;
         break;
-    case 2: // "multiply"
+    case 2:
         result = operand * 2;
         break;
-    case 3: // "divide"
+    case 3:
         if (operand != 0) {
             result = 100 / operand;
         }
         break;
-    case 4: // "modulo"
+    case 4:
         if (operand != 0) {
             result = operand % 7;
         }
         break;
-    case 5: // "power"
+    case 5:
         result = operand * operand;
         break;
-    case 6: // "square root simulation"
+    case 6:
         result = (int)std::sqrt((double)operand);
         break;
-    case 7: // "absolute"
+    case 7:
         result = (operand < 0) ? -operand : operand;
         break;
-    case 8: // "negate"
+    case 8:
         result = -operand;
         break;
-    case 9: // "increment"
+    case 9:
         result = operand + 1;
         break;
-    case 10: // "decrement"
+    case 10:
         result = operand - 1;
         break;
     default:
@@ -475,13 +454,11 @@ static uint64_t virtualDispatchSimulation(int operation, int operand) {
     return h;
 }
 
-// Exception handling simulation with control flow
 __attribute__((noinline))
 static uint64_t exceptionFlowSimulation(int input) {
     uint64_t h = 0xfeedfacedeadbeefULL;
     int result = 0;
     
-    // Simulate try-catch blocks with control flow
     if (input < 0) {
         result = -input;
         h = mix64(h ^ (uint64_t)(result + 1000));
@@ -493,7 +470,6 @@ static uint64_t exceptionFlowSimulation(int input) {
         h = mix64(h ^ (uint64_t)(result + 3000));
     }
     
-    // Simulate multiple catch blocks
     switch (result % 5) {
     case 0:
         result += 10;
@@ -521,7 +497,6 @@ static uint64_t exceptionFlowSimulation(int input) {
     return h;
 }
 
-// Recursive control flow with multiple branches
 __attribute__((noinline))
 static uint64_t recursiveControlFlow(int n, const std::array<int, 8> &values) {
     uint64_t h = 0xfaceface12345678ULL;
@@ -546,13 +521,11 @@ static uint64_t recursiveControlFlow(int n, const std::array<int, 8> &values) {
     return h;
 }
 
-// Loop unrolling simulation
 __attribute__((noinline))
 static uint64_t loopUnrollingSimulation(const std::array<int, 16> &data) {
     uint64_t h = 0xdead1234face5678ULL;
     int sum = 0;
     
-    // Simulate manual loop unrolling
     for (unsigned i = 0; i < data.size(); i += 4) {
         sum += data[i];
         h = mix64(h ^ (uint64_t)data[i]);
@@ -577,16 +550,13 @@ static uint64_t loopUnrollingSimulation(const std::array<int, 16> &data) {
     return h;
 }
 
-// Indirect branching simulation
 __attribute__((noinline))
 static uint64_t indirectBranchingSimulation(const std::array<int, 10> &targets, int selector) {
     uint64_t h = 0xcafe1234dead5678ULL;
     int result = 0;
     
-    // Simulate indirect branch through function pointer
     int targetIndex = selector % targets.size();
     
-    // Simulate different functions based on target
     switch (targets[targetIndex]) {
     case 0:
         result = selector * 2;
@@ -628,13 +598,11 @@ static uint64_t indirectBranchingSimulation(const std::array<int, 10> &targets, 
     return h;
 }
 
-// Table-based control flow
 __attribute__((noinline))
 static uint64_t tableBasedControlFlow(const std::array<int, 8> &table, int index) {
     uint64_t h = 0x1337deadbeef1337ULL;
     int result = 0;
     
-    // Simulate jump table
     int jumpTarget = table[index % table.size()];
     
     switch (jumpTarget) {
@@ -671,7 +639,6 @@ static uint64_t tableBasedControlFlow(const std::array<int, 8> &table, int index
     return h;
 }
 
-// Complex loop with continue and break
 __attribute__((noinline))
 static uint64_t complexLoopWithControl(const std::array<int, 25> &data) {
     uint64_t h = 0xfacedeadbeefcafeULL;
@@ -713,7 +680,7 @@ static uint64_t complexLoopWithControl(const std::array<int, 25> &data) {
         h = mix64(h ^ (uint64_t)sum);
         
         if (i % 7 == 0 && i > 0) {
-            i += 2; // Skip some iterations
+            i += 2;
         }
     }
     
@@ -721,7 +688,6 @@ static uint64_t complexLoopWithControl(const std::array<int, 25> &data) {
     return h;
 }
 
-// Nested switch statements
 __attribute__((noinline))
 static uint64_t nestedSwitchStatements(int a, int b, int c) {
     uint64_t h = 0xdeadcafe12345678ULL;
@@ -789,7 +755,6 @@ static uint64_t nestedSwitchStatements(int a, int b, int c) {
     return h;
 }
 
-// Control flow with computed goto simulation
 __attribute__((noinline))
 static uint64_t computedGotoSimulation(const std::array<int, 12> &labels, int start) {
     uint64_t h = 0xbeefdeadface1234ULL;
@@ -866,7 +831,6 @@ static uint64_t computedGotoSimulation(const std::array<int, 12> &labels, int st
     return h;
 }
 
-// Complex return path simulation
 __attribute__((noinline))
 static uint64_t complexReturnPath(int input, const std::array<int, 6> &thresholds) {
     uint64_t h = 0xcafebeefdeadfaceULL;
@@ -908,7 +872,6 @@ static uint64_t complexReturnPath(int input, const std::array<int, 6> &threshold
 
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
-    // Initialize test data
     std::array<int, 20> stateMachineInputs;
     for (unsigned i = 0; i < stateMachineInputs.size(); ++i)
         stateMachineInputs[i] = (int)(i * 7 + 13);
@@ -959,7 +922,6 @@ int main() {
 
     uint64_t checksum = 0xdeadbeefdeadbeefULL;
     
-    // Run all control flow tests
     checksum ^= nestedLoopComplex(5, 5, 5);
     checksum ^= nestedLoopComplex(3, 7, 4);
     checksum ^= complexStateMachine(stateMachineInputs, 0);

@@ -206,6 +206,7 @@ const std::vector<SettingsParser::Option>& SettingsParser::GetPassOptions(Settin
         {"defaultParseMode", ApplyDefaultParseMode},
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
+        {"probability", UnsignedOption(&FA::stringEncryptionProbability, 100u)},
     };
     static const std::vector<Option> mbaOptions = {
         {"defaultParseMode", ApplyDefaultParseMode},
@@ -225,10 +226,6 @@ const std::vector<SettingsParser::Option>& SettingsParser::GetPassOptions(Settin
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
-        {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
-        {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
-        {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
-        {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"probability", UnsignedOption(&FA::blockSplitterProbability, 100u)},
         {"blockSplitSize", UnsignedOption(&FA::blockSplitSize)},
     };
@@ -285,8 +282,6 @@ const std::vector<SettingsParser::Option>& SettingsParser::GetPassOptions(Settin
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"runtimeSeed", ApplyRuntimeSeed},
-        {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
-        {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"probability", UnsignedOption(&FA::NanomitesProbability, 100u)},
@@ -329,23 +324,7 @@ bool SettingsParser::IsKnownOption(const std::vector<Option>& options, llvm::Str
         if (o.name == key)
             return true;
 
-    // Known global options
-    static const std::vector<llvm::StringRef> globalOptions = {
-        "defaultParseMode",
-        "parseFunctions",
-        "runtimeSeed",
-        "stringEncryptionProbability",
-        "minFunctionSize",
-        "maxFunctionSize",
-        "minBlockSize",
-        "maxBlockSize",
-        "passes"
-    };
-    for (const auto& g : globalOptions)
-        if (g == key)
-            return true;
-
-    // Check if the option exists for any pass type
+    // Check if the option exists for any pass type (allowing any valid parameter globally)
     const std::vector<SettingsParser::PassType> allPassTypes = {
         SettingsParser::PassType::StringEncryptionPass,
         SettingsParser::PassType::MBAPass,
@@ -432,7 +411,16 @@ LeetObfuscator::SettingsParser::ParseFunctionAttributes(llvm::Function& function
 {
     FunctionAttributes result;
     static GlobalAttributes global = ParseGlobalAttributes();
-    result.skip = global.defaultParseMode == GlobalParseMode::None;
+    
+    // Check global defaultParseMode setting
+    const std::vector<std::string>* defaultParseMode = FindArgument(global.parameters, "defaultParseMode");
+    if (defaultParseMode && !defaultParseMode->empty())
+    {
+        if (defaultParseMode->front() == "none")
+            result.skip = true;
+        else if (defaultParseMode->front() == "all")
+            result.skip = false;
+    }
 
     llvm::StringRef passName = GetPassTypeName(passType);
     const std::vector<Option>& passOptions = GetPassOptions(passType);
@@ -584,115 +572,177 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
 #
 # minFunctionSize / maxFunctionSize:
 #   Skip functions that are too small or too big. 0 = no limit.
+#   These are measured in instruction count. Useful to skip tiny inline functions
+#   or massive functions you don't really want to process
 #
 # minBlockSize / maxBlockSize:
 #   Same idea but for basic blocks. 0 = no limit.
+#   Passes that work on basic blocks (like MBA, AAMBA, AntiAnalysis) will skip
+#   blocks outside this range.
 #
 # PASS-SPECIFIC SETTINGS
-# Can be set on any pass, e.g. MBAPass(probability=50)
+# Can be set on any pass, MBAPass(probability=50)
 #
 # Available: defaultParseMode, skip, forcePass, runtimeSeed, probability,
 # minFunctionSize, maxFunctionSize, minBlockSize, maxBlockSize
 # probability is 0-100.
 #
+# Some passes have additional specific attributes:
+# - MBAPass: expansionCount, instructionSet
+# - BlockSplitterPass: blockSplitSize
+# - AntiAnalysisPass: bogusInsertPosition, rdtscProbability, validBogusBlocksProbability, invalidBogusBlocksProbability
+# - AAMBAPass: targetOps
+#
 # THE PASSES
 #
 # StringEncryptionPass:
 #   Encrypts string literals at compile time and inserts runtime decryption at every use.
+#   This completely disables the ability to search for any strings in the binary.
+#   Every string has its own unique key hardcoded in the decrypt function which
+#   makes dumping and decrypting them a lot harder.
 #
 #   Performance impact: Very small
 #   Just a decryption call per string use. You won't notice it unless you have a ton of strings.
 #
-#   Attributes: defaultParseMode, skip, forcePass
+#   Attributes: defaultParseMode, skip, forcePass, probability
 #
 # MBAPass (Mixed Boolean Arithmetic):
-#   Replaces simple binary operations with equivalent but much more complex expressions.
-#   Makes the logic a lot harder to follow.
+#   Replaces simple arithmetic operations with their MBA equivalents.
+#   It's basically impossible to see what the original operation did unless you run
+#   it through an MBA deobfuscator first. Of course this obfuscation is kinda weak
+#   because MBA is a trick older than the world so there are many tools to deal
+#   with that, for example CoBRA. That's why AAMBA pass exists.
 #
 #   Performance impact: Mild to high (depends on expansionCount)
 #
 #   Attributes:
-#   expansionCount (int): How many times to expand each operation. 1-3 is the usual range, 2 is a solid default. I wouldn't go higher than that since it grows exponentially.
-#   probability (0-100): Chance to apply the transform.
+#   expansionCount (int): How many times to expand each operation. 1-3 is the usual range,
+#                          2 is a solid default. I wouldn't go higher than that since it grows exponentially.
+#   instructionSet (string): List of instruction types to target (pipe-separated, currently unused)
+#   probability (0-100): Chance to apply the transform to an operation.
 #
 # BlockSplitterPass:
 #   Breaks large basic blocks into smaller ones. Increases control flow complexity,
-#   useless on its own, very useful together with DispatcherPass.
+#   useless on its own, very useful together with DispatcherPass. The dispatcher
+#   pass works best when there are many small blocks to route through.
 #
 #   Performance impact: Mild
 #
 #   Attributes:
-#   blockSplitSize (int): Target size for the split blocks.
-#   probability (0-100)
+#   blockSplitSize (int): Target size for the split blocks. Default is 50 instructions.
+#   probability (0-100): Chance to split a block.
 #
 # DispatcherPass:
-#   Replaces direct branches with a dispatcher that uses indirect jumps.
-#   Control flow targets are resolved at runtime, which is a pain for static analysis.
+#   Definitely the strongest and most useful pass. It collects all the blocks inside
+#   a function and makes one giant state machine out of them. It creates a jump table
+#   at the beginning of the function and places all the block pointers inside it.
+#   Then instead of normal jump at the end of each block everything gets routed through
+#   the dispatcher which uses indirect jumps. These are almost impossible to resolve
+#   statically without any execution.
 #
 #   Performance impact: High (scales with block count, since you'll have an indirect jump for every block in the function)
 #
 #   Attributes:
-#   probability (0-100)
+#   probability (0-100): Chance to apply control flow flattening to a function.
 #
 # AntiAnalysisPass:
-#   Inserts bogus blocks with invalid opcodes and anti debug checks (like RDTSC timing) to mess with analysis tools.
+#   It creates a bunch of bogus blocks containing invalid assembly. This throws
+#   disassemblers immensely because if the disassembler encounters a technically
+#   invalid byte that never gets executed, it will still try to make sense of it.
+#   So if the byte is incomplete, it will create an instruction from whatever bytes
+#   happen to be after it, that creates a desynch essentially destroying every
+#   instruction after that. On Windows it's able to somewhat get through this,
+#   in rare cases it will be able generate a graph and decompile what it can
+#   (tho it will be broken and incomplete), while on Linux it completely breaks
+#   the graph view and disables decompilation.
+#
+#   If the pass sees any instruction starting with 0xFF, it inserts a single 0xEB
+#   byte before it. This will create JMP RIP+1, so control flow is unchanged
+#   (RIP simply advances one byte into the original instruction), but disassemblers
+#   become desynchronized. Instructions beginning with 0xFF are mostly INC/DEC and
+#   indirect JMP/CALL. The technique is especially useful around with the dispatcher
+#   pass since everything there uses indirect jumps.
 #
 #   Performance impact: Very small, the bogus blocks are never executed.
 #
 #   Attributes:
-#   bogusInsertPosition (start|random)
-#   rdtscProbability (0-100)
-#   validBogusBlocksProbability (0-100) # doesn't do anything for now
-#   invalidBogusBlocksProbability (0-100) # doesn't do anything for now
+#   bogusInsertPosition (start|random): Where to insert bogus blocks in the function.
 #
 # AntiAliasingPass:
-#   Places all local variables into one big shared stack buffer so the decompilers can't alias the variables.
+#   Throws every stack local in a function into one big shared stack buffer to which
+#   indices are computed at runtime. This way decompilers can't alias variables and
+#   even access to the same variable multiple times will show up as possibly accessing
+#   different values.
 #
 #   Performance impact: low to mild
 #
 #   Attributes:
-#   probability (0-100)
+#   probability (0-100): Chance to apply anti aliasing to a function.
 #
-# AAMBAPass:
-#   Rewrites arithmetic to use ADC/SBB so it depends on the carry flag.
-#   Decompilers usually struggle to track this properly.
+# AAMBAPass (Architectural Hardening MBA):
+#   Replaces operands of binary operations with ADC(X, 255) - 255 - CF and
+#   SBB(X, 255) + 255 + CF. Of course it always evaluates to X, but it makes the
+#   expression dependent on the carry flag. Unless a decompiler tracks the state
+#   of CF (which sometimes is impossible) it will get very confused and won't be
+#   unable to fold these expressions. It pairs very nicely with the previous MBA
+#   pass obfuscating the arithmetic even further. The decompiler creates additional
+#   stack variables and uses a lot of __PAIR64__ and __CFADD__ calls, so it becomes
+#   a lot harder to paste that into tools like CoBRA. IDA's goomba plugin is also
+#   no help in simplifying this. IDA's decompiler does track the carry flag to some
+#   degree, but combining this with control flow obfuscation makes tracking impossible
+#   without execution.
 #
 #   Performance impact: Mild
 #
 #   Attributes:
-#   probability (0-100)
+#   probability (0-100): Chance to apply AAMBA to an operation.
 #
 # NanomitesPass:
-#   Replaces calls with int3 breakpoints. An exception handler then redirects to the real target.
-#   Makes dynamic analysis pretty miserable.
+#   I think the second most useful pass after the dispatcher. It obfuscates control
+#   flow through exceptions. It replaces all calls with int3 traps. When the trap
+#   is triggered the control flow goes to the exception handler which adjusts RIP
+#   to the actual call. It also inserts invalid bytes right after the trap to
+#   desynchronize the disassembler.
 #
-#   Performance impact: Very high, it will fire an exception leaving the program and going to kernel, and interrupts like this are just slow. Use very sparingly.
-#   It's best to set defaultParsingMode on this to none and manually mark which functions or even which calls you want to obfuscate with this explicitly.
+#   Performance impact: Very high, it will fire an exception leaving the program and
+#   going to kernel, and interrupts are just slow. Use very sparingly. It's best to
+#   set defaultParsingMode on this to none and manually mark which functions or even
+#   which calls you want to obfuscate with this explicitly. Obfuscating every call
+#   inside a binary is pointless and costs a lot.
 #
 #   Attributes:
-#   probability (0-100)
+#   probability (0-100): Chance to apply nanomites to a call.
 #
 # =====================================
 # DEFAULT PRESET, works well on small binaries
 # =====================================
+# This preset is designed to provide good obfuscation for small to medium
+# sized binaries while keeping performance reasonable. Nanomites are disabled
+# by default because they have a huge performance impact.
+#
+# You can customize this by:
+# 1. Changing global settings at the top
+# 2. Adding/removing/modifying passes in the passes list
+# 3. Adding parameters to individual passes, MBAPass(expansionCount=3, probability=75)
+#
 defaultParseMode=all
 runtimeSeed=0
-minFunctionSize=10
+minFunctionSize=20
 maxFunctionSize=0
-minBlockSize=5
+minBlockSize=0
 maxBlockSize=0
 
 passes=
     StringEncryptionPass(),
-    MBAPass(expansionCount=2),
+    MBAPass(expansionCount=2, probability=50),
     BlockSplitterPass(blockSplitSize=50),
-    AntiAnalysisPass(),
+    AntiAnalysisPass(bogusInsertPosition=random,probability=25),
     DispatcherPass(),
     MBAPass(expansionCount=1),
-    AAMBAPass(),
+    AAMBAPass(probability=35),
     AntiAliasingPass(),
-    AntiAnalysisPass(),
-    NanomitesPass();
+    AntiAnalysisPass(bogusInsertPosition=start,probability=25),
+    NanomitesPass(defaultParseMode=none); # This is very expensive, I set the default to none, change it if you need to
 
 )";
     }
@@ -733,27 +783,8 @@ passes=
         if (assignment.second.empty() && assignment.first != "passes") continue;
         llvm::StringRef key = assignment.first.trim();
         llvm::StringRef value = assignment.second.trim();
-        bool handled = false;
 
-        if (key == "defaultParseMode" || key == "parseFunctions")
-        {
-            if (value == "all") settings.defaultParseMode = GlobalParseMode::All;
-            else if (value == "none") settings.defaultParseMode = GlobalParseMode::None;
-            SetArgument(settings.parameters, "defaultParseMode", {value.str()});
-            handled = true;
-        }
-        if (key == "stringEncryptionProbability")
-        {
-            settings.stringEncryptionProbability = (uint32_t)std::stoi(value.str());
-            SetArgument(settings.parameters, key, {value.str()});
-            handled = true;
-        }
-        else if (key == "runtimeSeed" || key == "minFunctionSize" || key == "maxFunctionSize" || key == "maxBlockSize" || key == "minBlockSize")
-        {
-            SetArgument(settings.parameters, key, ParseValues(value));
-            handled = true;
-        }
-        else if (key == "passes")
+        if (key == "passes")
         {
             if (value.empty())
             {
@@ -763,11 +794,11 @@ passes=
                 continue;
             }
             ParsePassList(settings, value);
-            handled = true;
         }
-        if (!handled)
+        else
         {
-            llvm::errs() << "LeetObfuscator: unknown global option '" << key << "'; ignoring\n";
+            // Accept any parameter as a global setting
+            SetArgument(settings.parameters, key, ParseValues(value));
         }
     }
     if (readingPassList)

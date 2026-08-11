@@ -1,8 +1,3 @@
-// Nanomites obfuscator test file
-// Many functions with extremely large signatures (mix of ints, floats, doubles,
-// pointers, structs, arrays-as-pointers, etc.)
-// Deterministic checksum at the end for verification.
-
 #include <chrono>
 #include <cstdio>
 #include <cstdint>
@@ -13,7 +8,6 @@
 #define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
-// ---- Structs of various sizes ----
 struct SmallS {
     int a;
     float b;
@@ -40,7 +34,6 @@ struct PackedS {
     int64_t i64;
 };
 
-// Simple deterministic mix / checksum helpers
 __attribute__((noinline))
 static inline uint64_t mix64(uint64_t x) {
     x ^= x >> 30;
@@ -65,21 +58,6 @@ static inline uint64_t add_d(uint64_t h, double d) {
     return mix64(h ^ u);
 }
 
-// ---- Deterministic (architecture-independent) float/double summation ----
-// A plain "a + b + c + ..." chain can be computed by the compiler using
-// extended-precision registers (the x87 FPU on i686 keeps 80 bits internally,
-// vs. the SSE2 unit x86-64 uses by default, which never exceeds the nominal
-// 32/64-bit width). That gives "double rounding" that only shows up once you
-// chain 3+ terms, and it silently changes results across architectures even
-// though nothing here is undefined behavior.
-//
-// Routing every pairwise add through a real, non-inlinable function call
-// forces the compiler to materialize (and therefore round) each intermediate
-// result at its true type width, because the calling convention requires it
-// to hand off a canonical 32-bit float / 64-bit double at the call boundary.
-// That reproduces strict, single-rounded IEEE-754 semantics on every target,
-// so results become identical on x87, SSE2, NEON, etc. -- no -msse2,
-// -mfpmath=sse, or -ffloat-store required.
 __attribute__((noinline)) static float  radd(float  a, float  b) { return a + b; }
 __attribute__((noinline)) static double radd(double a, double b) { return a + b; }
 
@@ -89,7 +67,6 @@ static inline T strict_sum(T a, T b) { return radd(a, b); }
 template <typename T, typename... Rest>
 static inline T strict_sum(T a, T b, Rest... rest) { return strict_sum(radd(a, b), rest...); }
 
-// ---- Function 1 ----
 __attribute__((noinline))
 uint64_t f01(
     int a0, int a1, int a2, int a3, int a4, int a5, int a6, int a7,
@@ -122,7 +99,6 @@ uint64_t f01(
     return h;
 }
 
-// ---- Function 2 ----
 __attribute__((noinline))
 uint64_t f02(
     double d0, double d1, double d2, double d3, double d4, double d5,
@@ -157,7 +133,6 @@ uint64_t f02(
     return h;
 }
 
-// ---- Function 3 ----
 __attribute__((noinline))
 uint64_t f03(
     int v00, int v01, int v02, int v03, int v04, int v05, int v06, int v07,
@@ -170,7 +145,6 @@ uint64_t f03(
     uint64_t h = 0x0f1e2d3c4b5a6978ULL;
     int sumi = 0;
     for (int i = 0; i < 16; ++i) {
-        // manual unroll-ish via switch not needed; just accumulate
     }
     sumi = v00+v01+v02+v03+v04+v05+v06+v07+v08+v09+v10+v11+v12+v13+v14+v15;
     h = mix64(h ^ (uint64_t)sumi);
@@ -193,7 +167,6 @@ uint64_t f03(
     return h;
 }
 
-// ---- Function 4 ----
 __attribute__((noinline))
 uint64_t f04(
     PackedS p0, PackedS p1, PackedS p2, PackedS p3,
@@ -229,7 +202,6 @@ uint64_t f04(
     return h;
 }
 
-// ---- Function 5 ----
 __attribute__((noinline))
 uint64_t f05(
     int* a0, int* a1, int* a2, int* a3, int* a4, int* a5, int* a6, int* a7,
@@ -274,7 +246,6 @@ uint64_t f05(
     return h;
 }
 
-// ---- Function 6 ----
 __attribute__((noinline))
 uint64_t f06(
     int x0, float y0, double z0, int x1, float y1, double z1,
@@ -300,7 +271,6 @@ uint64_t f06(
     return h;
 }
 
-// ---- Function 7 ----
 __attribute__((noinline))
 uint64_t f07(
     BigS b0, BigS b1, BigS b2,
@@ -331,7 +301,6 @@ uint64_t f07(
     return h;
 }
 
-// ---- Function 8 ----
 __attribute__((noinline))
 uint64_t f08(
     int i00, int i01, int i02, int i03, int i04, int i05, int i06, int i07, int i08, int i09,
@@ -360,7 +329,6 @@ uint64_t f08(
     return h;
 }
 
-// ---- Function 9 ----
 __attribute__((noinline))
 uint64_t f09(
     double d0, double d1, double d2, double d3, double d4, double d5, double d6, double d7,
@@ -389,7 +357,6 @@ uint64_t f09(
     return h;
 }
 
-// ---- Function 10 ----
 __attribute__((noinline))
 uint64_t f10(
     int i0, int i1, int i2, int i3, int i4, int i5, int i6, int i7, int i8, int i9,
@@ -397,7 +364,6 @@ uint64_t f10(
     int i20, int i21, int i22, int i23, int i24, int i25, int i26, int i27, int i28, int i29,
     float f0, float f1, float f2, float f3, float f4, float f5, float f6, float f7, float f8, float f9)
 {
-    // 40 params: 30 ints + 10 floats
     uint64_t h = 0xabcabcabcabcabcaULL;
     int64_t sum = 0;
     sum += i0; sum += i1; sum += i2; sum += i3; sum += i4;
@@ -408,7 +374,6 @@ uint64_t f10(
     sum += i25; sum += i26; sum += i27; sum += i28; sum += i29;
     h = mix64(h ^ (uint64_t)sum);
     h = add_f(h, strict_sum(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9));
-    // extra computation to use them more
     int prod = 1;
     prod = (prod * (i0|1)) ^ (i10+1);
     prod = (prod * (i20|1)) ^ (i29+1);
@@ -416,7 +381,6 @@ uint64_t f10(
     return h;
 }
 
-// ---- More functions with large mixed signatures ----
 
 __attribute__((noinline))
 uint64_t f11(
@@ -488,7 +452,6 @@ uint64_t f13(
     int i3, float f3, double d3, char c3, short s3, long l3, long long ll3, unsigned u3, bool b3,
     SmallS ss, MedS mm, BigS* bb, PackedS pp)
 {
-    // 40 scalar-ish + 4 structs
     uint64_t h = 0x3333333333333333ULL;
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3));
     h = add_f(h, strict_sum(f0, f1, f2, f3));
@@ -545,7 +508,6 @@ uint64_t f15(
     float f00, float f01, float f02, float f03, float f04, float f05, float f06, float f07, float f08, float f09,
     double d00, double d01, double d02, double d03, double d04, double d05, double d06, double d07, double d08, double d09)
 {
-    // pure 40 numeric params
     uint64_t h = 0x5555555555555555ULL;
     int64_t isum = 0;
     isum += i00+i01+i02+i03+i04+i05+i06+i07+i08+i09;
@@ -555,7 +517,6 @@ uint64_t f15(
     h = add_f(h, fsum);
     double dsum = strict_sum(d00, d01, d02, d03, d04, d05, d06, d07, d08, d09);
     h = add_d(h, dsum);
-    // more ops
     int xorv = i00 ^ i05 ^ i10 ^ i15;
     h = mix64(h ^ (uint64_t)xorv);
     h = add_f(h, strict_sum(f00 * f05, f09));
@@ -563,7 +524,6 @@ uint64_t f15(
     return h;
 }
 
-// Continue with more to reach a good number of large functions
 __attribute__((noinline))
 uint64_t f16(
     PackedS p0, PackedS p1, PackedS p2, PackedS p3, PackedS p4, PackedS p5, PackedS p6, PackedS p7,
@@ -659,7 +619,6 @@ uint64_t f19(
     int i9, float f9, double d9, int i10, float f10, double d10, int i11, float f11, double d11,
     SmallS s, MedS m, BigS* b, PackedS p)
 {
-    // mixed repeating pattern to reach ~40
     uint64_t h = 0x9999999999999999ULL;
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3+i4+i5+i6+i7+i8+i9+i10+i11));
     h = add_f(h, strict_sum(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11));
@@ -680,7 +639,6 @@ uint64_t f20(
     int i20, int i21, int i22, int i23, int i24, int i25, int i26, int i27, int i28, int i29,
     int i30, int i31, int i32, int i33, int i34, int i35, int i36, int i37, int i38, int i39)
 {
-    // 40 ints
     uint64_t h = 0xaaaaaaaaaaaaaaaaULL;
     int64_t sum = 0;
     sum += i00+i01+i02+i03+i04+i05+i06+i07+i08+i09;
@@ -688,7 +646,6 @@ uint64_t f20(
     sum += i20+i21+i22+i23+i24+i25+i26+i27+i28+i29;
     sum += i30+i31+i32+i33+i34+i35+i36+i37+i38+i39;
     h = mix64(h ^ (uint64_t)sum);
-    // fold
     int x = i00;
     x ^= i10; x += i20; x ^= i30;
     x ^= i39; x += i19; x ^= i29;
@@ -696,7 +653,6 @@ uint64_t f20(
     return h;
 }
 
-// A few more for good measure
 __attribute__((noinline))
 uint64_t f21(
     float f00, float f01, float f02, float f03, float f04, float f05, float f06, float f07, float f08, float f09,
@@ -798,7 +754,6 @@ uint64_t f25(
     char c0, char c1, char c2, char c3, short s0, short s1, short s2, short s3,
     long l0, long l1, long long ll0, long long ll1, unsigned u0, unsigned u1, bool b0, bool b1)
 {
-    // mixed ~40
     uint64_t h = 0xffffffffffffffffULL;
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3+i4+i5+i6+i7+i8+i9));
     h = add_f(h, strict_sum(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9));
@@ -812,12 +767,10 @@ uint64_t f25(
     return h;
 }
 
-// ---- Main: set up data, call everything, produce final checksum ----
 int main() {
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    // Deterministic seed data
     int ints[40];
     float floats[40];
     double doubles[40];
@@ -871,7 +824,6 @@ int main() {
 
     uint64_t checksum = 0x5a5a5a5a5a5a5a5aULL;
 
-    // Call all the big functions
     checksum ^= f01(
         ints[0], ints[1], ints[2], ints[3], ints[4], ints[5], ints[6], ints[7],
         ints[8], ints[9], floats[0], floats[1], floats[2], floats[3], floats[4],
@@ -1063,10 +1015,8 @@ int main() {
         chars[0], chars[1], chars[2], chars[3], shorts[0], shorts[1], shorts[2], shorts[3],
         longs[0], longs[1], llongs[0], llongs[1], uints[0], uints[1], bools[0], bools[1]);
 
-    // Final mix
     checksum = mix64(checksum);
 
-    // Print the deterministic checksum
     std::printf("CHECKSUM: 0x%016llx\n", (unsigned long long)checksum);
 
     auto end = std::chrono::high_resolution_clock::now();

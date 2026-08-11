@@ -61,7 +61,7 @@ uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(llvm::Module& m
     md5.final(res);
     const uint32_t moduleTag = (res[0] | (res[1] << 8) | (res[2] << 16)) & 0x7FFFu;
 
-    std::vector<uint32_t> ids;
+    static std::vector<uint32_t> ids;
 
     // 17 bit local ID
     uint32_t localId;

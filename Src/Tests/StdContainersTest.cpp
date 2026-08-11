@@ -1,18 +1,3 @@
-// test_containers.cpp - Comprehensive std:: containers test
-//
-// Compile:  g++ -O2 -std=c++17 -fno-exceptions -o test_containers test_containers.cpp
-//
-// Design notes:
-//  - unordered_set/unordered_map iteration order is NOT guaranteed to be
-//    stable/portable, so whenever their contents affect printed output,
-//    the contents are copied out and sorted first. Nothing here relies on
-//    unordered-container iteration order directly.
-//  - operator[]/at() are only ever used with keys/indices known to be
-//    valid, so no exception paths are exercised (required for
-//    -fno-exceptions).
-//  - std::sort is used only with comparators that establish a strict weak
-//    ordering; ties are broken explicitly so results are unambiguous.
-
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -37,9 +22,6 @@
 #define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
-// ---------------------------------------------------------------------------
-// Deterministic generator (LCG) reused from the pattern in the other tests
-// ---------------------------------------------------------------------------
 struct Lcg {
     uint64_t state;
     explicit Lcg(uint64_t seed) : state(seed) {}
@@ -53,9 +35,6 @@ struct Lcg {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Helper printing
-// ---------------------------------------------------------------------------
 template <typename Container>
 void printIntContainer(const std::string& label, const Container& c) {
     std::cout << label << ": [";
@@ -68,9 +47,6 @@ void printIntContainer(const std::string& label, const Container& c) {
     std::cout << "]\n";
 }
 
-// ---------------------------------------------------------------------------
-// A small Person struct used across several container demonstrations
-// ---------------------------------------------------------------------------
 struct Person {
     std::string name;
     int age;
@@ -81,9 +57,6 @@ bool comparePersonByAgeThenName(const Person& a, const Person& b) {
     return a.name < b.name;
 }
 
-// ---------------------------------------------------------------------------
-// Section 1: std::vector
-// ---------------------------------------------------------------------------
 uint64_t vectorSection() {
     std::cout << "-- std::vector --\n";
     uint64_t checksum = 0;
@@ -140,9 +113,6 @@ uint64_t vectorSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 2: std::array
-// ---------------------------------------------------------------------------
 uint64_t arraySection() {
     std::cout << "\n-- std::array --\n";
     uint64_t checksum = 0;
@@ -168,9 +138,6 @@ uint64_t arraySection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 3: std::deque
-// ---------------------------------------------------------------------------
 uint64_t dequeSection() {
     std::cout << "\n-- std::deque --\n";
     uint64_t checksum = 0;
@@ -193,9 +160,6 @@ uint64_t dequeSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 4: std::list
-// ---------------------------------------------------------------------------
 uint64_t listSection() {
     std::cout << "\n-- std::list --\n";
     uint64_t checksum = 0;
@@ -228,9 +192,6 @@ uint64_t listSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 5: std::set / std::multiset
-// ---------------------------------------------------------------------------
 uint64_t setSection() {
     std::cout << "\n-- std::set / std::multiset --\n";
     uint64_t checksum = 0;
@@ -263,9 +224,6 @@ uint64_t setSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 6: std::map / std::multimap
-// ---------------------------------------------------------------------------
 uint64_t mapSection() {
     std::cout << "\n-- std::map / std::multimap --\n";
     uint64_t checksum = 0;
@@ -305,9 +263,6 @@ uint64_t mapSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 7: unordered containers (order-independent output only)
-// ---------------------------------------------------------------------------
 uint64_t unorderedSection() {
     std::cout << "\n-- std::unordered_set / std::unordered_map --\n";
     uint64_t checksum = 0;
@@ -339,9 +294,6 @@ uint64_t unorderedSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 8: stack / queue / priority_queue
-// ---------------------------------------------------------------------------
 uint64_t adapterSection() {
     std::cout << "\n-- std::stack / std::queue / std::priority_queue --\n";
     uint64_t checksum = 0;
@@ -389,9 +341,6 @@ uint64_t adapterSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 9: pair / tuple
-// ---------------------------------------------------------------------------
 uint64_t pairTupleSection() {
     std::cout << "\n-- std::pair / std::tuple --\n";
     uint64_t checksum = 0;
@@ -423,9 +372,6 @@ uint64_t pairTupleSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 10: std::bitset
-// ---------------------------------------------------------------------------
 uint64_t bitsetSection() {
     std::cout << "\n-- std::bitset --\n";
     uint64_t checksum = 0;
@@ -452,9 +398,6 @@ uint64_t bitsetSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 11: numeric algorithms
-// ---------------------------------------------------------------------------
 uint64_t numericAlgorithmsSection() {
     std::cout << "\n-- Numeric algorithms --\n";
     uint64_t checksum = 0;
@@ -488,9 +431,6 @@ uint64_t numericAlgorithmsSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 12: struct sorting / searching, nested containers
-// ---------------------------------------------------------------------------
 uint64_t structAndNestedSection() {
     std::cout << "\n-- Struct sorting and nested containers --\n";
     uint64_t checksum = 0;
@@ -530,9 +470,6 @@ uint64_t structAndNestedSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Section 13: deterministic data via LCG combined with containers
-// ---------------------------------------------------------------------------
 uint64_t generatedDataSection() {
     std::cout << "\n-- Deterministically generated dataset --\n";
     uint64_t checksum = 0;
@@ -560,9 +497,6 @@ uint64_t generatedDataSection() {
     return checksum;
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
 

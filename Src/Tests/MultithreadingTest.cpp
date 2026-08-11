@@ -1,32 +1,3 @@
-// test_threading.cpp - Multi-threaded application test
-//
-// Compile:  g++ -O2 -std=c++17 -fno-exceptions -pthread -o test_threading test_threading.cpp
-//
-// Design notes (these are the rules that make a threaded program's output
-// reproducible even though thread *scheduling* is not):
-//  1. All input data is generated single-threaded, up front, by a seeded
-//     deterministic LCG -- never by std::rand/random_device.
-//  2. Every worker thread writes ONLY to a memory location that no other
-//     thread touches (its own slot in a results array, or disjoint rows of
-//     a matrix). This means there are no data races, and the *content* of
-//     the result never depends on which thread happened to finish first.
-//  3. Wherever threads must share mutable state (the mutex-protected
-//     counter, the producer/consumer queue), the shared state is updated
-//     with operations that are either (a) commutative/associative integer
-//     operations, so any interleaving yields the same final value, or
-//     (b) ordered by a mutex + condition variable so the logical order is
-//     fixed regardless of physical thread timing.
-//  4. Combination of per-thread results into the final answer always
-//     happens on the main thread, AFTER every worker has been joined, and
-//     always in a fixed index order (thread 0, 1, 2, ... N-1) -- never in
-//     "whichever finished first" order.
-//  5. No thread ever calls std::cout directly. Only the main thread prints,
-//     after all joins, so there is no possibility of interleaved /
-//     torn output between runs.
-//  6. Thread count is a fixed compile-time constant (not
-//     hardware_concurrency()), so the partitioning of work is identical on
-//     every run and every machine.
-
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -45,9 +16,6 @@
 
 constexpr int NUM_THREADS = 6;
 
-// ---------------------------------------------------------------------------
-// Deterministic generator (LCG)
-// ---------------------------------------------------------------------------
 struct Lcg {
     uint64_t state;
     explicit Lcg(uint64_t seed) : state(seed) {}
@@ -61,11 +29,6 @@ struct Lcg {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Deterministic chunk boundaries: splits [0, total) into NUM_THREADS
-// contiguous ranges as evenly as possible. Purely a function of `total`
-// and NUM_THREADS, so identical on every run/machine.
-// ---------------------------------------------------------------------------
 struct Range {
     size_t begin;
     size_t end;
@@ -86,10 +49,6 @@ std::vector<Range> makeChunks(size_t total, int numChunks) {
     return chunks;
 }
 
-// ---------------------------------------------------------------------------
-// 1. Parallel sum of squares. Each thread writes to its own results[i]
-//    slot -- no shared mutable state, no locking needed, no races.
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 void sumOfSquaresWorker(const std::vector<long long>& data, Range range, long long& outResult) {
     long long sum = 0;
@@ -114,15 +73,11 @@ long long parallelSumOfSquares(const std::vector<long long>& data) {
 
     long long total = 0;
     for (int i = 0; i < NUM_THREADS; ++i) {
-        total += partial[static_cast<size_t>(i)]; // fixed order: thread 0..N-1
+        total += partial[static_cast<size_t>(i)];
     }
     return total;
 }
 
-// ---------------------------------------------------------------------------
-// 2. Parallel prime counting over [2, bound). Each thread counts primes in
-//    its own disjoint sub-range via trial division, writing to its own slot.
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 bool isPrimeTrialDivision(long long n) {
     if (n < 2) return false;
@@ -165,11 +120,6 @@ long long parallelPrimeCount(size_t bound) {
     return total;
 }
 
-// ---------------------------------------------------------------------------
-// 3. Parallel max-finding. Combination via max() is commutative/associative
-//    so combining order truly does not matter here -- a good example of a
-//    reduction that stays correct under any interleaving.
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 void maxFinderWorker(const std::vector<long long>& data, Range range, long long& outMax) {
     long long best = data[range.begin];
@@ -199,11 +149,6 @@ long long parallelMax(const std::vector<long long>& data) {
     return best;
 }
 
-// ---------------------------------------------------------------------------
-// 4. Mutex-protected shared counter. Every increment is a plain integer add
-//    (associative & commutative), so no matter how the threads interleave,
-//    the final total is always NUM_THREADS * incrementsPerThread.
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 void counterWorker(std::mutex& mtx, long long& sharedCounter, int incrementsPerThread) {
     for (int i = 0; i < incrementsPerThread; ++i) {
@@ -227,14 +172,6 @@ long long runMutexCounter(int incrementsPerThread) {
     return sharedCounter;
 }
 
-// ---------------------------------------------------------------------------
-// 5. Producer/consumer with a mutex + condition_variable bounded queue. The
-//    single producer pushes 0..N-1 in that exact order; the single consumer
-//    pops in FIFO order. Because there is exactly one producer and one
-//    consumer and the queue preserves FIFO order, the sequence of values
-//    consumed is always 0, 1, 2, ..., N-1 regardless of the relative speed
-//    of the two threads -- so the resulting sum is fully deterministic.
-// ---------------------------------------------------------------------------
 class BoundedQueue {
 public:
     explicit BoundedQueue(size_t capacity) : capacity_(capacity), finished_(false) {}
@@ -253,7 +190,6 @@ public:
         notEmpty_.notify_all();
     }
 
-    // Returns false when the queue is empty AND the producer signalled done.
     bool pop(long long& outValue) {
         std::unique_lock<std::mutex> lock(mtx_);
         notEmpty_.wait(lock, [this] { return !queue_.empty() || finished_; });
@@ -297,11 +233,6 @@ void consumerThread(BoundedQueue& q, long long& outSum, long long& outCount) {
     outCount = consumed;
 }
 
-// ---------------------------------------------------------------------------
-// 6. Parallel matrix multiplication (int). Rows of the result are
-//    partitioned across threads; each thread writes only to its own
-//    disjoint set of rows, so there is no need for locking.
-// ---------------------------------------------------------------------------
 using Matrix = std::vector<std::vector<long long>>;
 
 __attribute__((noinline))
@@ -357,11 +288,6 @@ long long matrixChecksum(const Matrix& m) {
     return sum;
 }
 
-// ---------------------------------------------------------------------------
-// 7. std::call_once demonstration: a shared piece of "expensive" one-time
-//    initialization state, guaranteed to run exactly once no matter how
-//    many threads race to trigger it.
-// ---------------------------------------------------------------------------
 std::once_flag g_initFlag;
 long long g_initializedValue = 0;
 
@@ -390,11 +316,6 @@ long long runCallOnceDemo() {
     return g_initializedValue;
 }
 
-// ---------------------------------------------------------------------------
-// 8. Parallel Collatz step counting. Each thread writes into its own
-//    disjoint slice of a shared results vector -- disjoint indices mean no
-//    race even without a lock.
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 int collatzSteps(long long n) {
     int steps = 0;
@@ -405,7 +326,7 @@ int collatzSteps(long long n) {
             n = 3 * n + 1;
         }
         ++steps;
-        if (steps > 10000) break; // safety bound; not expected to trigger for our range
+        if (steps > 10000) break;
     }
     return steps;
 }
@@ -413,7 +334,7 @@ int collatzSteps(long long n) {
 __attribute__((noinline))
 void collatzWorker(std::vector<int>& results, Range range) {
     for (size_t n = range.begin; n < range.end; ++n) {
-        results[n] = collatzSteps(static_cast<long long>(n + 1)); // avoid n=0
+        results[n] = collatzSteps(static_cast<long long>(n + 1));
     }
 }
 
@@ -432,9 +353,6 @@ std::vector<int> parallelCollatz(size_t count) {
     return results;
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -443,10 +361,8 @@ int main() {
     std::cout << "=== Multi-threaded Application Test ===\n";
     std::cout << "(fixed thread count: " << NUM_THREADS << ")\n\n";
 
-    // All data generated single-threaded and deterministically.
     Lcg rng(88172645463325252ULL);
 
-    // 1. Parallel sum of squares
     std::cout << "-- Parallel sum of squares --\n";
     std::vector<long long> squareData;
     squareData.reserve(2000000);
@@ -457,19 +373,16 @@ int main() {
     std::cout << "sum of squares: " << sumSquares << "\n";
     checksum += static_cast<uint64_t>(sumSquares);
 
-    // 2. Parallel prime counting
     std::cout << "\n-- Parallel prime counting --\n";
     long long primeCount = parallelPrimeCount(300000);
     std::cout << "primes below 300000: " << primeCount << "\n";
     checksum += static_cast<uint64_t>(primeCount);
 
-    // 3. Parallel max
     std::cout << "\n-- Parallel max --\n";
     long long maxValue = parallelMax(squareData);
     std::cout << "max value in dataset: " << maxValue << "\n";
     checksum += static_cast<uint64_t>(maxValue + 1000);
 
-    // 4. Mutex-protected counter
     std::cout << "\n-- Mutex-protected shared counter --\n";
     long long counterResult = runMutexCounter(200000);
     long long expectedCounter = static_cast<long long>(NUM_THREADS) * 200000LL;
@@ -477,7 +390,6 @@ int main() {
     std::cout << "matches expected: " << (counterResult == expectedCounter ? "true" : "false") << "\n";
     checksum += static_cast<uint64_t>(counterResult);
 
-    // 5. Producer/consumer
     std::cout << "\n-- Producer/consumer (bounded queue) --\n";
     BoundedQueue queue(64);
     long long producedCount = 500000;
@@ -487,12 +399,11 @@ int main() {
     std::thread consumer(consumerThread, std::ref(queue), std::ref(consumedSum), std::ref(consumedCount));
     producer.join();
     consumer.join();
-    long long expectedSum = (producedCount - 1) * producedCount / 2; // sum(0..N-1)
+    long long expectedSum = (producedCount - 1) * producedCount / 2;
     std::cout << "consumed count: " << consumedCount << " (expected " << producedCount << ")\n";
     std::cout << "consumed sum: " << consumedSum << " (expected " << expectedSum << ")\n";
     checksum += static_cast<uint64_t>(consumedSum % 1000000007LL);
 
-    // 6. Parallel matrix multiplication
     std::cout << "\n-- Parallel matrix multiplication --\n";
     const int matSize = 120;
     Matrix matA = makeDeterministicMatrix(matSize, rng);
@@ -504,13 +415,11 @@ int main() {
     std::cout << "result[0][0]=" << product[0][0] << " result[last][last]=" << product.back().back() << "\n";
     checksum += static_cast<uint64_t>(matChecksum % 1000000007LL + 1000000007LL);
 
-    // 7. call_once demonstration
     std::cout << "\n-- std::call_once demonstration --\n";
     long long onceResult = runCallOnceDemo();
     std::cout << "one-time-init value: " << onceResult << "\n";
     checksum += static_cast<uint64_t>(onceResult);
 
-    // 8. Parallel Collatz
     std::cout << "\n-- Parallel Collatz step counting --\n";
     std::vector<int> collatzResults = parallelCollatz(200000);
     long long collatzTotal = std::accumulate(collatzResults.begin(), collatzResults.end(), 0LL);
@@ -520,7 +429,6 @@ int main() {
     checksum += static_cast<uint64_t>(collatzTotal % 1000000007LL);
     checksum += static_cast<uint64_t>(collatzMaxSteps);
 
-    // Final checksum
     std::cout << "\n=== Final checksum ===\n";
     std::cout << "TOTAL_CHECKSUM: " << checksum << "\n";
 

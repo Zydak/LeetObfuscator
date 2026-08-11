@@ -43,9 +43,6 @@ namespace LeetObfuscator
 
         struct GlobalAttributes
         {
-            GlobalParseMode defaultParseMode = GlobalParseMode::All;
-            uint64_t defaultRuntimeSeed = 0;
-            uint32_t stringEncryptionProbability = 100;
             PassArguments parameters;
             std::vector<Pass> passes;
         };
@@ -96,6 +93,7 @@ namespace LeetObfuscator
         static bool ShouldSkipBlock(llvm::BasicBlock* block, const FunctionAttributes& attributes);
         static std::shared_ptr<RandomNumberGenerator> GetGenerator(const FunctionAttributes& attributes);
         static std::shared_ptr<RandomNumberGenerator> GetGenerator(); // TODO
+        static const std::vector<std::string>* FindArgument(const PassArguments& arguments, llvm::StringRef key);
 
     private:
         using OptionApplier = std::function<void(llvm::Function&, const std::vector<std::string>*, llvm::StringRef, FunctionAttributes&)>;
@@ -107,7 +105,6 @@ namespace LeetObfuscator
         };
 
         static void SetArgument(PassArguments& arguments, llvm::StringRef key, std::vector<std::string> values);
-        static const std::vector<std::string>* FindArgument(const PassArguments& arguments, llvm::StringRef key);
         static std::vector<std::string> ParseValues(llvm::StringRef value);
         static std::vector<std::string> GetFunctionOption(llvm::Function& function, llvm::StringRef key);
         static void ReportInvalidArgument(llvm::Function& function, llvm::StringRef key, llvm::StringRef reason);

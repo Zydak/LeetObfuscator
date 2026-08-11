@@ -1,20 +1,3 @@
-// test_strings.cpp - std::string and const char* manipulation test
-//
-// Compile:  g++ -O2 -std=c++17 -fno-exceptions -o test_strings test_strings.cpp
-//
-// Design notes:
-//  - Never uses std::stoi/std::stod/.at() with data that could be invalid,
-//    since those throw and this file targets -fno-exceptions.
-//  - Never uses std::tolower/std::isalpha/etc. with a plain (possibly
-//    negative) char -- always casts to unsigned char first, which is the
-//    standard way to avoid UB in <cctype>.
-//  - Never uses strcpy/strcat/sprintf (unbounded); always snprintf or
-//    manual bounds-checked loops, with explicit null termination.
-//  - No dependency on std::hash (implementation defined); uses a hand
-//    rolled deterministic FNV-1a hash instead.
-//  - No unordered_map/unordered_set is used for anything that affects
-//    printed order, so output ordering is always deterministic.
-
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -30,9 +13,6 @@
 #define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
-// ---------------------------------------------------------------------------
-// Deterministic hashing (FNV-1a) -- avoids relying on std::hash internals
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 uint64_t fnv1aHash(const std::string& s) {
     uint64_t hash = 14695981039346656037ULL;
@@ -56,9 +36,6 @@ uint64_t fnv1aHashCStr(const char* s) {
     return hash;
 }
 
-// ---------------------------------------------------------------------------
-// Safe C-string helpers (bounds checked, always null-terminated)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 size_t safeStrLen(const char* s, size_t maxLen) {
     size_t len = 0;
@@ -68,7 +45,6 @@ size_t safeStrLen(const char* s, size_t maxLen) {
     return len;
 }
 
-// Copies at most (destSize - 1) characters and always null-terminates.
 __attribute__((noinline))
 void safeStrCopy(char* dest, size_t destSize, const char* src) {
     if (destSize == 0) return;
@@ -80,7 +56,6 @@ void safeStrCopy(char* dest, size_t destSize, const char* src) {
     dest[i] = '\0';
 }
 
-// Appends at most enough of src to keep dest within destSize, null-terminated.
 __attribute__((noinline))
 void safeStrAppend(char* dest, size_t destSize, const char* src) {
     size_t destLen = safeStrLen(dest, destSize);
@@ -93,9 +68,6 @@ void safeStrAppend(char* dest, size_t destSize, const char* src) {
     dest[destLen + i] = '\0';
 }
 
-// ---------------------------------------------------------------------------
-// Case conversion (unsigned char cast required for correctness / no UB)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 std::string toUpperStr(const std::string& s) {
     std::string result = s;
@@ -114,9 +86,6 @@ std::string toLowerStr(const std::string& s) {
     return result;
 }
 
-// ---------------------------------------------------------------------------
-// Reverse
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 std::string reverseStr(const std::string& s) {
     std::string result = s;
@@ -138,9 +107,6 @@ void reverseCStrInPlace(char* s, size_t len) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Palindrome checking (case-insensitive, alnum-only)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 bool isAlnumChar(char c) {
     return std::isalnum(static_cast<unsigned char>(c)) != 0;
@@ -170,9 +136,6 @@ bool isPalindrome(const std::string& s) {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Split / join
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 std::vector<std::string> splitStr(const std::string& s, char delimiter) {
     std::vector<std::string> parts;
@@ -201,9 +164,6 @@ std::string joinStr(const std::vector<std::string>& parts, const std::string& de
     return result;
 }
 
-// ---------------------------------------------------------------------------
-// Trim whitespace
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 bool isSpaceChar(char c) {
     return std::isspace(static_cast<unsigned char>(c)) != 0;
@@ -218,9 +178,6 @@ std::string trimStr(const std::string& s) {
     return s.substr(start, end - start);
 }
 
-// ---------------------------------------------------------------------------
-// Tokenizing with multiple delimiters
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 std::vector<std::string> tokenize(const std::string& s, const std::string& delimiters) {
     std::vector<std::string> tokens;
@@ -242,9 +199,6 @@ std::vector<std::string> tokenize(const std::string& s, const std::string& delim
     return tokens;
 }
 
-// ---------------------------------------------------------------------------
-// Word frequency counter (std::map keeps deterministic, sorted iteration)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 std::map<std::string, int> wordFrequency(const std::vector<std::string>& words) {
     std::map<std::string, int> freq;
@@ -255,9 +209,6 @@ std::map<std::string, int> wordFrequency(const std::vector<std::string>& words) 
     return freq;
 }
 
-// ---------------------------------------------------------------------------
-// Longest common prefix
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 std::string longestCommonPrefix(const std::vector<std::string>& strs) {
     if (strs.empty()) return "";
@@ -274,9 +225,6 @@ std::string longestCommonPrefix(const std::vector<std::string>& strs) {
     return prefix;
 }
 
-// ---------------------------------------------------------------------------
-// Manual integer <-> string conversion (avoids exception-throwing stoi)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 bool parseIntSafe(const std::string& s, long& outValue) {
     if (s.empty()) return false;
@@ -305,9 +253,6 @@ std::string intToStringManual(long value) {
     return std::string(buffer);
 }
 
-// ---------------------------------------------------------------------------
-// Caesar cipher (deterministic wraparound using unsigned arithmetic)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 std::string caesarShift(const std::string& s, int shift) {
     std::string result = s;
@@ -323,14 +268,10 @@ std::string caesarShift(const std::string& s, int shift) {
             offset = (offset + normalizedShift) % 26;
             c = static_cast<char>('A' + offset);
         }
-        // non-alphabetic characters are left untouched
     }
     return result;
 }
 
-// ---------------------------------------------------------------------------
-// Simple deterministic Base64-like encoder / decoder
-// ---------------------------------------------------------------------------
 const char* BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 __attribute__((noinline))
@@ -401,18 +342,12 @@ std::string base64Decode(const std::string& input) {
     return output;
 }
 
-// ---------------------------------------------------------------------------
-// Sorting strings with a custom comparator (length then lexicographic)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 bool compareByLengthThenAlpha(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return a.size() < b.size();
     return a < b;
 }
 
-// ---------------------------------------------------------------------------
-// Anagram check
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 bool isAnagram(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
@@ -423,10 +358,6 @@ bool isAnagram(const std::string& a, const std::string& b) {
     return sa == sb;
 }
 
-// ---------------------------------------------------------------------------
-// Longest palindromic substring (brute force, deterministic on ties: first
-// found wins)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 bool isPalindromeRange(const std::string& s, size_t left, size_t right) {
     while (left < right) {
@@ -455,9 +386,6 @@ std::string longestPalindromicSubstring(const std::string& s) {
     return s.substr(bestStart, bestLen);
 }
 
-// ---------------------------------------------------------------------------
-// Levenshtein edit distance (DP)
-// ---------------------------------------------------------------------------
 __attribute__((noinline))
 size_t levenshteinDistance(const std::string& a, const std::string& b) {
     size_t n = a.size();
@@ -485,9 +413,6 @@ size_t levenshteinDistance(const std::string& a, const std::string& b) {
     return dp[n][m];
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -495,7 +420,6 @@ int main() {
 
     std::cout << "=== String / C-string Manipulation Test ===\n\n";
 
-    // --- Basic C-string operations ---
     std::cout << "-- C-string basics --\n";
     char buffer[128];
     safeStrCopy(buffer, sizeof(buffer), "Hello, obfuscator world!");
@@ -523,7 +447,6 @@ int main() {
     std::cout << "reversed C-string: " << toReverse << "\n";
     checksum += fnv1aHashCStr(toReverse) % 1000000ULL;
 
-    // --- std::string basics ---
     std::cout << "\n-- std::string basics --\n";
     std::string s1 = "The Quick Brown Fox";
     std::string s2 = " Jumps Over The Lazy Dog";
@@ -554,7 +477,6 @@ int main() {
     std::cout << "reversed: " << reversedStr << "\n";
     checksum += fnv1aHash(reversedStr) % 1000000ULL;
 
-    // --- Palindrome checking ---
     std::cout << "\n-- Palindrome checks --\n";
     std::vector<std::string> palindromeCandidates = {
         "A man a plan a canal Panama",
@@ -569,7 +491,6 @@ int main() {
         checksum += result ? 1 : 0;
     }
 
-    // --- Split / join ---
     std::cout << "\n-- Split / join --\n";
     std::string csvLine = "alpha,beta,gamma,delta,epsilon";
     std::vector<std::string> splitParts = splitStr(csvLine, ',');
@@ -581,14 +502,12 @@ int main() {
     std::cout << "rejoined: " << rejoined << "\n";
     checksum += fnv1aHash(rejoined) % 1000000ULL;
 
-    // --- Trim ---
     std::cout << "\n-- Trim --\n";
     std::string padded = "   \t  padded string with spaces  \n  ";
     std::string trimmed = trimStr(padded);
     std::cout << "trimmed: [" << trimmed << "]\n";
     checksum += trimmed.size();
 
-    // --- Tokenizing ---
     std::cout << "\n-- Tokenizing --\n";
     std::string sentence = "one, two;three   four,,five";
     std::vector<std::string> tokens = tokenize(sentence, ", ;");
@@ -598,7 +517,6 @@ int main() {
     }
     checksum += tokens.size();
 
-    // --- Word frequency ---
     std::cout << "\n-- Word frequency --\n";
     std::vector<std::string> paragraph = {
         "the", "quick", "brown", "fox", "the", "lazy", "dog",
@@ -610,14 +528,12 @@ int main() {
         checksum += static_cast<uint64_t>(entry.second);
     }
 
-    // --- Longest common prefix ---
     std::cout << "\n-- Longest common prefix --\n";
     std::vector<std::string> prefixCandidates = {"interstellar", "interval", "internet", "internal"};
     std::string commonPrefix = longestCommonPrefix(prefixCandidates);
     std::cout << "common prefix: " << commonPrefix << "\n";
     checksum += commonPrefix.size();
 
-    // --- Manual number <-> string conversion ---
     std::cout << "\n-- Manual number/string conversion --\n";
     std::vector<std::string> numberStrings = {"42", "-17", "1000", "notanumber", "+256"};
     for (const auto& ns : numberStrings) {
@@ -631,7 +547,6 @@ int main() {
         std::cout << "\n";
     }
 
-    // --- Caesar cipher ---
     std::cout << "\n-- Caesar cipher --\n";
     std::string plain = "Attack at Dawn, Obfuscator!";
     std::string encrypted = caesarShift(plain, 7);
@@ -643,7 +558,6 @@ int main() {
     checksum += fnv1aHash(encrypted) % 1000000ULL;
     checksum += (decrypted == plain) ? 1 : 0;
 
-    // --- Base64 ---
     std::cout << "\n-- Base64 --\n";
     std::string toEncode = "Deterministic obfuscation testing, 1234567890!";
     std::string encoded = base64Encode(toEncode);
@@ -655,7 +569,6 @@ int main() {
     checksum += fnv1aHash(encoded) % 1000000ULL;
     checksum += (decoded == toEncode) ? 1 : 0;
 
-    // --- Sorting with custom comparator ---
     std::cout << "\n-- Sorted word list --\n";
     std::vector<std::string> wordsToSort = {
         "beta", "a", "gamma", "delta", "xy", "alpha", "hi", "z"
@@ -667,7 +580,6 @@ int main() {
     }
     checksum += fnv1aHash(joinStr(sortedWords, ",")) % 1000000ULL;
 
-    // --- Anagram check ---
     std::cout << "\n-- Anagram checks --\n";
     std::vector<std::pair<std::string, std::string>> anagramPairs = {
         {"listen", "silent"},
@@ -681,7 +593,6 @@ int main() {
         checksum += result ? 1 : 0;
     }
 
-    // --- Longest palindromic substring ---
     std::cout << "\n-- Longest palindromic substring --\n";
     std::string palinSource = "forgeeksskeegfortestcaseabccba";
     std::string longestPalin = longestPalindromicSubstring(palinSource);
@@ -689,7 +600,6 @@ int main() {
     std::cout << "longest palindromic substring: " << longestPalin << "\n";
     checksum += longestPalin.size();
 
-    // --- Levenshtein distance ---
     std::cout << "\n-- Levenshtein edit distance --\n";
     std::vector<std::pair<std::string, std::string>> distPairs = {
         {"kitten", "sitting"},
@@ -703,7 +613,6 @@ int main() {
         checksum += dist;
     }
 
-    // --- ostringstream-based building ---
     std::cout << "\n-- ostringstream formatting --\n";
     std::ostringstream oss;
     oss << "Report: " << std::setw(6) << std::setfill('0') << 42
@@ -712,7 +621,6 @@ int main() {
     std::cout << report << "\n";
     checksum += fnv1aHash(report) % 1000000ULL;
 
-    // --- Hash demonstration ---
     std::cout << "\n-- Deterministic hashing --\n";
     std::vector<std::string> hashSamples = {"alpha", "beta", "gamma", "obfuscator", "determinism"};
     for (const auto& sample : hashSamples) {
@@ -721,7 +629,6 @@ int main() {
         checksum += h % 1000000ULL;
     }
 
-    // --- Final checksum ---
     std::cout << "\n=== Final checksum ===\n";
     std::cout << "TOTAL_CHECKSUM: " << checksum << "\n";
 
