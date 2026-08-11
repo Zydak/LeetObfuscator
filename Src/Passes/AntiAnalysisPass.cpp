@@ -96,7 +96,7 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
     llvm::BasicBlock* bogus = CreateInvalidBogusBlock(block->getParent(), generator);
     llvm::BasicBlock* newSplitBlock = nullptr;
 
-    if (rdtsc)
+    if (false)
         newSplitBlock = ChainBogusIntoBlockRdtsc(block, bogus, randomPos, generator);
     else
         newSplitBlock = ChainBogusIntoBlock(block, bogus, randomPos, generator);
@@ -423,4 +423,37 @@ int LeetObfuscator::AntiAnalysisPass::RankValue(llvm::Value* value)
         return isConst ? 3 : 1;
 
     return -1;
+}
+
+void LeetObfuscator::AntiDissasemblyEmitter::encodeInstruction(const llvm::MCInst& instruction, llvm::SmallVectorImpl<char>& bytes, llvm::SmallVectorImpl<llvm::MCFixup>& fixups, const llvm::MCSubtargetInfo& sti) const
+{
+    static SettingsParser::GlobalAttributes globalSettings = SettingsParser::ParseGlobalAttributes();
+    static bool antiAnalysisEnabled = false;
+    if (!antiAnalysisEnabled)
+    {
+        for (auto& pass : globalSettings.passes)
+        {
+            if (pass.type == SettingsParser::PassType::AntiAnalysisPass)
+            {
+                antiAnalysisEnabled = true;
+                llvm::errs() << "Running AntiAnalysisCodeEmitterPass\n";
+                break;
+            }
+        }
+    }
+
+    llvm::SmallVector<char, 16> tmp;
+    llvm::SmallVector<llvm::MCFixup, 4> tmpFixups;
+    m_Real->encodeInstruction(instruction, tmp, tmpFixups, sti);
+
+    if (!tmp.empty() && (uint8_t)tmp[0] == 0xFF)
+    {
+        bytes.push_back((char)0xEB);
+        for (auto &F : tmpFixups)
+        {
+            F.setOffset(F.getOffset() + 1);
+        }
+    }
+    bytes.append(tmp.begin(), tmp.end());
+    fixups.append(tmpFixups.begin(), tmpFixups.end());
 }

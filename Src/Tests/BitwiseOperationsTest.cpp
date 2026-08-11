@@ -9,6 +9,7 @@
 #include <cstring>
 #include <algorithm>
 #include <chrono>
+#include <iostream>
 
 #define LEET_IMPLEMENTATION
 #include "../Leet.h"
@@ -676,7 +677,7 @@ int main() {
     std::printf("CHECKSUM: 0x%016llx\n", (unsigned long long)checksum);
 
     auto end = std::chrono::high_resolution_clock::now();
-    auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-    printf("%ld\n", diff);
+    uint64_t diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    std::cout << diff << std::endl;
     return 0;
 }

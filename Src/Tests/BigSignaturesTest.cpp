@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <iostream>
 
 #define LEET_IMPLEMENTATION
 #include "../Leet.h"
@@ -64,6 +65,30 @@ static inline uint64_t add_d(uint64_t h, double d) {
     return mix64(h ^ u);
 }
 
+// ---- Deterministic (architecture-independent) float/double summation ----
+// A plain "a + b + c + ..." chain can be computed by the compiler using
+// extended-precision registers (the x87 FPU on i686 keeps 80 bits internally,
+// vs. the SSE2 unit x86-64 uses by default, which never exceeds the nominal
+// 32/64-bit width). That gives "double rounding" that only shows up once you
+// chain 3+ terms, and it silently changes results across architectures even
+// though nothing here is undefined behavior.
+//
+// Routing every pairwise add through a real, non-inlinable function call
+// forces the compiler to materialize (and therefore round) each intermediate
+// result at its true type width, because the calling convention requires it
+// to hand off a canonical 32-bit float / 64-bit double at the call boundary.
+// That reproduces strict, single-rounded IEEE-754 semantics on every target,
+// so results become identical on x87, SSE2, NEON, etc. -- no -msse2,
+// -mfpmath=sse, or -ffloat-store required.
+__attribute__((noinline)) static float  radd(float  a, float  b) { return a + b; }
+__attribute__((noinline)) static double radd(double a, double b) { return a + b; }
+
+template <typename T>
+static inline T strict_sum(T a, T b) { return radd(a, b); }
+
+template <typename T, typename... Rest>
+static inline T strict_sum(T a, T b, Rest... rest) { return strict_sum(radd(a, b), rest...); }
+
 // ---- Function 1 ----
 __attribute__((noinline))
 uint64_t f01(
@@ -76,16 +101,16 @@ uint64_t f01(
 {
     uint64_t h = 0x123456789abcdef0ULL;
     h = mix64(h ^ (uint64_t)(a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9));
-    h = add_f(h, b0 + b1 + b2 + b3 + b4 + b5 + b6 + b7);
-    h = add_d(h, c0 + c1 + c2 + c3);
+    h = add_f(h, strict_sum(b0, b1, b2, b3, b4, b5, b6, b7));
+    h = add_d(h, strict_sum(c0, c1, c2, c3));
     if (p0) h = mix64(h ^ (uint64_t)*p0);
     if (p1) h = mix64(h ^ (uint64_t)*p1);
     if (p2) h = add_f(h, *p2);
     if (p3) h = add_d(h, *p3);
     h = mix64(h ^ (uint64_t)(s0.a + s1.a));
-    h = add_f(h, s0.b + s1.b);
+    h = add_f(h, strict_sum(s0.b, s1.b));
     h = mix64(h ^ (uint64_t)(m0.x + m0.y + m0.z + m1.x + m1.y + m1.z));
-    h = add_d(h, m0.d1 + m0.d2 + m1.d1 + m1.d2);
+    h = add_d(h, strict_sum(m0.d1, m0.d2, m1.d1, m1.d2));
     if (bp) {
         for (int i = 0; i < 8; ++i) h = mix64(h ^ (uint64_t)bp->arr[i]);
         for (int i = 0; i < 4; ++i) h = add_f(h, bp->farr[i]);
@@ -108,9 +133,9 @@ uint64_t f02(
     bool* bp, void** vpp, size_t* szp)
 {
     uint64_t h = 0xdeadbeefcafebabeULL;
-    h = add_d(h, d0 + d1 + d2 + d3 + d4 + d5);
+    h = add_d(h, strict_sum(d0, d1, d2, d3, d4, d5));
     h = mix64(h ^ (uint64_t)(i0*i1 + i2*i3 + i4*i5 + i6*i7 + i8*i9));
-    h = add_f(h, f0*f1 + f2*f3 + f4*f5 + f6*f7);
+    h = add_f(h, strict_sum(f0*f1, f2*f3, f4*f5, f6*f7));
     if (sp0) { h = mix64(h ^ (uint64_t)sp0->a); h = add_f(h, sp0->b); }
     if (sp1) { h = mix64(h ^ (uint64_t)sp1->a); h = add_f(h, sp1->b); }
     h = mix64(h ^ (uint64_t)(m.x ^ m.y ^ m.z)); h = add_d(h, m.d1 * m.d2);
@@ -149,14 +174,14 @@ uint64_t f03(
     }
     sumi = v00+v01+v02+v03+v04+v05+v06+v07+v08+v09+v10+v11+v12+v13+v14+v15;
     h = mix64(h ^ (uint64_t)sumi);
-    float sumf = f00+f01+f02+f03+f04+f05+f06+f07+f08+f09;
+    float sumf = strict_sum(f00, f01, f02, f03, f04, f05, f06, f07, f08, f09);
     h = add_f(h, sumf);
-    h = add_d(h, d00+d01+d02+d03);
+    h = add_d(h, strict_sum(d00, d01, d02, d03));
     h = mix64(h ^ (uint64_t)s.a); h = add_f(h, s.b);
-    h = mix64(h ^ (uint64_t)(m.x+m.y+m.z)); h = add_d(h, m.d1+m.d2);
+    h = mix64(h ^ (uint64_t)(m.x+m.y+m.z)); h = add_d(h, strict_sum(m.d1, m.d2));
     if (b) {
         h = mix64(h ^ (uint64_t)b->arr[0] ^ b->arr[7]);
-        h = add_f(h, b->farr[0] + b->farr[3]);
+        h = add_f(h, strict_sum(b->farr[0], b->farr[3]));
         h = add_d(h, b->d);
     }
     h = mix64(h ^ p.u8 ^ p.u16 ^ p.u32 ^ (uint64_t)p.i64);
@@ -186,15 +211,15 @@ uint64_t f04(
     h = mix64(h ^ p0.u32 ^ p1.u32 ^ p2.u32 ^ p3.u32);
     h = mix64(h ^ (uint64_t)(p0.i64 + p1.i64 + p2.i64 + p3.i64));
     h = mix64(h ^ (uint64_t)(b0.arr[0] + b1.arr[0] + b0.arr[7] + b1.arr[7]));
-    h = add_f(h, b0.farr[0] + b1.farr[0]);
-    h = add_d(h, b0.d + b1.d);
+    h = add_f(h, strict_sum(b0.farr[0], b1.farr[0]));
+    h = add_d(h, strict_sum(b0.d, b1.d));
     h = mix64(h ^ (uint64_t)(m0.x + m1.y + m2.z + m3.x));
-    h = add_d(h, m0.d1 + m1.d2 + m2.d1 + m3.d2);
+    h = add_d(h, strict_sum(m0.d1, m1.d2, m2.d1, m3.d2));
     h = mix64(h ^ (uint64_t)(s0.a + s1.a + s2.a + s3.a));
-    h = add_f(h, s0.b + s1.b + s2.b + s3.b);
+    h = add_f(h, strict_sum(s0.b, s1.b, s2.b, s3.b));
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3+i4+i5));
-    h = add_f(h, f0+f1+f2+f3);
-    h = add_d(h, d0+d1+d2+d3);
+    h = add_f(h, strict_sum(f0, f1, f2, f3));
+    h = add_d(h, strict_sum(d0, d1, d2, d3));
     if (pi) h = mix64(h ^ (uint64_t)*pi);
     if (pf) h = add_f(h, *pf);
     if (pd) h = add_d(h, *pd);
@@ -221,12 +246,12 @@ uint64_t f05(
     auto safe_d = [](double* p) -> double { return p ? *p : 0.0; };
 
     h = mix64(h ^ (uint64_t)(safe_i(a0)+safe_i(a1)+safe_i(a2)+safe_i(a3)+safe_i(a4)+safe_i(a5)+safe_i(a6)+safe_i(a7)));
-    h = add_f(h, safe_f(f0)+safe_f(f1)+safe_f(f2)+safe_f(f3)+safe_f(f4)+safe_f(f5)+safe_f(f6)+safe_f(f7));
-    h = add_d(h, safe_d(d0)+safe_d(d1)+safe_d(d2)+safe_d(d3));
+    h = add_f(h, strict_sum(safe_f(f0), safe_f(f1), safe_f(f2), safe_f(f3), safe_f(f4), safe_f(f5), safe_f(f6), safe_f(f7)));
+    h = add_d(h, strict_sum(safe_d(d0), safe_d(d1), safe_d(d2), safe_d(d3)));
     if (s0) { h = mix64(h ^ (uint64_t)s0->a); h = add_f(h, s0->b); }
     if (s1) { h = mix64(h ^ (uint64_t)s1->a); h = add_f(h, s1->b); }
-    if (m0) { h = mix64(h ^ (uint64_t)(m0->x+m0->y+m0->z)); h = add_d(h, m0->d1+m0->d2); }
-    if (m1) { h = mix64(h ^ (uint64_t)(m1->x+m1->y+m1->z)); h = add_d(h, m1->d1+m1->d2); }
+    if (m0) { h = mix64(h ^ (uint64_t)(m0->x+m0->y+m0->z)); h = add_d(h, strict_sum(m0->d1, m0->d2)); }
+    if (m1) { h = mix64(h ^ (uint64_t)(m1->x+m1->y+m1->z)); h = add_d(h, strict_sum(m1->d1, m1->d2)); }
     if (b0) {
         h = mix64(h ^ (uint64_t)b0->arr[3]); h = add_f(h, b0->farr[1]); h = add_d(h, b0->d);
     }
@@ -262,10 +287,10 @@ uint64_t f06(
 {
     uint64_t h = 0x9988776655443322ULL;
     h = mix64(h ^ (uint64_t)(x0+x1+x2+x3+x4+x5+x6+x7+x8+x9));
-    h = add_f(h, y0+y1+y2+y3+y4+y5+y6+y7+y8+y9);
-    h = add_d(h, z0+z1+z2+z3+z4+z5+z6+z7+z8+z9);
+    h = add_f(h, strict_sum(y0, y1, y2, y3, y4, y5, y6, y7, y8, y9));
+    h = add_d(h, strict_sum(z0, z1, z2, z3, z4, z5, z6, z7, z8, z9));
     h = mix64(h ^ (uint64_t)(s0.a ^ s1.a)); h = add_f(h, s0.b * s1.b);
-    h = mix64(h ^ (uint64_t)(m0.x + m1.y)); h = add_d(h, m0.d1 + m1.d2);
+    h = mix64(h ^ (uint64_t)(m0.x + m1.y)); h = add_d(h, strict_sum(m0.d1, m1.d2));
     h = mix64(h ^ (uint64_t)b.arr[0] ^ b.arr[4]); h = add_f(h, b.farr[2]); h = add_d(h, b.d);
     h = mix64(h ^ p.u8 ^ p.u16 ^ p.u32 ^ (uint64_t)p.i64);
     if (pi) h = mix64(h ^ (uint64_t)*pi);
@@ -288,16 +313,16 @@ uint64_t f07(
 {
     uint64_t h = 0x7f6e5d4c3b2a1908ULL;
     h = mix64(h ^ (uint64_t)(b0.arr[1] + b1.arr[2] + b2.arr[3]));
-    h = add_f(h, b0.farr[0] + b1.farr[1] + b2.farr[2]);
-    h = add_d(h, b0.d + b1.d + b2.d);
+    h = add_f(h, strict_sum(b0.farr[0], b1.farr[1], b2.farr[2]));
+    h = add_d(h, strict_sum(b0.d, b1.d, b2.d));
     h = mix64(h ^ (uint64_t)(m0.x + m1.y + m2.z + m3.x));
-    h = add_d(h, m0.d1 + m1.d2 + m2.d1 + m3.d2);
+    h = add_d(h, strict_sum(m0.d1, m1.d2, m2.d1, m3.d2));
     h = mix64(h ^ (uint64_t)(s0.a + s1.a + s2.a + s3.a + s4.a + s5.a));
-    h = add_f(h, s0.b + s1.b + s2.b + s3.b + s4.b + s5.b);
+    h = add_f(h, strict_sum(s0.b, s1.b, s2.b, s3.b, s4.b, s5.b));
     h = mix64(h ^ p0.u32 ^ p1.u32 ^ p2.u32);
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3));
-    h = add_f(h, f0+f1+f2+f3);
-    h = add_d(h, d0+d1);
+    h = add_f(h, strict_sum(f0, f1, f2, f3));
+    h = add_d(h, strict_sum(d0, d1));
     if (pi) h = mix64(h ^ (uint64_t)*pi);
     if (pf) h = add_f(h, *pf);
     if (pd) h = add_d(h, *pd);
@@ -318,11 +343,11 @@ uint64_t f08(
     uint64_t h = 0x0123456789abcdefULL;
     int isum = i00+i01+i02+i03+i04+i05+i06+i07+i08+i09+i10+i11+i12+i13+i14+i15+i16+i17+i18+i19;
     h = mix64(h ^ (uint64_t)isum);
-    float fsum = f00+f01+f02+f03+f04+f05+f06+f07+f08+f09;
+    float fsum = strict_sum(f00, f01, f02, f03, f04, f05, f06, f07, f08, f09);
     h = add_f(h, fsum);
-    h = add_d(h, d00+d01+d02+d03+d04);
+    h = add_d(h, strict_sum(d00, d01, d02, d03, d04));
     h = mix64(h ^ (uint64_t)s.a); h = add_f(h, s.b);
-    h = mix64(h ^ (uint64_t)(m.x+m.y+m.z)); h = add_d(h, m.d1+m.d2);
+    h = mix64(h ^ (uint64_t)(m.x+m.y+m.z)); h = add_d(h, strict_sum(m.d1, m.d2));
     if (b) {
         h = mix64(h ^ (uint64_t)b->arr[5]); h = add_f(h, b->farr[0]); h = add_d(h, b->d);
     }
@@ -345,16 +370,16 @@ uint64_t f09(
     PackedS p, int* pi, float* pf, double* pd, void* pv, char c, short sh, long lg)
 {
     uint64_t h = 0xfedcba9876543210ULL;
-    h = add_d(h, d0+d1+d2+d3+d4+d5+d6+d7);
-    h = add_f(h, f0+f1+f2+f3+f4+f5+f6+f7+f8+f9);
+    h = add_d(h, strict_sum(d0, d1, d2, d3, d4, d5, d6, d7));
+    h = add_f(h, strict_sum(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9));
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3+i4+i5+i6+i7+i8+i9));
     if (s0) { h = mix64(h ^ (uint64_t)s0->a); h = add_f(h, s0->b); }
     if (s1) { h = mix64(h ^ (uint64_t)s1->a); h = add_f(h, s1->b); }
     if (m0) { h = mix64(h ^ (uint64_t)m0->x); h = add_d(h, m0->d1); }
     if (m1) { h = mix64(h ^ (uint64_t)m1->y); h = add_d(h, m1->d2); }
     h = mix64(h ^ (uint64_t)(b0.arr[0] + b1.arr[7]));
-    h = add_f(h, b0.farr[0] + b1.farr[3]);
-    h = add_d(h, b0.d + b1.d);
+    h = add_f(h, strict_sum(b0.farr[0], b1.farr[3]));
+    h = add_d(h, strict_sum(b0.d, b1.d));
     h = mix64(h ^ p.u32 ^ (uint64_t)p.i64);
     if (pi) h = mix64(h ^ (uint64_t)*pi);
     if (pf) h = add_f(h, *pf);
@@ -382,7 +407,7 @@ uint64_t f10(
     sum += i20; sum += i21; sum += i22; sum += i23; sum += i24;
     sum += i25; sum += i26; sum += i27; sum += i28; sum += i29;
     h = mix64(h ^ (uint64_t)sum);
-    h = add_f(h, f0+f1+f2+f3+f4+f5+f6+f7+f8+f9);
+    h = add_f(h, strict_sum(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9));
     // extra computation to use them more
     int prod = 1;
     prod = (prod * (i0|1)) ^ (i10+1);
@@ -405,13 +430,13 @@ uint64_t f11(
 {
     uint64_t h = 0x1111111111111111ULL;
     h = mix64(h ^ (uint64_t)(s0.a+s1.a+s2.a+s3.a+s4.a+s5.a+s6.a+s7.a));
-    h = add_f(h, s0.b+s1.b+s2.b+s3.b+s4.b+s5.b+s6.b+s7.b);
+    h = add_f(h, strict_sum(s0.b, s1.b, s2.b, s3.b, s4.b, s5.b, s6.b, s7.b));
     h = mix64(h ^ (uint64_t)(m0.x+m1.y+m2.z+m3.x));
-    h = add_d(h, m0.d1+m1.d2+m2.d1+m3.d2);
+    h = add_d(h, strict_sum(m0.d1, m1.d2, m2.d1, m3.d2));
     h = mix64(h ^ (uint64_t)(b0.arr[0]+b1.arr[7]));
-    h = add_f(h, b0.farr[0]+b1.farr[3]); h = add_d(h, b0.d+b1.d);
+    h = add_f(h, strict_sum(b0.farr[0], b1.farr[3])); h = add_d(h, strict_sum(b0.d, b1.d));
     h = mix64(h ^ p0.u32 ^ p1.u32 ^ p2.u32 ^ p3.u32);
-    h = mix64(h ^ (uint64_t)(i0+i1+i2+i3)); h = add_f(h, f0+f1); h = add_d(h, d0+d1);
+    h = mix64(h ^ (uint64_t)(i0+i1+i2+i3)); h = add_f(h, strict_sum(f0, f1)); h = add_d(h, strict_sum(d0, d1));
     if (pi) h = mix64(h ^ (uint64_t)*pi);
     if (pf) h = add_f(h, *pf);
     if (pd) h = add_d(h, *pd);
@@ -434,9 +459,9 @@ uint64_t f12(
     auto sd = [](double* p){ return p?*p:0.0; };
     int is = si(p00)+si(p01)+si(p02)+si(p03)+si(p04)+si(p05)+si(p06)+si(p07)+si(p08)+si(p09);
     h = mix64(h ^ (uint64_t)is);
-    float fs = sf(f00)+sf(f01)+sf(f02)+sf(f03)+sf(f04)+sf(f05)+sf(f06)+sf(f07)+sf(f08)+sf(f09);
+    float fs = strict_sum(sf(f00), sf(f01), sf(f02), sf(f03), sf(f04), sf(f05), sf(f06), sf(f07), sf(f08), sf(f09));
     h = add_f(h, fs);
-    h = add_d(h, sd(d00)+sd(d01)+sd(d02)+sd(d03)+sd(d04));
+    h = add_d(h, strict_sum(sd(d00), sd(d01), sd(d02), sd(d03), sd(d04)));
     if (s0) { h = mix64(h ^ (uint64_t)s0->a); h = add_f(h, s0->b); }
     if (s1) { h = mix64(h ^ (uint64_t)s1->a); h = add_f(h, s1->b); }
     if (m0) { h = mix64(h ^ (uint64_t)m0->x); h = add_d(h, m0->d1); }
@@ -466,8 +491,8 @@ uint64_t f13(
     // 40 scalar-ish + 4 structs
     uint64_t h = 0x3333333333333333ULL;
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3));
-    h = add_f(h, f0+f1+f2+f3);
-    h = add_d(h, d0+d1+d2+d3);
+    h = add_f(h, strict_sum(f0, f1, f2, f3));
+    h = add_d(h, strict_sum(d0, d1, d2, d3));
     h = mix64(h ^ (uint64_t)c0 ^ c1 ^ c2 ^ c3);
     h = mix64(h ^ (uint64_t)s0 ^ s1 ^ s2 ^ s3);
     h = mix64(h ^ (uint64_t)l0 ^ l1 ^ l2 ^ l3);
@@ -475,10 +500,10 @@ uint64_t f13(
     h = mix64(h ^ u0 ^ u1 ^ u2 ^ u3);
     h = mix64(h ^ (b0?1:0) ^ (b1?1:0) ^ (b2?1:0) ^ (b3?1:0));
     h = mix64(h ^ (uint64_t)ss.a); h = add_f(h, ss.b);
-    h = mix64(h ^ (uint64_t)(mm.x+mm.y+mm.z)); h = add_d(h, mm.d1+mm.d2);
+    h = mix64(h ^ (uint64_t)(mm.x+mm.y+mm.z)); h = add_d(h, strict_sum(mm.d1, mm.d2));
     if (bb) {
         h = mix64(h ^ (uint64_t)bb->arr[0] ^ bb->arr[7]);
-        h = add_f(h, bb->farr[0] + bb->farr[3]);
+        h = add_f(h, strict_sum(bb->farr[0], bb->farr[3]));
         h = add_d(h, bb->d);
     }
     h = mix64(h ^ pp.u8 ^ pp.u16 ^ pp.u32 ^ (uint64_t)pp.i64);
@@ -497,14 +522,14 @@ uint64_t f14(
 {
     uint64_t h = 0x4444444444444444ULL;
     h = mix64(h ^ (uint64_t)(b0.arr[0]+b1.arr[1]+b2.arr[2]+b3.arr[3]));
-    h = add_f(h, b0.farr[0]+b1.farr[1]+b2.farr[2]+b3.farr[3]);
-    h = add_d(h, b0.d+b1.d+b2.d+b3.d);
+    h = add_f(h, strict_sum(b0.farr[0], b1.farr[1], b2.farr[2], b3.farr[3]));
+    h = add_d(h, strict_sum(b0.d, b1.d, b2.d, b3.d));
     h = mix64(h ^ (uint64_t)(m0.x+m1.y+m2.z+m3.x+m4.y+m5.z));
-    h = add_d(h, m0.d1+m1.d2+m2.d1+m3.d2+m4.d1+m5.d2);
+    h = add_d(h, strict_sum(m0.d1, m1.d2, m2.d1, m3.d2, m4.d1, m5.d2));
     h = mix64(h ^ (uint64_t)(s0.a+s1.a+s2.a+s3.a+s4.a+s5.a+s6.a+s7.a));
-    h = add_f(h, s0.b+s1.b+s2.b+s3.b+s4.b+s5.b+s6.b+s7.b);
+    h = add_f(h, strict_sum(s0.b, s1.b, s2.b, s3.b, s4.b, s5.b, s6.b, s7.b));
     h = mix64(h ^ p0.u32 ^ p1.u32);
-    h = mix64(h ^ (uint64_t)(i0+i1)); h = add_f(h, f0+f1); h = add_d(h, d0+d1);
+    h = mix64(h ^ (uint64_t)(i0+i1)); h = add_f(h, strict_sum(f0, f1)); h = add_d(h, strict_sum(d0, d1));
     if (pi) h = mix64(h ^ (uint64_t)*pi);
     if (pf) h = add_f(h, *pf);
     if (pd) h = add_d(h, *pd);
@@ -526,15 +551,15 @@ uint64_t f15(
     isum += i00+i01+i02+i03+i04+i05+i06+i07+i08+i09;
     isum += i10+i11+i12+i13+i14+i15+i16+i17+i18+i19;
     h = mix64(h ^ (uint64_t)isum);
-    float fsum = f00+f01+f02+f03+f04+f05+f06+f07+f08+f09;
+    float fsum = strict_sum(f00, f01, f02, f03, f04, f05, f06, f07, f08, f09);
     h = add_f(h, fsum);
-    double dsum = d00+d01+d02+d03+d04+d05+d06+d07+d08+d09;
+    double dsum = strict_sum(d00, d01, d02, d03, d04, d05, d06, d07, d08, d09);
     h = add_d(h, dsum);
     // more ops
     int xorv = i00 ^ i05 ^ i10 ^ i15;
     h = mix64(h ^ (uint64_t)xorv);
-    h = add_f(h, f00 * f05 + f09);
-    h = add_d(h, d00 * d05 + d09);
+    h = add_f(h, strict_sum(f00 * f05, f09));
+    h = add_d(h, strict_sum(d00 * d05, d09));
     return h;
 }
 
@@ -552,10 +577,10 @@ uint64_t f16(
     uint64_t h = 0x6666666666666666ULL;
     h = mix64(h ^ p0.u32 ^ p1.u32 ^ p2.u32 ^ p3.u32 ^ p4.u32 ^ p5.u32 ^ p6.u32 ^ p7.u32);
     h = mix64(h ^ (uint64_t)(p0.i64 + p7.i64));
-    h = mix64(h ^ (uint64_t)(b0.arr[0] + b1.arr[7])); h = add_f(h, b0.farr[0] + b1.farr[3]); h = add_d(h, b0.d + b1.d);
-    h = mix64(h ^ (uint64_t)(m0.x + m1.y + m2.z + m3.x)); h = add_d(h, m0.d1 + m3.d2);
-    h = mix64(h ^ (uint64_t)(s0.a + s1.a + s2.a + s3.a)); h = add_f(h, s0.b + s3.b);
-    h = mix64(h ^ (uint64_t)(i0+i1+i2+i3)); h = add_f(h, f0+f1+f2+f3); h = add_d(h, d0+d1);
+    h = mix64(h ^ (uint64_t)(b0.arr[0] + b1.arr[7])); h = add_f(h, strict_sum(b0.farr[0], b1.farr[3])); h = add_d(h, strict_sum(b0.d, b1.d));
+    h = mix64(h ^ (uint64_t)(m0.x + m1.y + m2.z + m3.x)); h = add_d(h, strict_sum(m0.d1, m3.d2));
+    h = mix64(h ^ (uint64_t)(s0.a + s1.a + s2.a + s3.a)); h = add_f(h, strict_sum(s0.b, s3.b));
+    h = mix64(h ^ (uint64_t)(i0+i1+i2+i3)); h = add_f(h, strict_sum(f0, f1, f2, f3)); h = add_d(h, strict_sum(d0, d1));
     if (pi) h = mix64(h ^ (uint64_t)*pi);
     if (pf) h = add_f(h, *pf);
     if (pd) h = add_d(h, *pd);
@@ -575,8 +600,8 @@ uint64_t f17(
     int64_t s = 0;
     s += i0+i1+i2+i3+i4+i5+i6+i7+i8+i9+i10+i11+i12+i13+i14+i15+i16+i17+i18+i19;
     h = mix64(h ^ (uint64_t)s);
-    h = add_f(h, f0+f1+f2+f3+f4+f5+f6+f7+f8+f9);
-    h = add_d(h, d0+d1+d2+d3+d4+d5+d6+d7+d8+d9);
+    h = add_f(h, strict_sum(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9));
+    h = add_d(h, strict_sum(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9));
     h = mix64(h ^ (uint64_t)(i0*i19 + i5*i14));
     h = add_f(h, f0*f9);
     h = add_d(h, d0*d9);
@@ -597,7 +622,7 @@ uint64_t f18(
     auto sa = [](SmallS* p){ return p ? p->a : 0; };
     auto sb = [](SmallS* p){ return p ? p->b : 0.f; };
     h = mix64(h ^ (uint64_t)(sa(s0)+sa(s1)+sa(s2)+sa(s3)+sa(s4)+sa(s5)+sa(s6)+sa(s7)));
-    h = add_f(h, sb(s0)+sb(s1)+sb(s2)+sb(s3)+sb(s4)+sb(s5)+sb(s6)+sb(s7));
+    h = add_f(h, strict_sum(sb(s0), sb(s1), sb(s2), sb(s3), sb(s4), sb(s5), sb(s6), sb(s7)));
     if (m0) { h = mix64(h ^ (uint64_t)m0->x); h = add_d(h, m0->d1); }
     if (m1) { h = mix64(h ^ (uint64_t)m1->y); h = add_d(h, m1->d2); }
     if (m2) { h = mix64(h ^ (uint64_t)m2->z); }
@@ -637,10 +662,10 @@ uint64_t f19(
     // mixed repeating pattern to reach ~40
     uint64_t h = 0x9999999999999999ULL;
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3+i4+i5+i6+i7+i8+i9+i10+i11));
-    h = add_f(h, f0+f1+f2+f3+f4+f5+f6+f7+f8+f9+f10+f11);
-    h = add_d(h, d0+d1+d2+d3+d4+d5+d6+d7+d8+d9+d10+d11);
+    h = add_f(h, strict_sum(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11));
+    h = add_d(h, strict_sum(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11));
     h = mix64(h ^ (uint64_t)s.a); h = add_f(h, s.b);
-    h = mix64(h ^ (uint64_t)(m.x+m.y+m.z)); h = add_d(h, m.d1+m.d2);
+    h = mix64(h ^ (uint64_t)(m.x+m.y+m.z)); h = add_d(h, strict_sum(m.d1, m.d2));
     if (b) {
         h = mix64(h ^ (uint64_t)b->arr[4]); h = add_f(h, b->farr[2]); h = add_d(h, b->d);
     }
@@ -703,14 +728,14 @@ uint64_t f22(
 {
     uint64_t h = 0xccccccccccccccccULL;
     h = mix64(h ^ (uint64_t)(b0.arr[0]+b1.arr[1]+b2.arr[2]+b3.arr[3]+b4.arr[4]));
-    h = add_f(h, b0.farr[0]+b4.farr[3]);
-    h = add_d(h, b0.d+b4.d);
+    h = add_f(h, strict_sum(b0.farr[0], b4.farr[3]));
+    h = add_d(h, strict_sum(b0.d, b4.d));
     h = mix64(h ^ (uint64_t)(m0.x+m7.z));
-    h = add_d(h, m0.d1+m7.d2);
+    h = add_d(h, strict_sum(m0.d1, m7.d2));
     h = mix64(h ^ (uint64_t)(s0.a+s9.a));
-    h = add_f(h, s0.b+s9.b);
+    h = add_f(h, strict_sum(s0.b, s9.b));
     h = mix64(h ^ p0.u32 ^ p3.u32);
-    h = mix64(h ^ (uint64_t)(i0+i1)); h = add_f(h, f0+f1); h = add_d(h, d0+d1);
+    h = mix64(h ^ (uint64_t)(i0+i1)); h = add_f(h, strict_sum(f0, f1)); h = add_d(h, strict_sum(d0, d1));
     if (pi) h = mix64(h ^ (uint64_t)*pi);
     if (pf) h = add_f(h, *pf);
     return h;
@@ -731,9 +756,9 @@ uint64_t f23(
     is += si(p0)+si(p1)+si(p2)+si(p3)+si(p4)+si(p5)+si(p6)+si(p7)+si(p8)+si(p9);
     is += si(p10)+si(p11)+si(p12)+si(p13)+si(p14)+si(p15)+si(p16)+si(p17)+si(p18)+si(p19);
     h = mix64(h ^ (uint64_t)is);
-    float fs = sf(f0)+sf(f1)+sf(f2)+sf(f3)+sf(f4)+sf(f5)+sf(f6)+sf(f7)+sf(f8)+sf(f9);
+    float fs = strict_sum(sf(f0), sf(f1), sf(f2), sf(f3), sf(f4), sf(f5), sf(f6), sf(f7), sf(f8), sf(f9));
     h = add_f(h, fs);
-    double ds = sd(d0)+sd(d1)+sd(d2)+sd(d3)+sd(d4)+sd(d5)+sd(d6)+sd(d7)+sd(d8)+sd(d9);
+    double ds = strict_sum(sd(d0), sd(d1), sd(d2), sd(d3), sd(d4), sd(d5), sd(d6), sd(d7), sd(d8), sd(d9));
     h = add_d(h, ds);
     return h;
 }
@@ -749,15 +774,15 @@ uint64_t f24(
     uint64_t h = 0xeeeeeeeeeeeeeeeeULL;
     int as = s0.a+s1.a+s2.a+s3.a+s4.a+s5.a+s6.a+s7.a+s8.a+s9.a;
     h = mix64(h ^ (uint64_t)as);
-    float bs = s0.b+s1.b+s2.b+s3.b+s4.b+s5.b+s6.b+s7.b+s8.b+s9.b;
+    float bs = strict_sum(s0.b, s1.b, s2.b, s3.b, s4.b, s5.b, s6.b, s7.b, s8.b, s9.b);
     h = add_f(h, bs);
     h = mix64(h ^ (uint64_t)(m0.x+m9.z));
-    h = add_d(h, m0.d1+m9.d2);
+    h = add_d(h, strict_sum(m0.d1, m9.d2));
     h = mix64(h ^ (uint64_t)(b0.arr[0]+b3.arr[7]));
-    h = add_f(h, b0.farr[0]+b3.farr[3]);
-    h = add_d(h, b0.d+b3.d);
+    h = add_f(h, strict_sum(b0.farr[0], b3.farr[3]));
+    h = add_d(h, strict_sum(b0.d, b3.d));
     h = mix64(h ^ p0.u32 ^ p5.u32);
-    h = mix64(h ^ (uint64_t)(i0+i1)); h = add_f(h, f0+f1); h = add_d(h, d0+d1);
+    h = mix64(h ^ (uint64_t)(i0+i1)); h = add_f(h, strict_sum(f0, f1)); h = add_d(h, strict_sum(d0, d1));
     if (pi) h = mix64(h ^ (uint64_t)*pi);
     if (pf) h = add_f(h, *pf);
     if (pd) h = add_d(h, *pd);
@@ -776,8 +801,8 @@ uint64_t f25(
     // mixed ~40
     uint64_t h = 0xffffffffffffffffULL;
     h = mix64(h ^ (uint64_t)(i0+i1+i2+i3+i4+i5+i6+i7+i8+i9));
-    h = add_f(h, f0+f1+f2+f3+f4+f5+f6+f7+f8+f9);
-    h = add_d(h, d0+d1+d2+d3+d4+d5+d6+d7+d8+d9);
+    h = add_f(h, strict_sum(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9));
+    h = add_d(h, strict_sum(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9));
     h = mix64(h ^ (uint64_t)c0 ^ c1 ^ c2 ^ c3);
     h = mix64(h ^ (uint64_t)s0 ^ s1 ^ s2 ^ s3);
     h = mix64(h ^ (uint64_t)l0 ^ l1);
@@ -1046,7 +1071,7 @@ int main() {
 
     auto end = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-    printf("%ld\n", diff);
+    std::cout << diff << std::endl;
 
     return 0;
 }

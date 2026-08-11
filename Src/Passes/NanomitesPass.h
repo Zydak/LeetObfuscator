@@ -22,6 +22,7 @@ namespace LeetObfuscator
 
         uint32_t GenerateUniqueNanomiteId(llvm::Module& module, RandomNumberGenerator& generator);
         llvm::Function* CreateForwardFunction(llvm::Module& module, llvm::Function* realFunc, uint32_t id);
+        llvm::Function* CreateTrampoline(llvm::Module& module, llvm::Function* realFunction, uint32_t callSiteId);
 
         SettingsParser::PassArguments m_Arguments;
         Logger m_Logger;

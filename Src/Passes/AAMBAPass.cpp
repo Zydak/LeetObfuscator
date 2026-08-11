@@ -92,93 +92,96 @@ void LeetObfuscator::AAMBAPass::ObfuscateFunction(llvm::Function& function)
 
 void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruction, std::shared_ptr<RandomNumberGenerator> generator)
 {
-    llvm::LLVMContext& context = instruction->getContext();
-
     llvm::IRBuilder<llvm::NoFolder> b(instruction);
     
     llvm::Value* x = instruction->getOperand(0);
     llvm::Value* y = instruction->getOperand(1);
 
-    auto AAMBA = [&](llvm::Value** value)
+    auto AAMBA = [&](llvm::Value** value) -> bool
     {
-        llvm::Type* vType = (*value)->getType();
-        llvm::FunctionType *FTy = llvm::FunctionType::get(vType, {vType}, false);
+        llvm::Value* orig = *value;
+        llvm::Type* vType = orig->getType();
+        llvm::LLVMContext& ctx = instruction->getContext();
 
-        enum class ArchPrimitive : uint32_t { ADC = 0, SBB = 1 };
-        ArchPrimitive primitive = (ArchPrimitive)generator->DrawRange<uint32_t>(0, 1);
-
-        const char *AsmText = nullptr;
-
-        switch (primitive)
-        {
-            case ArchPrimitive::ADC:
-            {
-                const char *Asm32 = R"(
-                    mov $1, $0
-                    setc %cl
-                    movzbl %cl, %ecx
-                    adc $$255, $0
-                    sub $$255, $0
-                    sub %ecx, $0
-                )";
-
-                const char *Asm64 = R"(
-                    mov $1, $0
-                    setc %cl
-                    movzbl %cl, %ecx
-                    adc $$255, $0
-                    sub $$255, $0
-                    sub %rcx, $0
-                )";
-
-                AsmText = vType->isIntegerTy(64) ? Asm64 : Asm32;
-                break;
-            }
-
-            case ArchPrimitive::SBB:
-            {
-                const char *Asm32 = R"(
-                    mov $1, $0
-                    setc %cl
-                    movzbl %cl, %ecx
-                    sbb $$255, $0
-                    add $$255, $0
-                    add %ecx, $0
-                )";
-
-                const char *Asm64 = R"(
-                    mov $1, $0
-                    setc %cl
-                    movzbl %cl, %ecx
-                    sbb $$255, $0
-                    add $$255, $0
-                    add %rcx, $0
-                )";
-
-                AsmText = vType->isIntegerTy(64) ? Asm64 : Asm32;
-                break;
-            }
-        }
-
-        llvm::InlineAsm *Asm = llvm::InlineAsm::get(
-            FTy, AsmText, "=r,r,~{rcx},~{cc},~{flags}",
-            /*hasSideEffects=*/true, /*isAlignStack=*/false,
+        llvm::FunctionType* setcTy = llvm::FunctionType::get(llvm::Type::getInt8Ty(ctx), {}, false);
+        std::string setcConstraints = "=q,~{cc}"; // any byte addressable GPR
+        llvm::InlineAsm* setcAsm = llvm::InlineAsm::get(
+            setcTy,
+            "setc $0",
+            setcConstraints,
+            true,
+            false,
             llvm::InlineAsm::AD_ATT
         );
+        llvm::Value* rawBit = b.CreateCall(setcAsm, {});
+        llvm::Value* bit = b.CreateZExt(rawBit, vType);
 
-        llvm::Value *result = b.CreateCall(Asm, {*value});
+        // opacity barrier
+        llvm::FunctionType* barrierTy = llvm::FunctionType::get(vType, {vType}, false);
+        std::string barrierConstraints = "=r,0"; // output tied to input's register
+        llvm::InlineAsm* barrierAsm = llvm::InlineAsm::get(
+            barrierTy,
+            "",
+            barrierConstraints,
+            true,
+            false,
+            llvm::InlineAsm::AD_ATT
+        );
+        auto opaque = [&](llvm::Value* v) { return b.CreateCall(barrierAsm, {v}); };
+
+        llvm::Constant* C = llvm::ConstantInt::get(vType, 255); // TODO random constant
+
+        enum class Shape : uint32_t
+        {
+            AddFirst = 0,
+            SubFirst = 1
+        };
+        Shape shape = (Shape)generator->DrawRange<uint32_t>(0, 1);
+
+        llvm::Value* result = nullptr;
+        if (shape == Shape::AddFirst)
+        {
+            // ((x + C) + CF) - C - opaque(CF)  ==  x
+            llvm::Value* t1 = b.CreateAdd(orig, C);
+            llvm::Value* t2 = b.CreateAdd(t1, bit);
+            llvm::Value* bitBar = opaque(bit);
+            llvm::Value* t3 = b.CreateSub(t2, C);
+            result = b.CreateSub(t3, bitBar);
+        }
+        else
+        {
+            // ((x - C) - CF) + C + opaque(CF)  ==  x
+            llvm::Value* t1 = b.CreateSub(orig, C);
+            llvm::Value* t2 = b.CreateSub(t1, bit);
+            llvm::Value* bitBar = opaque(bit);
+            llvm::Value* t3 = b.CreateAdd(t2, C);
+            result = b.CreateAdd(t3, bitBar);
+        }
+
         *value = result;
+        return true;
     };
-    
+
+    llvm::Module* M = instruction->getModule();
+    bool is64BitTarget = llvm::Triple(M->getTargetTriple()).isArch64Bit();
+
+    auto isLegalForAsm = [&](llvm::Type* Ty) {
+        if (Ty->isIntegerTy(32))
+            return true;
+        if (Ty->isIntegerTy(64) && is64BitTarget)
+            return true;
+        return false; // skip i64 on 32-bit, i128, etc.
+    };
+
     uint32_t random = generator->DrawRange(0u, 1u);
-    if (random % 2 == 0 && (x->getType() == llvm::Type::getInt32Ty(context) || x->getType() == llvm::Type::getInt64Ty(context)))
+    if (random % 2 == 0 && isLegalForAsm(x->getType()))
     {
-        AAMBA(&x);
-        instruction->setOperand(0, x);
+        if (AAMBA(&x))
+            instruction->setOperand(0, x);
     }
-    if (random % 2 != 0 && (y->getType() == llvm::Type::getInt32Ty(context) || y->getType() == llvm::Type::getInt64Ty(context)))
+    if (random % 2 != 0 && isLegalForAsm(y->getType()))
     {
-        AAMBA(&y);
-        instruction->setOperand(1, y);
+        if (AAMBA(&y))
+            instruction->setOperand(1, y);
     }
 }

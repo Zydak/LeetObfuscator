@@ -95,6 +95,7 @@ namespace LeetObfuscator
         static bool ShouldSkipFunction(llvm::Function* function, const FunctionAttributes& attributes);
         static bool ShouldSkipBlock(llvm::BasicBlock* block, const FunctionAttributes& attributes);
         static std::shared_ptr<RandomNumberGenerator> GetGenerator(const FunctionAttributes& attributes);
+        static std::shared_ptr<RandomNumberGenerator> GetGenerator(); // TODO
 
     private:
         using OptionApplier = std::function<void(llvm::Function&, const std::vector<std::string>*, llvm::StringRef, FunctionAttributes&)>;

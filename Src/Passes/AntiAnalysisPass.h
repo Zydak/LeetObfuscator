@@ -7,6 +7,10 @@
 
 #include "llvm/IR/Dominators.h"
 
+#include "llvm/MC/MCCodeEmitter.h"
+#include "llvm/MC/MCFixup.h"
+#include "llvm/ADT/SmallVector.h"
+
 #include <memory>
 
 namespace LeetObfuscator
@@ -30,5 +34,14 @@ namespace LeetObfuscator
             static bool IsSafeToTimeAcross(llvm::Instruction &I);
             SettingsParser::PassArguments m_Arguments;
             Logger m_Logger;
+    };
+
+    class AntiDissasemblyEmitter : public llvm::MCCodeEmitter
+    {
+        std::unique_ptr<MCCodeEmitter> m_Real;
+    public:
+        AntiDissasemblyEmitter(std::unique_ptr<MCCodeEmitter> R) : m_Real(std::move(R)) {}
+
+        void encodeInstruction(const llvm::MCInst& instruction, llvm::SmallVectorImpl<char>& bytes, llvm::SmallVectorImpl<llvm::MCFixup>& fixups, const llvm::MCSubtargetInfo& sti) const override;
     };
 }

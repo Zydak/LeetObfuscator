@@ -78,67 +78,174 @@ extern "C" void __leet_nanomite_marker()
 
 #ifdef LEET_IMPLEMENTATION
 
-#include <stdio.h>
-#include <signal.h>
-#include <ucontext.h>
-#include <unistd.h>
 #include <cstdint>
-#include <sys/ucontext.h>
-#include <cstring>
 #include <cstdio>
 #include <cstdlib>
+
+#if defined(_WIN32)
+	#include <windows.h>
+#else
+	#include <signal.h>
+	#include <ucontext.h>
+	#include <sys/ucontext.h>
+	#include <unistd.h>
+#endif
 
 struct NanomiteEntry { uint32_t nanomiteId; void* functionAddress; };
 struct TableChunk { const NanomiteEntry* entries; uint32_t count; TableChunk* next; };
 
 extern "C" TableChunk* __nanomite_chunk_head = nullptr;
 
-__attribute__((optnone))
-extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucontext)
-{
-    static const char msg_invalid_id[] = "ERROR: Invalid nanomite ID!\n";
+#if defined(_WIN32)
+using leet_ctx_t = PCONTEXT;
+#else
+using leet_ctx_t = ucontext_t*;
+#endif
 
-    ucontext_t *uc = (ucontext_t *)ucontext;
-    unsigned long long rip = uc->uc_mcontext.gregs[REG_RIP];
-    uint32_t nanomiteId = *((uint32_t*)((uint8_t*)rip + 3));
+extern "C" inline uintptr_t __leet_exception_get_ip(leet_ctx_t ctx)
+{
+#if defined(_WIN32)
+	#if defined(_WIN64)
+		return (uintptr_t)ctx->Rip;
+	#else
+		return (uintptr_t)ctx->Eip;
+	#endif
+#else
+	#if defined(__x86_64__)
+		return (uintptr_t)ctx->uc_mcontext.gregs[REG_RIP];
+	#else
+		return (uintptr_t)ctx->uc_mcontext.gregs[REG_EIP];
+  	#endif
+#endif
+}
+
+extern "C" inline void __leet_exception_set_ip(leet_ctx_t ctx, uintptr_t v)
+{
+#if defined(_WIN32)
+	#if defined(_WIN64)
+		ctx->Rip = (DWORD64)v;
+	#else
+		ctx->Eip = (DWORD)v;
+	#endif
+#else
+	#if defined(__x86_64__)
+		ctx->uc_mcontext.gregs[REG_RIP] = (greg_t)v;
+	#else
+		ctx->uc_mcontext.gregs[REG_EIP] = (greg_t)v;
+	#endif
+#endif
+}
+
+extern "C" inline void* __leet_exception_resolve_address(uint32_t nanomiteId)
+{
+    for (TableChunk* c = __nanomite_chunk_head; c; c = c->next)
+        for (uint32_t i = 0; i < c->count; i++)
+            if (c->entries[i].nanomiteId == nanomiteId)
+                return c->entries[i].functionAddress;
+    return nullptr;
+}
+
+static thread_local uintptr_t s_PointerStack[512];
+static thread_local uint32_t s_StackPointer = 0;
+
+#include <iostream>
+
+extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
+{
+	// windows doesn't advance RIP immediately, linux does
+	#if defined(_WIN32)
+	uint32_t nanomiteIDOffset = 4;
+	#else
+	uint32_t nanomiteIDOffset = 3;
+	#endif
+
+    uintptr_t ip = __leet_exception_get_ip(ctx);
+    uint32_t nanomiteId = *((uint32_t*)((uint8_t*)ip + nanomiteIDOffset));
     bool popFromStack = (nanomiteId == 0);
 
     void* target = nullptr;
 
     if (popFromStack)
     {
-        target = *(void**)uc->uc_mcontext.gregs[REG_RSP];
-        uc->uc_mcontext.gregs[REG_RSP] += 8;
+        if (s_StackPointer == 0)
+        {
+            std::cout << "KURWA" << std::endl;
+        }
+        s_StackPointer--;
+        target = reinterpret_cast<void*>(s_PointerStack[s_StackPointer]);
     }
     else
     {
-        for (TableChunk* c = __nanomite_chunk_head; c && !target; c = c->next)
-        {
-            for (uint32_t i = 0; i < c->count; i++)
-            {
-                if (c->entries[i].nanomiteId == nanomiteId)
-                {
-                    target = c->entries[i].functionAddress;
-                    break;
-                }
-            }
-
-        }
+        target = __leet_exception_resolve_address(nanomiteId);
     }
 
-    if (target != nullptr)
-    {
-        if (!popFromStack)
-        {
-            uc->uc_mcontext.gregs[REG_RSP] -= 8;
-            *(uint64_t*)uc->uc_mcontext.gregs[REG_RSP] = rip + 7;
-        }
+    if (target == nullptr)
+        return false;
 
-        uc->uc_mcontext.gregs[REG_RIP] = (greg_t)target;
-    }
-    else
+    if (!popFromStack)
     {
-        write(STDOUT_FILENO, msg_invalid_id, sizeof(msg_invalid_id) - 1);
+		// windows doesn't advance RIP immediately, linux does
+		#if defined(_WIN32)
+		uint32_t garbageBytesOffset = 9;
+		#else
+		uint32_t garbageBytesOffset = 8;
+		#endif
+
+        s_PointerStack[s_StackPointer] = ip + garbageBytesOffset;
+        s_StackPointer++;
+    }
+
+    __leet_exception_set_ip(ctx, (uintptr_t)target);
+    return true;
+}
+
+#if defined(_WIN32)
+
+extern "C" LONG CALLBACK __leet_exception_veh_handler(PEXCEPTION_POINTERS ExceptionInfo)
+{
+    if (ExceptionInfo->ExceptionRecord->ExceptionCode != EXCEPTION_BREAKPOINT)
+        return EXCEPTION_CONTINUE_SEARCH;
+
+    if (__leet_exception_handle_trap(ExceptionInfo->ContextRecord))
+        return EXCEPTION_CONTINUE_EXECUTION;
+
+    fputs("ERROR: Invalid nanomite ID!\n", stderr);
+    _exit(1);
+}
+
+static PVOID s_leetVehHandle = nullptr;
+
+extern "C" bool __leet_exception_handler_setup()
+{
+    s_leetVehHandle = AddVectoredExceptionHandler(1, __leet_exception_veh_handler);
+    if (!s_leetVehHandle)
+    {
+        fprintf(stderr, "AddVectoredExceptionHandler failed: %lu\n", GetLastError());
+        return false;
+    }
+    return true;
+}
+
+extern "C" void __leet_exception_handler_teardown()
+{
+    if (s_leetVehHandle)
+    {
+        RemoveVectoredExceptionHandler(s_leetVehHandle);
+        s_leetVehHandle = nullptr;
+    }
+}
+
+#else // Linux
+
+extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucontext)
+{
+    static const char invalidIdMessage[] = "ERROR: Invalid nanomite ID!\n";
+
+    ucontext_t *uc = (ucontext_t *)ucontext;
+
+    if (!__leet_exception_handle_trap(uc))
+    {
+        write(STDOUT_FILENO, invalidIdMessage, sizeof(invalidIdMessage) - 1);
         _exit(1);
     }
 }
@@ -146,14 +253,14 @@ extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucon
 static constexpr size_t kAltStackSize = 8192 * 4;
 static uint8_t g_altStack[kAltStackSize];
 
-__attribute__((noinline))
 extern "C" bool __leet_exception_handler_setup()
 {
     stack_t ss;
     ss.ss_sp = g_altStack;
     ss.ss_size = sizeof(g_altStack);
     ss.ss_flags = 0;
-    if (sigaltstack(&ss, nullptr) == -1) {
+    if (sigaltstack(&ss, nullptr) == -1)
+    {
         perror("sigaltstack failed");
         return false;
     }
@@ -163,13 +270,16 @@ extern "C" bool __leet_exception_handler_setup()
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;
 
-    if (sigaction(SIGTRAP, &sa, NULL) == -1) {
+    if (sigaction(SIGTRAP, &sa, NULL) == -1)
+    {
         perror("sigaction failed");
         return false;
     }
 
     return true;
 }
+
+#endif // _WIN32 / Linux
 
 [[gnu::constructor]]
 static void __leet_exception_handler_init()
@@ -178,4 +288,4 @@ static void __leet_exception_handler_init()
         exit(1);
 }
 
-#endif
+#endif // LEET_IMPLEMENTATION

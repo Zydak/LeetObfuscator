@@ -41,7 +41,6 @@ llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &
             while(true)
             {
                 key = generator->DrawRange(1u, std::numeric_limits<uint32_t>::max());
-                key = (uint32_t)llvm::hash_combine(module.getModuleIdentifier(), key);
 
                 // Check for collision
                 bool collision = false;

@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-"""
-Benchmark script for LeetObfuscator tests.
-Compiles and runs tests with and without obfuscation, comparing full application
-output (excluding the last timing line) and timing.
-
-All successful runs of a test (plain + obfuscated) must produce identical output
-bodies for a Match.
-"""
-
 import subprocess
 import os
 import sys
 import re
 import time
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Union
 from dataclasses import dataclass, field
@@ -22,10 +15,17 @@ from tabulate import tabulate
 
 # ==================== CONFIGURATION ====================
 
+# Each entry can be:
+#   - str: just the source file / directory name
+#   - dict: {"sources": "...", "extra_flags": "..."}  (or list of sources)
+#   - list/tuple: treated as multi-source (legacy)
 TEST_FILES = [
     "StdContainersTest.cpp",
     "FloatingPointMathTest.cpp",
-    "BigSignaturesTest.cpp",
+    {
+        "sources": "BigSignaturesTest.cpp",
+        "extra_flags": "-msse2 -mfpmath=sse",
+    },
     "BitwiseOperationsTest.cpp",
     "BranchingRecursionTest.cpp",
     "ControlFlowObfuscationTest.cpp",
@@ -33,18 +33,43 @@ TEST_FILES = [
     "PerformanceStressTest.cpp",
     "StringManipulationTest.cpp",
     "MultiModuleTest",
-    # Or explicit list form:
-    # ["MultiModuleTest/main.cpp", "MultiModuleTest/Foo.cpp"],
 ]
 
-OPTIMIZATION_LEVELS = ["O3"]
-RUN_COUNT = 5
+# Modular compilation and execution targets
+TARGET_ENVIRONMENTS = {
+    "linux-x64": {
+        "flags": "--target=x86_64-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
+        "run_prefix": "",       # Run directly
+        "ext": ""
+    },
+    "linux-x86": {
+        "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
+        "run_prefix": "",       # You may need qemu-i386 here if running on an ARM/x64 host without multilib
+        "ext": ""
+    },
+    "windows-x64": {
+        "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+        "run_prefix": "wine",   # Remove 'wine' if running this natively on Windows
+        "ext": ".exe"
+    },
+    "windows-x86": {
+        "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+        "run_prefix": "wine",   # Remove 'wine' if running this natively on Windows
+        "ext": ".exe"
+    }
+}
+
+RUN_COUNT = 1
 REBUILD_PER_RUN = False
 WARMUP_COMPILE = False
-BASE_FLAGS = "-fno-exceptions"
-EXTRA_FLAGS = ""
 COMPILE_TIMEOUT = 300
-EXECUTE_TIMEOUT = 120
+EXECUTE_TIMEOUT = 300
+
+# Parallelism: number of worker threads for concurrent test configs.
+#   0  = auto (min(cpu_count, total configs))
+#   1  = sequential (original behaviour)
+#  >1  = fixed worker count
+MAX_WORKERS = 0
 
 SCRIPT_DIR = Path(__file__).parent
 TESTS_DIR = SCRIPT_DIR
@@ -59,15 +84,16 @@ OUTPUT_FORMAT = "grid"
 class TestSpec:
     name: str
     sources: List[Path]
+    extra_flags: str = ""
 
 
 @dataclass
 class TestResult:
     test_name: str
-    optimization: str
+    target: str
     obfuscated: bool
     run_number: int
-    output_body: str          # full stdout excluding the last (timing) line
+    output_body: str
     time_ns: int
     compile_time: float
     success: bool
@@ -77,13 +103,14 @@ class TestResult:
 @dataclass
 class TestSummary:
     test_name: str
-    optimization: str
+    target: str
     obfuscated: bool
     avg_time_ns: float
     avg_compile_time: float
     outputs: List[str] = field(default_factory=list)
-    output_match: bool = True   # all runs of *this* config produced identical body
+    output_match: bool = True
     all_runs_success: bool = True
+    error_messages: List[str] = field(default_factory=list)
 
 
 # ==================== UTILITY FUNCTIONS ====================
@@ -98,7 +125,17 @@ def print_header(text):
     print_separator()
 
 
-def normalize_test_entry(entry: Union[str, List, Tuple]) -> TestSpec:
+def _resolve_sources(entry) -> Tuple[List[Path], str]:
+    """Resolve sources from a string, list, or dict entry. Returns (sources, extra_flags)."""
+    extra_flags = ""
+
+    if isinstance(entry, dict):
+        extra_flags = entry.get("extra_flags", "") or ""
+        sources_entry = entry.get("sources")
+        if sources_entry is None:
+            raise ValueError("Dict test entry must contain a 'sources' key")
+        entry = sources_entry
+
     if isinstance(entry, (list, tuple)):
         if not entry:
             raise ValueError("Empty source list in TEST_FILES")
@@ -108,12 +145,7 @@ def normalize_test_entry(entry: Union[str, List, Tuple]) -> TestSpec:
             if not p.exists():
                 raise FileNotFoundError(f"Source not found: {p}")
             sources.append(p.resolve())
-        main_candidates = [s for s in sources if s.name.lower() == "main.cpp"]
-        if main_candidates:
-            name = main_candidates[0].parent.name
-        else:
-            name = sources[0].stem
-        return TestSpec(name=name, sources=sources)
+        return sources, extra_flags
 
     entry = str(entry)
     path = TESTS_DIR / entry
@@ -122,16 +154,39 @@ def normalize_test_entry(entry: Union[str, List, Tuple]) -> TestSpec:
         sources = sorted(path.glob("*.cpp"))
         if not sources:
             raise FileNotFoundError(f"No .cpp files found in directory: {path}")
-        return TestSpec(name=path.name, sources=[s.resolve() for s in sources])
+        return [s.resolve() for s in sources], extra_flags
 
     if path.is_file() and path.suffix == ".cpp":
-        return TestSpec(name=path.stem, sources=[path.resolve()])
+        return [path.resolve()], extra_flags
 
     raise FileNotFoundError(f"Test entry not found or not a .cpp / directory: {path}")
 
 
+def normalize_test_entry(entry: Union[str, List, Tuple, Dict]) -> TestSpec:
+    sources, extra_flags = _resolve_sources(entry)
+
+    # Determine name
+    if isinstance(entry, dict):
+        name_override = entry.get("name")
+        if name_override:
+            name = name_override
+        else:
+            main_candidates = [s for s in sources if s.name.lower() == "main.cpp"]
+            if main_candidates:
+                name = main_candidates[0].parent.name
+            else:
+                name = sources[0].stem
+    else:
+        main_candidates = [s for s in sources if s.name.lower() == "main.cpp"]
+        if main_candidates:
+            name = main_candidates[0].parent.name
+        else:
+            name = sources[0].stem
+
+    return TestSpec(name=name, sources=sources, extra_flags=extra_flags.strip())
+
+
 def extract_output_body_and_time(output: str) -> Tuple[Optional[str], Optional[int]]:
-    """Everything except the last line is the body we compare; last line is timing."""
     lines = output.strip().split('\n')
     if len(lines) < 1:
         return None, None
@@ -146,10 +201,15 @@ def extract_output_body_and_time(output: str) -> Tuple[Optional[str], Optional[i
 
 
 def compile_test(sources: List[Path], output_path: Path, compiler: str,
-                 optimization: str, obfuscated: bool) -> Tuple[bool, float, str]:
-    flags = f"-{optimization} {BASE_FLAGS} {EXTRA_FLAGS}"
+                 target: str, obfuscated: bool, extra_flags: str = "") -> Tuple[bool, float, str]:
+    
+    env_config = TARGET_ENVIRONMENTS[target]
+    flags = env_config.get("flags", "")
+    if extra_flags:
+        flags = f"{flags} {extra_flags}"
     src_args = " ".join(f'"{s}"' for s in sources)
-    cmd = f'{compiler} {src_args} -o "{output_path}" {flags}'
+    
+    cmd = f'{compiler} {flags} {src_args} -o "{output_path}"'
 
     start_time = time.time()
     try:
@@ -166,10 +226,27 @@ def compile_test(sources: List[Path], output_path: Path, compiler: str,
         return False, time.time() - start_time, str(e)
 
 
-def run_test(executable_path: Path) -> Tuple[bool, str, str]:
+def run_test(executable_path: Path, target: str) -> Tuple[bool, str, str]:
+    env_config = TARGET_ENVIRONMENTS[target]
+    run_prefix = env_config.get("run_prefix", "")
+    
+    cmd = f'{run_prefix} "{executable_path}"'.strip()
+
+    # Create a copy of the environment specifically for this run
+    env = os.environ.copy()
+    
+    # If using wine, inject variables to suppress GUI popups and debug noise
+    if "wine" in run_prefix:
+        # winedbg.exe=d disables the crash dialog
+        # mscoree=d,mshtml=d disables the Mono/Gecko install popups
+        env["WINEDLLOVERRIDES"] = "winedbg.exe=d,mscoree=d,mshtml=d"
+        # Suppress standard wine fixme/err console spam
+        env["WINEDEBUG"] = "-all"
+
     try:
+        # Pass the customized 'env' dictionary into subprocess
         result = subprocess.run(
-            str(executable_path), capture_output=True, text=True, timeout=EXECUTE_TIMEOUT
+            cmd, shell=True, capture_output=True, text=True, timeout=EXECUTE_TIMEOUT, env=env
         )
         if result.returncode != 0:
             return False, "", result.stderr
@@ -180,25 +257,25 @@ def run_test(executable_path: Path) -> Tuple[bool, str, str]:
         return False, "", str(e)
 
 
-def run_single_test(spec: TestSpec, optimization: str, obfuscated: bool,
+def run_single_test(spec: TestSpec, target: str, obfuscated: bool,
                     run_number: int, output_path: Path, compiler: str) -> TestResult:
     compile_time = 0.0
     if REBUILD_PER_RUN or not output_path.exists():
         compile_success, compile_time, compile_error = compile_test(
-            spec.sources, output_path, compiler, optimization, obfuscated
+            spec.sources, output_path, compiler, target, obfuscated, extra_flags=spec.extra_flags
         )
         if not compile_success:
             return TestResult(
-                test_name=spec.name, optimization=optimization, obfuscated=obfuscated,
+                test_name=spec.name, target=target, obfuscated=obfuscated,
                 run_number=run_number, output_body="", time_ns=0,
                 compile_time=compile_time, success=False,
                 error_message=f"Compilation failed: {compile_error}"
             )
 
-    run_success, output, run_error = run_test(output_path)
+    run_success, output, run_error = run_test(output_path, target)
     if not run_success:
         return TestResult(
-            test_name=spec.name, optimization=optimization, obfuscated=obfuscated,
+            test_name=spec.name, target=target, obfuscated=obfuscated,
             run_number=run_number, output_body="", time_ns=0,
             compile_time=compile_time, success=False,
             error_message=f"Execution failed: {run_error}"
@@ -207,42 +284,115 @@ def run_single_test(spec: TestSpec, optimization: str, obfuscated: bool,
     body, time_ns = extract_output_body_and_time(output)
     if body is None or time_ns is None:
         return TestResult(
-            test_name=spec.name, optimization=optimization, obfuscated=obfuscated,
+            test_name=spec.name, target=target, obfuscated=obfuscated,
             run_number=run_number, output_body=body or "", time_ns=time_ns or 0,
             compile_time=compile_time, success=False,
             error_message="Failed to parse output (missing or invalid timing line)"
         )
 
     return TestResult(
-        test_name=spec.name, optimization=optimization, obfuscated=obfuscated,
+        test_name=spec.name, target=target, obfuscated=obfuscated,
         run_number=run_number, output_body=body, time_ns=time_ns,
         compile_time=compile_time, success=True
     )
 
 
+def run_one_config(spec: TestSpec, target: str, obfuscated: bool,
+                   config: dict, job_index: int, total_jobs: int) -> Tuple[List[TestResult], str]:
+    """
+    Execute a single (test, target, plain/obf) configuration.
+    Returns (list of TestResult, log text for this job).
+    Designed to be called from a worker thread.
+    """
+    log_lines: List[str] = []
+    multi_note = f" ({len(spec.sources)} files)" if len(spec.sources) > 1 else ""
+    extra_note = f" [+{spec.extra_flags}]" if spec.extra_flags else ""
+    label = f"{spec.name}{multi_note}{extra_note} [{target}] {'(obfuscated)' if obfuscated else '(plain)'}"
+    log_lines.append(f"[{job_index}/{total_jobs}] Testing {label}")
+
+    output_name = f"{spec.name}_{target}_{'obf' if obfuscated else 'plain'}{config.get('ext', '')}"
+    output_path = BUILD_DIR / output_name
+    compiler = str(OBFUSCATED_COMPILER) if obfuscated else REGULAR_COMPILER
+
+    if WARMUP_COMPILE and obfuscated:
+        log_lines.append("  Warmup compilation...")
+        warmup_path = BUILD_DIR / f"{output_name}_warmup{config.get('ext', '')}"
+        warmup_success, warmup_time, warmup_error = compile_test(
+            spec.sources, warmup_path, str(OBFUSCATED_COMPILER), target, obfuscated,
+            extra_flags=spec.extra_flags
+        )
+        if warmup_success:
+            log_lines.append(f"  Warmup complete: {warmup_time:.2f}s")
+        else:
+            log_lines.append(f"  Warmup failed: {warmup_error}")
+
+    test_results: List[TestResult] = []
+    compile_time = 0.0
+
+    if not REBUILD_PER_RUN:
+        log_lines.append(f"  Building once for {RUN_COUNT} runs...")
+        compile_success, compile_time, compile_error = compile_test(
+            spec.sources, output_path, compiler, target, obfuscated,
+            extra_flags=spec.extra_flags
+        )
+        if not compile_success:
+            log_lines.append(f"  Build FAILED - {compile_error}")
+            for run in range(1, RUN_COUNT + 1):
+                test_results.append(TestResult(
+                    test_name=spec.name, target=target, obfuscated=obfuscated,
+                    run_number=run, output_body="", time_ns=0,
+                    compile_time=compile_time, success=False,
+                    error_message=f"Compilation failed: {compile_error}"
+                ))
+            return test_results, "\n".join(log_lines)
+
+    for run in range(1, RUN_COUNT + 1):
+        result = run_single_test(spec, target, obfuscated, run, output_path, compiler)
+        if not REBUILD_PER_RUN:
+            result.compile_time = compile_time if run == 1 else 0.0
+        test_results.append(result)
+
+        if not result.success:
+            log_lines.append(f"  Run {run}: FAILED - {result.error_message}")
+        else:
+            compile_str = f"{result.compile_time:.2f}s" if result.compile_time > 0 else "cached"
+            log_lines.append(f"  Run {run}: OK, compile: {compile_str}, run: {result.time_ns/1_000_000:.2f}ms")
+
+    return test_results, "\n".join(log_lines)
+
+
 def calculate_summaries(results: List[TestResult]) -> Dict[str, List[TestSummary]]:
     summaries = {}
     grouped = {}
+    
     for result in results:
-        if not result.success:
-            continue
-        key = (result.test_name, result.optimization, result.obfuscated)
+        key = (result.test_name, result.target, result.obfuscated)
         grouped.setdefault(key, []).append(result)
 
-    for (test_name, optimization, obfuscated), group_results in grouped.items():
-        avg_time = sum(r.time_ns for r in group_results) / len(group_results)
+    for (test_name, target, obfuscated), group_results in grouped.items():
+        successful_runs = [r for r in group_results if r.success]
+        all_success = len(successful_runs) == len(group_results)
+        errors = list(set([r.error_message for r in group_results if not r.success]))
+
+        if successful_runs:
+            avg_time = sum(r.time_ns for r in successful_runs) / len(successful_runs)
+            outputs = [r.output_body for r in successful_runs]
+            all_match = len(set(outputs)) == 1
+        else:
+            avg_time = 0.0
+            outputs = []
+            all_match = False
+
         real_compile_times = [r.compile_time for r in group_results if r.compile_time > 0]
         avg_compile = (sum(real_compile_times) / len(real_compile_times)) if real_compile_times else 0.0
 
-        outputs = [r.output_body for r in group_results]
-        all_match = len(set(outputs)) == 1
-
         summary = TestSummary(
-            test_name=test_name, optimization=optimization, obfuscated=obfuscated,
+            test_name=test_name, target=target, obfuscated=obfuscated,
             avg_time_ns=avg_time, avg_compile_time=avg_compile,
-            outputs=outputs, output_match=all_match, all_runs_success=True
+            outputs=outputs, output_match=all_match, all_runs_success=all_success,
+            error_messages=errors
         )
-        key = f"{test_name}_{optimization}"
+        key = f"{test_name}_{target}"
         summaries.setdefault(key, []).append(summary)
 
     return summaries
@@ -264,10 +414,6 @@ def _diff_lines(a: str, b: str) -> List[str]:
 
 
 def generate_comparison_table(summaries: Dict[str, List[TestSummary]]) -> Tuple[List[List], List[str]]:
-    """
-    Match is [+] only when *every* successful run of the test
-    (all plain runs + all obfuscated runs) produced the identical output body.
-    """
     table_data = []
     mismatch_reports = []
 
@@ -280,39 +426,59 @@ def generate_comparison_table(summaries: Dict[str, List[TestSummary]]) -> Tuple[
         if plain is None or obf is None:
             continue
 
-        # Slowdowns
-        runtime_slowdown = (obf.avg_time_ns / plain.avg_time_ns) if plain.avg_time_ns > 0 else 0.0
-        compile_slowdown = (obf.avg_compile_time / plain.avg_compile_time) if plain.avg_compile_time > 0 else 0.0
+        plain_time_str = f"{plain.avg_time_ns/1_000_000:.2f}ms" if plain.all_runs_success else "FAIL"
+        obf_time_str = f"{obf.avg_time_ns/1_000_000:.2f}ms" if obf.all_runs_success else "FAIL"
 
-        # Collect *all* outputs from this test (plain + obfuscated)
-        all_outputs = plain.outputs + obf.outputs
-        unique_bodies = set(all_outputs)
-
-        # Strict match: every single run of the test produced the same body
-        if len(unique_bodies) == 1:
-            match_status = "[+]"
+        if plain.all_runs_success and obf.all_runs_success:
+            runtime_slowdown = f"{(obf.avg_time_ns / plain.avg_time_ns):.2f}x" if plain.avg_time_ns > 0 else "N/A"
+            compile_slowdown = f"{(obf.avg_compile_time / plain.avg_compile_time):.2f}x" if plain.avg_compile_time > 0 else "N/A"
         else:
-            # Distinguish internal inconsistency from plain-vs-obf difference
-            if not plain.output_match or not obf.output_match:
-                match_status = "[-] (inconsistent)"
+            runtime_slowdown = "N/A"
+            compile_slowdown = "N/A"
+
+        plain_comp_str = f"{plain.avg_compile_time:.2f}s"
+        obf_comp_str = f"{obf.avg_compile_time:.2f}s"
+
+        if not plain.all_runs_success or not obf.all_runs_success:
+            match_status = "FAIL"
+        else:
+            all_outputs = plain.outputs + obf.outputs
+            unique_bodies = set(all_outputs)
+            if len(unique_bodies) == 1:
+                match_status = "[+]"
             else:
-                match_status = "[-]"
+                if not plain.output_match or not obf.output_match:
+                    match_status = "[-] (inconsistent)"
+                else:
+                    match_status = "[-]"
 
         table_data.append([
             plain.test_name,
-            plain.optimization,
-            f"{plain.avg_time_ns/1_000_000:.2f}ms",
-            f"{obf.avg_time_ns/1_000_000:.2f}ms",
-            f"{runtime_slowdown:.2f}x",
-            f"{plain.avg_compile_time:.2f}s",
-            f"{obf.avg_compile_time:.2f}s",
-            f"{compile_slowdown:.2f}x",
+            plain.target,
+            plain_time_str,
+            obf_time_str,
+            runtime_slowdown,
+            plain_comp_str,
+            obf_comp_str,
+            compile_slowdown,
             match_status,
         ])
 
-        # Detailed report when anything differs
-        if match_status != "[+]":
-            report = [f"=== {plain.test_name} ({plain.optimization}) ==="]
+        # Generate mismatch/failure reports
+        if match_status == "FAIL":
+            report = [f"=== {plain.test_name} ({plain.target}) [FAILED] ==="]
+            if not plain.all_runs_success:
+                report.append("  Plain build/run failed:")
+                for err in plain.error_messages:
+                    report.append(f"    - {err.strip()}")
+            if not obf.all_runs_success:
+                report.append("  Obfuscated build/run failed:")
+                for err in obf.error_messages:
+                    report.append(f"    - {err.strip()}")
+            mismatch_reports.append("\n".join(report))
+            
+        elif match_status != "[+]":
+            report = [f"=== {plain.test_name} ({plain.target}) [MISMATCH] ==="]
             report.append(f"  Total unique output bodies across ALL runs (plain+obf): {len(unique_bodies)}")
 
             if not plain.output_match:
@@ -320,7 +486,6 @@ def generate_comparison_table(summaries: Dict[str, List[TestSummary]]) -> Tuple[
             if not obf.output_match:
                 report.append(f"  Obfuscated runs inconsistent: {len(set(obf.outputs))} distinct bodies")
 
-            # Representative plain vs obfuscated
             plain_rep = Counter(plain.outputs).most_common(1)[0][0] if plain.outputs else ""
             obf_rep = Counter(obf.outputs).most_common(1)[0][0] if obf.outputs else ""
 
@@ -331,7 +496,6 @@ def generate_comparison_table(summaries: Dict[str, List[TestSummary]]) -> Tuple[
                 report.append("  (Most common plain and obfuscated bodies are identical,")
                 report.append("   but other runs produced different bodies)")
 
-            # If more than two unique bodies, list a short fingerprint of each
             if len(unique_bodies) > 2:
                 report.append("  Unique body fingerprints:")
                 for i, body in enumerate(sorted(unique_bodies), 1):
@@ -347,7 +511,7 @@ def generate_comparison_table(summaries: Dict[str, List[TestSummary]]) -> Tuple[
 
 def print_results_table(table_data: List[List]):
     headers = [
-        "Test", "Opt",
+        "Test", "Target",
         "Plain Time", "Obf Time", "Runtime Slowdown",
         "Plain Compile", "Obf Compile", "Compile Slowdown",
         "Match",
@@ -357,20 +521,22 @@ def print_results_table(table_data: List[List]):
 
 
 def print_statistics(summaries: Dict[str, List[TestSummary]]):
-    total_tests = len([s for group in summaries.values() for s in group if s.obfuscated])
-    successful_tests = len([s for group in summaries.values() for s in group if s.obfuscated and s.all_runs_success])
-
-    runtime_slowdowns = []
-    compile_slowdowns = []
+    total_comparisons = len([g for g in summaries.values() if len(g) == 2])
+    failed_comparisons = 0
     full_matches = 0
     mismatches = 0
+    
+    runtime_slowdowns = []
+    compile_slowdowns = []
 
     for group in summaries.values():
         if len(group) != 2:
             continue
         plain = next((s for s in group if not s.obfuscated), None)
         obf = next((s for s in group if s.obfuscated), None)
-        if plain is None or obf is None:
+        
+        if not plain.all_runs_success or not obf.all_runs_success:
+            failed_comparisons += 1
             continue
 
         if plain.avg_time_ns > 0:
@@ -384,21 +550,24 @@ def print_statistics(summaries: Dict[str, List[TestSummary]]):
         else:
             mismatches += 1
 
-    total_comparisons = len([g for g in summaries.values() if len(g) == 2])
+    valid_comparisons = total_comparisons - failed_comparisons
     avg_runtime = sum(runtime_slowdowns) / len(runtime_slowdowns) if runtime_slowdowns else 0
     avg_compile = sum(compile_slowdowns) / len(compile_slowdowns) if compile_slowdowns else 0
-    match_rate = full_matches / total_comparisons if total_comparisons else 0
+    match_rate = (full_matches / valid_comparisons) if valid_comparisons else 0
 
     print_separator("-")
     print("OVERALL STATISTICS")
     print_separator("-")
-    print(f"Total test configurations: {total_tests}")
-    print(f"Successful runs: {successful_tests}")
-    print(f"Average runtime slowdown: {avg_runtime:.2f}x")
-    print(f"Average compile slowdown: {avg_compile:.2f}x")
-    print(f"Full output match rate (all plain+obf runs identical): {match_rate:.1%}")
+    print(f"Total test configurations: {total_comparisons}")
+    print(f"Failed configurations (build or run failed): {failed_comparisons}")
+    print(f"Successful comparisons: {valid_comparisons}")
+    
+    if valid_comparisons > 0:
+        print(f"Average runtime slowdown: {avg_runtime:.2f}x")
+        print(f"Average compile slowdown: {avg_compile:.2f}x")
+        print(f"Full output match rate (among successful): {match_rate:.1%}")
     if mismatches > 0:
-        print(f"WARNING: {mismatches} tests where not all outputs matched")
+        print(f"WARNING: {mismatches} tests where outputs did not match")
     print_separator()
 
 
@@ -411,27 +580,44 @@ def main():
         print(f"ERROR: {e}")
         sys.exit(1)
 
+    obfuscated_available = OBFUSCATED_COMPILER.exists()
+
+    # Build the list of jobs up-front
+    jobs = []
+    for spec in test_specs:
+        for target, config in TARGET_ENVIRONMENTS.items():
+            for obfuscated in [False, True]:
+                if obfuscated and not obfuscated_available:
+                    continue
+                jobs.append((spec, target, obfuscated, config))
+
+    total_jobs = len(jobs)
+
+    # Resolve worker count
+    if MAX_WORKERS == 0:
+        workers = min(os.cpu_count() or 4, total_jobs) if total_jobs > 0 else 1
+    else:
+        workers = max(1, MAX_WORKERS)
+    workers = min(workers, total_jobs) if total_jobs > 0 else 1
+
     print("Configuration:")
     print(f"  Test entries: {len(test_specs)}")
     for spec in test_specs:
-        src_names = [s.name for s in spec.sources]
-        if len(src_names) == 1:
-            print(f"    - {spec.name} (single: {src_names[0]})")
-        else:
-            print(f"    - {spec.name} (multi: {', '.join(src_names)})")
-    print(f"  Optimization levels: {', '.join(OPTIMIZATION_LEVELS)}")
+        extra = f"  [extra: {spec.extra_flags}]" if spec.extra_flags else ""
+        print(f"    - {spec.name}{extra}")
+    print(f"  Targets: {', '.join(TARGET_ENVIRONMENTS.keys())}")
+    print(f"  Total configurations: {total_jobs}")
+    print(f"  Parallel workers: {workers}" + (" (auto)" if MAX_WORKERS == 0 else ""))
     print(f"  Runs per configuration: {RUN_COUNT}")
     print(f"  Rebuild per run: {REBUILD_PER_RUN}")
     print(f"  Warmup compilation: {WARMUP_COMPILE}")
-    print(f"  Base flags: {BASE_FLAGS}")
-    print(f"  Extra flags: {EXTRA_FLAGS}")
     print(f"  Compile timeout: {COMPILE_TIMEOUT}s")
     print(f"  Execute timeout: {EXECUTE_TIMEOUT}s")
     print(f"  Obfuscated compiler: {OBFUSCATED_COMPILER}")
     print(f"  Regular compiler: {REGULAR_COMPILER}")
     print()
 
-    if not OBFUSCATED_COMPILER.exists():
+    if not obfuscated_available:
         print(f"WARNING: Obfuscated compiler not found at {OBFUSCATED_COMPILER}")
         print("Skipping obfuscated tests.")
     else:
@@ -439,68 +625,41 @@ def main():
 
     BUILD_DIR.mkdir(exist_ok=True)
 
-    all_results = []
-    total_configs = len(test_specs) * len(OPTIMIZATION_LEVELS) * 2
-    current_config = 0
+    all_results: List[TestResult] = []
+    print_lock = threading.Lock()
+    completed = 0
 
-    for spec in test_specs:
-        for optimization in OPTIMIZATION_LEVELS:
-            for obfuscated in [False, True]:
-                if obfuscated and not OBFUSCATED_COMPILER.exists():
-                    continue
+    def _run_and_report(job_index: int, job):
+        nonlocal completed
+        spec, target, obfuscated, config = job
+        results, log = run_one_config(spec, target, obfuscated, config, job_index, total_jobs)
+        with print_lock:
+            completed += 1
+            print(log)
+            print(f"  --> finished ({completed}/{total_jobs})")
+            print()
+        return results
 
-                current_config += 1
-                multi_note = f" ({len(spec.sources)} files)" if len(spec.sources) > 1 else ""
-                print(f"[{current_config}/{total_configs}] Testing {spec.name}{multi_note} -{optimization} {'(obfuscated)' if obfuscated else '(plain)'}")
-
-                output_name = f"{spec.name}_{optimization}_{'obf' if obfuscated else 'plain'}"
-                output_path = BUILD_DIR / output_name
-                compiler = str(OBFUSCATED_COMPILER) if obfuscated else REGULAR_COMPILER
-
-                if WARMUP_COMPILE and obfuscated:
-                    print(f"  Warmup compilation...")
-                    warmup_path = BUILD_DIR / f"{output_name}_warmup"
-                    warmup_success, warmup_time, warmup_error = compile_test(
-                        spec.sources, warmup_path, str(OBFUSCATED_COMPILER), optimization, obfuscated
-                    )
-                    if warmup_success:
-                        print(f"  Warmup complete: {warmup_time:.2f}s")
-                    else:
-                        print(f"  Warmup failed: {warmup_error}")
-
-                test_results = []
-                compile_time = 0.0
-
-                if not REBUILD_PER_RUN:
-                    print(f"  Building once for {RUN_COUNT} runs...")
-                    compile_success, compile_time, compile_error = compile_test(
-                        spec.sources, output_path, compiler, optimization, obfuscated
-                    )
-                    if not compile_success:
-                        print(f"  Build FAILED - {compile_error}")
-                        for run in range(1, RUN_COUNT + 1):
-                            test_results.append(TestResult(
-                                test_name=spec.name, optimization=optimization, obfuscated=obfuscated,
-                                run_number=run, output_body="", time_ns=0,
-                                compile_time=compile_time, success=False,
-                                error_message=f"Compilation failed: {compile_error}"
-                            ))
-                        all_results.extend(test_results)
-                        continue
-
-                for run in range(1, RUN_COUNT + 1):
-                    result = run_single_test(spec, optimization, obfuscated, run, output_path, compiler)
-                    if not REBUILD_PER_RUN:
-                        result.compile_time = compile_time if run == 1 else 0.0
-                    test_results.append(result)
-
-                    if not result.success:
-                        print(f"  Run {run}: FAILED - {result.error_message}")
-                    else:
-                        compile_str = f"{result.compile_time:.2f}s" if result.compile_time > 0 else "cached"
-                        print(f"  Run {run}: OK, compile: {compile_str}, run: {result.time_ns/1_000_000:.2f}ms)")
-
-                all_results.extend(test_results)
+    if workers == 1:
+        # Sequential path (original behaviour, simpler stack traces)
+        for i, job in enumerate(jobs, 1):
+            all_results.extend(_run_and_report(i, job))
+    else:
+        print(f"Running {total_jobs} configurations with {workers} parallel workers...\n")
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_run_and_report, i, job): job
+                for i, job in enumerate(jobs, 1)
+            }
+            for future in as_completed(futures):
+                try:
+                    all_results.extend(future.result())
+                except Exception as e:
+                    job = futures[future]
+                    with print_lock:
+                        print(f"ERROR in worker for {job[0].name}/{job[1]}: {e}")
+                        import traceback
+                        traceback.print_exc()
 
     print_header("Processing Results")
     summaries = calculate_summaries(all_results)
@@ -513,12 +672,12 @@ def main():
         print_statistics(summaries)
 
         if mismatch_reports:
-            print_header("Output Differences (all plain + obfuscated runs of each test)")
+            print_header("Issues & Output Differences (Failures / Mismatches)")
             for report in mismatch_reports:
                 print(report)
                 print()
         else:
-            print("All compared outputs matched (every run of each test produced identical body).")
+            print("All compared tests executed successfully and outputs matched.")
     else:
         print("No results to display.")
 

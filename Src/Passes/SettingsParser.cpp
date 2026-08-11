@@ -506,7 +506,8 @@ bool LeetObfuscator::SettingsParser::ShouldSkipFunction(llvm::Function *function
     size_t instructionCount = std::distance(llvm::inst_begin(function), llvm::inst_end(function));
     if ((attributes.maxFunctionSize != 0 && instructionCount > attributes.maxFunctionSize) ||
         (attributes.minFunctionSize != 0 && instructionCount < attributes.minFunctionSize) ||
-        attributes.skip
+        attributes.skip ||
+        function->getName().find(".llvm") != std::string::npos
     )
     {
         return true;
@@ -533,6 +534,13 @@ std::shared_ptr<LeetObfuscator::RandomNumberGenerator> LeetObfuscator::SettingsP
         generator = std::make_shared<RandomNumberGenerator>(attributes.runtimeSeed); // This function has unique seed
     }
 
+    return generator;
+}
+
+// Todo get rid of this for nanomites machine func
+std::shared_ptr<LeetObfuscator::RandomNumberGenerator> LeetObfuscator::SettingsParser::GetGenerator()
+{
+    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
     return generator;
 }
 

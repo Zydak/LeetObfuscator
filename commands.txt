@@ -1,15 +1,12 @@
 # IGNORE THIS FILE #
 
 windows:
-clang++ --target=x86_64-w64-mingw32 -fpass-plugin=./LeetObfuscator.so ../Src/Tests/Test.cpp -o test.exe -O3 -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s
+./clang++ --target=x86_64-w64-mingw32 ../../Src/Tests/StringManipulationTest.cpp -o test-windows-x64.exe -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s
+./clang++ --target=i686-w64-mingw32 ../../Src/Tests/StringManipulationTest.cpp -o test-windows-x86.exe -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s
 
 linux:
-clang++ -fpass-plugin=./LeetObfuscator.so ../Src/Tests/Test.cpp -o test -O3 -fno-exceptions -static -s
-
-drawing:
-clang++ -S -emit-llvm -fpass-plugin=./LeetObfuscator.so ../Src/Tests/Test.cpp -o test.il -O3 -fno-exceptions -static -s
-opt -passes=dot-cfg test.il -disable-output
-dot -Tpng .main.dot -o main.png
+./clang++ --target=x86_64-linux-gnu --gcc-toolchain=/usr ../../Src/Tests/StringManipulationTest.cpp -o test-linux-x64 -O3 -fno-exceptions
+./clang++ --target=i686-linux-gnu --gcc-toolchain=/usr ../../Src/Tests/StringManipulationTest.cpp -o test-linux-x86 -O3 -fno-exceptions
 
 cmake ../leet-llvm-project/llvm -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DLLVM_USE_LINKER=mold -DLLVM_USE_SPLIT_DWARF=ON -DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_PROJECTS=clang -DLLVM_TARGETS_TO_BUILD=X86 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 ninja clang
