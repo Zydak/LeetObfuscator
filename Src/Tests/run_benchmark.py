@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import subprocess
 import os
 import sys
@@ -13,12 +12,7 @@ from dataclasses import dataclass, field
 from collections import Counter
 from tabulate import tabulate
 
-# ==================== CONFIGURATION ====================
 
-# Each entry can be:
-#   - str: just the source file / directory name
-#   - dict: {"sources": "...", "extra_flags": "..."}  (or list of sources)
-#   - list/tuple: treated as multi-source (legacy)
 TEST_FILES = [
     "StdContainersTest.cpp",
     "FloatingPointMathTest.cpp",
@@ -34,28 +28,17 @@ TEST_FILES = [
     "StringManipulationTest.cpp",
 ]
 
-# Modular compilation and execution targets
 TARGET_ENVIRONMENTS = {
     "linux-x64": {
         "flags": "--target=x86_64-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
-        "run_prefix": "",       # Run directly
+        "run_prefix": "",
         "ext": ""
     },
-    # "linux-x86": {
-    #     "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
-    #     "run_prefix": "",       # You may need qemu-i386 here if running on an ARM/x64 host without multilib
-    #     "ext": ""
-    # },
     "windows-x64": {
         "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
-        "run_prefix": "wine",   # Remove 'wine' if running this natively on Windows
+        "run_prefix": "wine",
         "ext": ".exe"
     },
-    # "windows-x86": {
-    #     "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
-    #     "run_prefix": "wine",   # Remove 'wine' if running this natively on Windows
-    #     "ext": ".exe"
-    # }
 }
 
 RUN_COUNT = 2
@@ -64,10 +47,6 @@ WARMUP_COMPILE = False
 COMPILE_TIMEOUT = 300
 EXECUTE_TIMEOUT = 300
 
-# Parallelism: number of worker threads for concurrent test configs.
-#   0  = auto (min(cpu_count, total configs))
-#   1  = sequential (original behaviour)
-#  >1  = fixed worker count
 MAX_WORKERS = 0
 
 SCRIPT_DIR = Path(__file__).parent
@@ -77,7 +56,6 @@ OBFUSCATED_COMPILER = SCRIPT_DIR / "../../build/bin/clang++"
 REGULAR_COMPILER = "clang++"
 OUTPUT_FORMAT = "grid"
 
-# ==================== DATA STRUCTURES ====================
 
 @dataclass
 class TestSpec:
@@ -114,7 +92,6 @@ class TestSummary:
     error_messages: List[str] = field(default_factory=list)
 
 
-# ==================== UTILITY FUNCTIONS ====================
 
 def print_separator(char="=", length=80):
     print(char * length)
@@ -166,7 +143,6 @@ def _resolve_sources(entry) -> Tuple[List[Path], str]:
 def normalize_test_entry(entry: Union[str, List, Tuple, Dict]) -> TestSpec:
     sources, extra_flags = _resolve_sources(entry)
 
-    # Determine name
     if isinstance(entry, dict):
         name_override = entry.get("name")
         if name_override:
@@ -241,19 +217,13 @@ def run_test(executable_path: Path, target: str) -> Tuple[bool, str, str]:
     
     cmd = f'{run_prefix} "{executable_path}"'.strip()
 
-    # Create a copy of the environment specifically for this run
     env = os.environ.copy()
     
-    # If using wine, inject variables to suppress GUI popups and debug noise
     if "wine" in run_prefix:
-        # winedbg.exe=d disables the crash dialog
-        # mscoree=d,mshtml=d disables the Mono/Gecko install popups
         env["WINEDLLOVERRIDES"] = "winedbg.exe=d,mscoree=d,mshtml=d"
-        # Suppress standard wine fixme/err console spam
         env["WINEDEBUG"] = "-all"
 
     try:
-        # Pass the customized 'env' dictionary into subprocess
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=EXECUTE_TIMEOUT, env=env
         )
@@ -498,7 +468,6 @@ def generate_comparison_table(summaries: Dict[str, List[TestSummary]]) -> Tuple[
             match_status,
         ])
 
-        # Generate mismatch/failure reports
         if match_status == "FAIL":
             report = [f"=== {plain.test_name} ({plain.target}) [FAILED] ==="]
             if not plain.all_runs_success:
@@ -623,7 +592,6 @@ def main():
 
     obfuscated_available = OBFUSCATED_COMPILER.exists()
 
-    # Build the list of jobs up-front
     jobs = []
     for spec in test_specs:
         for target, config in TARGET_ENVIRONMENTS.items():
@@ -634,7 +602,6 @@ def main():
 
     total_jobs = len(jobs)
 
-    # Resolve worker count
     if MAX_WORKERS == 0:
         workers = min(os.cpu_count() or 4, total_jobs) if total_jobs > 0 else 1
     else:
@@ -682,7 +649,6 @@ def main():
         return results
 
     if workers == 1:
-        # Sequential path (original behaviour, simpler stack traces)
         for i, job in enumerate(jobs, 1):
             all_results.extend(_run_and_report(i, job))
     else:

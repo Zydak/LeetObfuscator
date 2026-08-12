@@ -19,7 +19,7 @@ A simple obfuscator for C/C++ x64 and x86
 
 This is made as an LLVM fork, so you need the actual source to obfuscate. It's not an arbitrary executable obfuscator.
 
-If you want to check out the results I've made and obfuscated 2 crackmes with this.
+If you want to check out the results, I've made and obfuscated 2 crackmes with this. You can get them in releases
 - Crackme1 - very simple, a single xor of the user input and compare with the key. Without obfuscation it's 5 minutes to crack.
 - Crackme2 - A little bit more complex one. If you're done with 1 feel free to try it too.
 
@@ -32,6 +32,7 @@ Requirements:
 - CMake
 - Ninja
 - Clang
+- Mold (optional, if you don't want it delete `-DLLVM_USE_LINKER=mold` from cmake. But it will be faster with mold)
 
 ```bash
 git clone https://github.com/<yourname>/LeetObfuscator.git --recursive
@@ -46,11 +47,12 @@ ninja clang
 the compiler will be inside `build/bin/`
 
 ### Windows
-Building from Windows is currently not supported. But there is cross compiled binary in the releases so you can still use it on Windows, just can't build from source.
+Building for Windows is currently not supported. If you really want to, you can get the Linux binary and crosscompile for Windows from Linux or WSL.
 
 ## Usage
 
-Example:
+You also don't have to build it, there's a prebuilt binary in releases
+Example usage:
 
 Inside one .c/.cpp file include Leet.h and define `LEET_IMPLEMENTATION`
 
@@ -67,7 +69,7 @@ then just compile the source
 
 ## Features
 
-All of this was compiled with `-O3` flag and all screenshots come from IDA Pro 9.4. I also tested it with Binary Ninja and Ghidra, results were the same. But since I think IDA has the best decompiler and dissasembler I'll use the screenshots from that. 
+All of this was compiled with `-O3` flag and all screenshots come from IDA Pro 9.4. I also tested it with Binary Ninja and Ghidra, results were the same. But since I think IDA has the best decompiler and disassembler I'll use the screenshots from that. 
 
 ### String Encryption
 Encrypts strings at compile time and inserts a decrypt function at every use of the encrypted string. This completely disables the ability to search for any strings in the binary. And every string has its own unique key hardcoded in the decrypt function which makes dumping and decrypting them a lot harder.
@@ -94,7 +96,7 @@ Replaces arithmetic operations with their MBA equivalents. It's basically imposs
 10 * (x ^ y)
 ```
 
-That's why I've made AAMBA pass.
+That's why I've made the AAMBA pass.
 
 <table>
   <tr>
@@ -110,7 +112,7 @@ That's why I've made AAMBA pass.
 </table>
 
 ### Architectural Hardening MBA (AAMBA)
-Replaces operands of binary operations with `ADC(X, 255) - 255 - CF` and `SBB(X, 255) + 255 + CF`. Of course it always evaluates to `X`, but it makes the expression dependent on the carry flag. Unless a decompiler tracks the state of CF (which sometimes is impossible) it will get very confused and won't be unable to fold these expressions. It pairs very nicely with the previous MBA pass obfuscating the arithmetic even further. As you can see below the decompiler created some additional variables and uses a lot of `__PAIR64__` and `__CFADD__` calls, so it becomes a lot harder to paste that into tools like CoBRA, IDA's goomba plugin is also no help in simplifying this. Also, IDA's decompiler does track the carry flag to some degree, but combining this with control flow obfuscation makes tracking impossible without execution, so later passes will add up even more to this one.
+Replaces operands of binary operations with `ADC(X, 255) - 255 - CF` and `SBB(X, 255) + 255 + CF`. Of course it always evaluates to `X`, but it makes the expression dependent on the carry flag. Unless a decompiler tracks the state of CF (which sometimes is impossible) it will get very confused and won't be able to fold these expressions. It pairs very nicely with the previous MBA pass obfuscating the arithmetic even further. As you can see below the decompiler created some additional variables and uses a lot of `__PAIR64__` and `__CFADD__` calls, so it becomes a lot harder to paste that into tools like CoBRA, IDA's gooMBA plugin is also no help in simplifying this. Also, IDA's decompiler does track the carry flag to some degree, but combining this with control flow obfuscation makes tracking impossible without execution, so later passes will add up even more to this one.
 
 <table>
   <tr>
@@ -126,13 +128,13 @@ Replaces operands of binary operations with `ADC(X, 255) - 255 - CF` and `SBB(X,
 </table>
 
 ### Control Flow Flattening
-Definitely the strongest and most useful pass, it collects all the blocks inside a function and makes one giant state machine out of them, it creates a jump table at the beginning of the function and places all the block pointers inside it. Then instead of normal jump at the end of each block everything gets routed through the dispatcher which uses indirect jumps, these are almost impossible to resolve statically without any execution.
+Definitely the strongest and most useful pass, it collects all the blocks inside a function and makes one giant state machine out of them, it creates a jump table at the beginning of the function and places all the block pointers inside it. Then instead of a normal jump at the end of each block everything gets routed through the dispatcher which uses indirect jumps, these are almost impossible to resolve statically without any execution.
 
 <img alt="" src="Pictures/DISPATCHERobf.png" />
 <img alt="" src="Pictures/DispatcherGraph.png" />
 
 ### Anti Analysis pass
-It creates a bunch of bogus blocks containing invalid assembly. This throws disassemblers immensely because if the disassembler encounters a technically invalid byte that never gets executed, it will still try to make sense of it. So if the byte is incomplete, it will create an instruction from whatever bytes happen to be after it, that creates a desynch essentially destroying every instruction after that. On Windows it's able to somewhat get through this, in rare cases it will be able generate a graph and decompile what it can (tho it will be broken and incomplete), while on Linux it completely breaks the graph view and disables decompilation.
+It creates a bunch of bogus blocks containing invalid assembly. This throws disassemblers off immensely because if the disassembler encounters a technically invalid byte that never gets executed, it will still try to make sense of it. So if the byte is incomplete, it will create an instruction from whatever bytes happen to be after it, that creates a desynch essentially destroying every instruction after that. On Windows it's able to somewhat get through this, in rare cases it will be able to generate a graph and decompile what it can (tho it will be broken and incomplete), while on Linux it completely breaks the graph view and disables decompilation.
 
 <table>
   <tr>
@@ -148,12 +150,12 @@ It creates a bunch of bogus blocks containing invalid assembly. This throws disa
 </table>
 
 On top of that, if the pass sees any instruction starting with `0xFF`, it inserts a single `0xEB` byte before it. This will create `JMP RIP+1`, so control flow is unchanged (RIP simply advances one byte into the original instruction), but disassemblers become desynchronized.
-Instructions beginning with 0xFF are mostly `INC/DEC` and indirect `JMP/CALL`. Sadly most of the ordinary calls and jumps are relative (`0xE8/0xE9/0xEB`) and stay unaffected. But the technique is especially useful around with the dispatcher pass since everything there uses indirect jumps. It's not as useful for calls tho, the only calls that are affected by this are the indirect ones, typically virtual calls, calls through function pointers, and some external/library calls.
+Instructions beginning with 0xFF are mostly `INC/DEC` and indirect `JMP/CALL`. Sadly most of the ordinary calls and jumps are relative (`0xE8/0xE9/0xEB`) and stay unaffected. But the technique is especially useful with the dispatcher pass since everything there uses indirect jumps. It's not as useful for calls tho, the only calls that are affected by this are the indirect ones, typically virtual calls, calls through function pointers, and some external/library calls.
 
 <img alt="" src="Pictures/AntiAnalysisLin64EB.png" />
 
 ### Anti Aliasing Pass
-Throws every stack local in a function into a one big shared stack buffer to which indices are computed at runtime. This way decompilers can't alias variables which makes accesses to the same variable multiple times show up as accessing different values. This plays really nicely with the dispatcher since it demotes registers to stack, so there will a lot of these stack slots.
+Throws every stack local in a function into one big shared stack buffer to which indices are computed at runtime. This way decompilers can't alias variables, which makes accesses to the same variable multiple times show up as accessing different values. This plays really nicely with the dispatcher since it demotes registers to stack, so there will be a lot of these stack slots.
 
 <table>
   <tr>
@@ -169,7 +171,7 @@ Throws every stack local in a function into a one big shared stack buffer to whi
 </table>
 
 ### Nanomites Pass
-I think the second most useful pass after the dispatcher. It obfuscates control flow through exceptions. It replaces all calls with `int3` traps. When the trap is triggered the control flow goes to the exception handler which adjusts `RIP` to the actual call. It also inserts invalid bytes right after the trap to desynchronize the disassembler.
+I think it's the second most useful pass after the dispatcher. It obfuscates control flow through exceptions. It replaces all calls with `int3` traps. When the trap is triggered the control flow goes to the exception handler which adjusts `RIP` to the actual call. It also inserts invalid bytes right after the trap to desynchronize the disassembler.
 
 <table>
   <tr>
@@ -210,11 +212,11 @@ Of course inserting all this bullshit into the binary will slow it down immensel
 <img alt="" src="Pictures/NanomitesOn.png" /><br>
 
 
-Though it's not as bad as it looks because of 2 things. 1. almost 95% of the performance cost here is caused by nanomites, because well, interrupts are just slow. Exception has to leave to the kernel and come back to the app, that takes time. Without nanomites it's down to being only 7.5x slower:
+Though it's not as bad as it looks because of 2 things. 1. almost 95% of the performance cost here is caused by nanomites, because well, interrupts are just slow. The exception has to leave to the kernel and come back to the app, that takes time. Without nanomites it's down to being only 7.5x slower:
 
 <img alt="" src="Pictures/NanomitesOff.png" /><br>
 
-So I highly advise to just mark the functions and calls you want to obfuscate with nanomites manually instead of just setting it to all, obfuscating every call inside a binary is pointless and costs a lot. And the reason number 2. most of the time you don't really care about the performance of the things you want to hide. This obfuscator has ability to get selectively enabled and disabled. So you can disable it for the performance critical sections of your code and enable it wherever it's actually needed. Nobody cares whether your license check takes 1ms or 0.01ms, it's still unnoticeable for a human.
+So I highly advise you to just mark the functions and calls you want to obfuscate with nanomites manually instead of just setting it to all, obfuscating every call inside a binary is pointless and costs a lot. And the reason number 2. most of the time you don't really care about the performance of the things you want to hide. This obfuscator has the ability to get selectively enabled and disabled. So you can disable it for the performance critical sections of your code and enable it wherever it's actually needed. Nobody cares whether your license check takes 1ms or 0.01ms, it's still unnoticeable for a human.
 
 ## Configuration
 You can tweak the settings of this obfuscator by either messing with the config file or marking functions with annotations in the code.
@@ -391,6 +393,6 @@ void importantFunction()
 
 ## Current Limitations
 
-- Works only for x64 and x86 both Windows and Linux.
+- Works only for x64 and x86 on both Windows and Linux.
 - Has to be compiled with -fno-exceptions flag, so obviously no try catch in the obfuscated code.
-- Basically work in progress. Don't expect this to work for bigger projects (it probably won't you can try tho). It's not very well tested, I have some tests written by LLMs because I had no actual projects on hand, but they hardly count as big applications. They're mostly single module files stress testing a specific part of C++. They caught a lot of errors, but again, a new ones will probably pop up on bigger binaries, so if you encounter any please open an issue and let me know.
+- Basically a work in progress. Don't expect this to work for bigger projects (it probably won't, but you can try tho). It's not very well tested, I have some tests written by LLMs because I had no actual projects on hand, but they hardly count as big applications. They're mostly single module files stress testing a specific part of C++. They caught a lot of errors, but again, new ones will probably pop up on bigger binaries, so if you encounter any please open an issue.

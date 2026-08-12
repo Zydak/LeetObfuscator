@@ -1,8 +1,3 @@
-// Bitwise operations stress test for the Leet obfuscator.
-// Focuses on complex bitwise operations including shifting, masking,
-// logical operations, and bit manipulation algorithms.
-// Deterministic output for verification.
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -24,7 +19,6 @@ static inline uint64_t mix64(uint64_t x) {
     return x;
 }
 
-// Basic bitwise operations
 __attribute__((noinline))
 static uint64_t basicBitwiseOperations(uint32_t a, uint32_t b) {
     uint64_t h = 0xdeadbeefcafebabeULL;
@@ -38,7 +32,6 @@ static uint64_t basicBitwiseOperations(uint32_t a, uint32_t b) {
     return h;
 }
 
-// Bit shifting operations
 __attribute__((noinline))
 static uint64_t bitShiftingOperations(uint32_t value) {
     uint64_t h = 0xfeedfacebadc0ffeULL;
@@ -47,31 +40,26 @@ static uint64_t bitShiftingOperations(uint32_t value) {
         h = mix64(h ^ (uint64_t)(value << shift));
         h = mix64(h ^ (uint64_t)(value >> shift));
         
-        // Logical shift right
         h = mix64(h ^ (uint64_t)((uint32_t)((int32_t)value >> shift)));
     }
     
     return h;
 }
 
-// Bit masking operations
 __attribute__((noinline))
 static uint64_t bitMaskingOperations(uint32_t value) {
     uint64_t h = 0x0badf00d1337c0deULL;
     
-    // Extract individual bits
     for (int bit = 0; bit < 32; ++bit) {
         uint32_t mask = 1u << bit;
         h = mix64(h ^ (uint64_t)((value & mask) ? 1 : 0));
     }
     
-    // Extract nibbles
     for (int nibble = 0; nibble < 8; ++nibble) {
         uint32_t mask = 0xFu << (nibble * 4);
         h = mix64(h ^ (uint64_t)((value & mask) >> (nibble * 4)));
     }
     
-    // Extract bytes
     for (int byte = 0; byte < 4; ++byte) {
         uint32_t mask = 0xFFu << (byte * 8);
         h = mix64(h ^ (uint64_t)((value & mask) >> (byte * 8)));
@@ -80,7 +68,6 @@ static uint64_t bitMaskingOperations(uint32_t value) {
     return h;
 }
 
-// Bit setting and clearing
 __attribute__((noinline))
 static uint64_t bitSetClearOperations(uint32_t value) {
     uint64_t h = 0xcafebabedeadfaceULL;
@@ -98,12 +85,10 @@ static uint64_t bitSetClearOperations(uint32_t value) {
     return h;
 }
 
-// Bit counting operations
 __attribute__((noinline))
 static uint64_t bitCountingOperations(uint32_t value) {
     uint64_t h = 0xfacefeed0ddba11eULL;
     
-    // Count set bits (population count)
     uint32_t count = 0;
     uint32_t temp = value;
     while (temp) {
@@ -112,7 +97,6 @@ static uint64_t bitCountingOperations(uint32_t value) {
     }
     h = mix64(h ^ (uint64_t)count);
     
-    // Count leading zeros
     uint32_t leadingZeros = 0;
     if (value == 0) {
         leadingZeros = 32;
@@ -124,7 +108,6 @@ static uint64_t bitCountingOperations(uint32_t value) {
     }
     h = mix64(h ^ (uint64_t)leadingZeros);
     
-    // Count trailing zeros
     uint32_t trailingZeros = 0;
     temp = value;
     if (temp == 0) {
@@ -140,7 +123,6 @@ static uint64_t bitCountingOperations(uint32_t value) {
     return h;
 }
 
-// Bit reversal
 __attribute__((noinline))
 static uint64_t bitReversal(uint32_t value) {
     uint64_t h = 0xbaddcafebabe1337ULL;
@@ -156,12 +138,10 @@ static uint64_t bitReversal(uint32_t value) {
     return h;
 }
 
-// Byte swapping
 __attribute__((noinline))
 static uint64_t byteSwapping(uint32_t value) {
     uint64_t h = 0xc0dedeadbadf00dULL;
     
-    // Manual byte swap
     uint32_t swapped = ((value & 0xFF000000) >> 24) |
                       ((value & 0x00FF0000) >> 8) |
                       ((value & 0x0000FF00) << 8) |
@@ -172,17 +152,14 @@ static uint64_t byteSwapping(uint32_t value) {
     return h;
 }
 
-// Rotate operations
 __attribute__((noinline))
 static uint64_t rotateOperations(uint32_t value) {
     uint64_t h = 0xfeedfacedeadbeefULL;
     
     for (int shift = 1; shift < 32; ++shift) {
-        // Rotate left
         uint32_t rotLeft = (value << shift) | (value >> (32 - shift));
         h = mix64(h ^ (uint64_t)rotLeft);
         
-        // Rotate right
         uint32_t rotRight = (value >> shift) | (value << (32 - shift));
         h = mix64(h ^ (uint64_t)rotRight);
     }
@@ -190,12 +167,10 @@ static uint64_t rotateOperations(uint32_t value) {
     return h;
 }
 
-// Bit field extraction
 __attribute__((noinline))
 static uint64_t bitFieldExtraction(uint64_t value) {
     uint64_t h = 0xfaceface12345678ULL;
     
-    // Extract various bit fields
     for (int start = 0; start < 64; start += 8) {
         for (int length = 1; length <= 8 && start + length <= 64; ++length) {
             uint64_t mask = ((1ULL << length) - 1) << start;
@@ -207,7 +182,6 @@ static uint64_t bitFieldExtraction(uint64_t value) {
     return h;
 }
 
-// Sign extension
 __attribute__((noinline))
 static uint64_t signExtension(int32_t value, int bits) {
     uint64_t h = 0xdead1234face5678ULL;
@@ -221,16 +195,13 @@ static uint64_t signExtension(int32_t value, int bits) {
     return h;
 }
 
-// Bit twiddling hacks
 __attribute__((noinline))
 static uint64_t bitTwiddlingHacks(uint32_t value) {
     uint64_t h = 0xcafe1234dead5678ULL;
     
-    // Check if power of 2
     bool isPowerOf2 = (value != 0) && ((value & (value - 1)) == 0);
     h = mix64(h ^ (uint64_t)isPowerOf2);
     
-    // Get next power of 2
     uint32_t nextPowerOf2 = value - 1;
     nextPowerOf2 |= nextPowerOf2 >> 1;
     nextPowerOf2 |= nextPowerOf2 >> 2;
@@ -240,33 +211,27 @@ static uint64_t bitTwiddlingHacks(uint32_t value) {
     nextPowerOf2 += 1;
     h = mix64(h ^ (uint64_t)nextPowerOf2);
     
-    // Absolute value (without branching)
     int32_t intValue = (int32_t)value;
     int32_t mask = intValue >> 31;
     int32_t absValue = (intValue + mask) ^ mask;
     h = mix64(h ^ (uint64_t)absValue);
     
-    // Min without branching
     uint32_t min = value ^ ((value ^ 42) & -(value < 42));
     h = mix64(h ^ (uint64_t)min);
     
-    // Max without branching
     uint32_t max = value ^ ((value ^ 73) & -(value < 73));
     h = mix64(h ^ (uint64_t)max);
     
     return h;
 }
 
-// Gray code conversion
 __attribute__((noinline))
 static uint64_t grayCodeConversion(uint32_t value) {
     uint64_t h = 0x1337deadbeef1337ULL;
     
-    // Binary to Gray code
     uint32_t gray = value ^ (value >> 1);
     h = mix64(h ^ (uint64_t)gray);
     
-    // Gray code to binary
     uint32_t binary = gray;
     for (uint32_t mask = gray >> 1; mask != 0; mask >>= 1) {
         binary ^= mask;
@@ -276,7 +241,6 @@ static uint64_t grayCodeConversion(uint32_t value) {
     return h;
 }
 
-// Hamming distance
 __attribute__((noinline))
 static uint64_t hammingDistance(uint32_t a, uint32_t b) {
     uint64_t h = 0xfacedeadbeefcafeULL;
@@ -293,7 +257,6 @@ static uint64_t hammingDistance(uint32_t a, uint32_t b) {
     return h;
 }
 
-// Parity calculation
 __attribute__((noinline))
 static uint64_t parityCalculation(uint32_t value) {
     uint64_t h = 0xdeadcafe12345678ULL;
@@ -309,26 +272,22 @@ static uint64_t parityCalculation(uint32_t value) {
     return h;
 }
 
-// Bit manipulation with arrays
 __attribute__((noinline))
 static uint64_t bitArrayOperations(const std::array<uint32_t, 16> &data) {
     uint64_t h = 0xbeefdeadface1234ULL;
     
-    // XOR all elements
     uint32_t xorAll = 0;
     for (uint32_t value : data) {
         xorAll ^= value;
     }
     h = mix64(h ^ (uint64_t)xorAll);
     
-    // AND all elements
     uint32_t andAll = 0xFFFFFFFF;
     for (uint32_t value : data) {
         andAll &= value;
     }
     h = mix64(h ^ (uint64_t)andAll);
     
-    // OR all elements
     uint32_t orAll = 0;
     for (uint32_t value : data) {
         orAll |= value;
@@ -338,7 +297,6 @@ static uint64_t bitArrayOperations(const std::array<uint32_t, 16> &data) {
     return h;
 }
 
-// Bit pattern matching
 __attribute__((noinline))
 static uint64_t bitPatternMatching(uint32_t value, uint32_t pattern, uint32_t mask) {
     uint64_t h = 0xcafebeefdeadfaceULL;
@@ -349,12 +307,10 @@ static uint64_t bitPatternMatching(uint32_t value, uint32_t pattern, uint32_t ma
     return h;
 }
 
-// Endianness conversion simulation
 __attribute__((noinline))
 static uint64_t endiannessConversion(uint32_t value) {
     uint64_t h = 0xfeeddeadcafebeefULL;
     
-    // Little-endian to big-endian
     uint32_t bigEndian = ((value & 0xFF) << 24) |
                         ((value & 0xFF00) << 8) |
                         ((value & 0xFF0000) >> 8) |
@@ -362,7 +318,6 @@ static uint64_t endiannessConversion(uint32_t value) {
     
     h = mix64(h ^ (uint64_t)bigEndian);
     
-    // Big-endian to little-endian
     uint32_t littleEndian = ((bigEndian & 0xFF) << 24) |
                            ((bigEndian & 0xFF00) << 8) |
                            ((bigEndian & 0xFF0000) >> 8) |
@@ -373,7 +328,6 @@ static uint64_t endiannessConversion(uint32_t value) {
     return h;
 }
 
-// Bit interleaving
 __attribute__((noinline))
 static uint64_t bitInterleaving(uint16_t a, uint16_t b) {
     uint64_t h = 0x0badf00d12345678ULL;
@@ -389,7 +343,6 @@ static uint64_t bitInterleaving(uint16_t a, uint16_t b) {
     return h;
 }
 
-// Bit deinterleaving
 __attribute__((noinline))
 static uint64_t bitDeinterleaving(uint32_t interleaved) {
     uint64_t h = 0xfacefacecafe1234ULL;
@@ -406,7 +359,6 @@ static uint64_t bitDeinterleaving(uint32_t interleaved) {
     return h;
 }
 
-// Bit spreading
 __attribute__((noinline))
 static uint64_t bitSpreading(uint16_t value) {
     uint64_t h = 0xdeadcafeface1234ULL;
@@ -421,7 +373,6 @@ static uint64_t bitSpreading(uint16_t value) {
     return h;
 }
 
-// Bit compression
 __attribute__((noinline))
 static uint64_t bitCompression(uint32_t spread) {
     uint64_t h = 0xbeefdeadcafe5678ULL;
@@ -436,7 +387,6 @@ static uint64_t bitCompression(uint32_t spread) {
     return h;
 }
 
-// Merge bits from two values
 __attribute__((noinline))
 static uint64_t mergeBits(uint32_t a, uint32_t b, const std::array<bool, 32> &selectA) {
     uint64_t h = 0xfacefeeddead5678ULL;
@@ -455,7 +405,6 @@ static uint64_t mergeBits(uint32_t a, uint32_t b, const std::array<bool, 32> &se
     return h;
 }
 
-// Selective bit negation
 __attribute__((noinline))
 static uint64_t selectiveBitNegation(uint32_t value, uint32_t mask) {
     uint64_t h = 0x13371337deadfaceULL;
@@ -466,7 +415,6 @@ static uint64_t selectiveBitNegation(uint32_t value, uint32_t mask) {
     return h;
 }
 
-// Bit range operations
 __attribute__((noinline))
 static uint64_t bitRangeOperations(uint32_t value, int start, int end) {
     uint64_t h = 0xc0dec0dedeadbeefULL;
@@ -476,11 +424,9 @@ static uint64_t bitRangeOperations(uint32_t value, int start, int end) {
         uint32_t range = (value & mask) >> start;
         h = mix64(h ^ (uint64_t)range);
         
-        // Clear range
         uint32_t cleared = value & ~mask;
         h = mix64(h ^ (uint64_t)cleared);
         
-        // Set range
         uint32_t setRange = cleared | (0xFFFFFFFFu & mask);
         h = mix64(h ^ (uint64_t)setRange);
     }
@@ -488,28 +434,23 @@ static uint64_t bitRangeOperations(uint32_t value, int start, int end) {
     return h;
 }
 
-// Circular buffer bit operations
 __attribute__((noinline))
 static uint64_t circularBufferBits(uint32_t value, int positions) {
     uint64_t h = 0xdeadbeeffacefaceULL;
     
-    // Circular left shift
     uint32_t circularLeft = (value << positions) | (value >> (32 - positions));
     h = mix64(h ^ (uint64_t)circularLeft);
     
-    // Circular right shift
     uint32_t circularRight = (value >> positions) | (value << (32 - positions));
     h = mix64(h ^ (uint64_t)circularRight);
     
     return h;
 }
 
-// Bit matrix operations
 __attribute__((noinline))
 static uint64_t bitMatrixOperations(const std::array<std::array<uint8_t, 8>, 8> &matrix) {
     uint64_t h = 0xcafebabedead1234ULL;
     
-    // Row-wise XOR
     for (const auto &row : matrix) {
         uint8_t rowXor = 0;
         for (uint8_t value : row) {
@@ -518,7 +459,6 @@ static uint64_t bitMatrixOperations(const std::array<std::array<uint8_t, 8>, 8> 
         h = mix64(h ^ (uint64_t)rowXor);
     }
     
-    // Column-wise XOR
     for (int col = 0; col < 8; ++col) {
         uint8_t colXor = 0;
         for (int row = 0; row < 8; ++row) {
@@ -530,7 +470,6 @@ static uint64_t bitMatrixOperations(const std::array<std::array<uint8_t, 8>, 8> 
     return h;
 }
 
-// Bit sequence search
 __attribute__((noinline))
 static uint64_t bitSequenceSearch(uint32_t data, uint32_t pattern, int patternLength) {
     uint64_t h = 0xfeedfacecafe5678ULL;
@@ -550,7 +489,6 @@ static uint64_t bitSequenceSearch(uint32_t data, uint32_t pattern, int patternLe
     return h;
 }
 
-// Carry-less multiplication
 __attribute__((noinline))
 static uint64_t carrylessMultiplication(uint32_t a, uint32_t b) {
     uint64_t h = 0xdeadcafeface1234ULL;
@@ -569,7 +507,6 @@ static uint64_t carrylessMultiplication(uint32_t a, uint32_t b) {
     return h;
 }
 
-// CRC-like computation
 __attribute__((noinline))
 static uint64_t crcComputation(const std::array<uint8_t, 16> &data, uint32_t polynomial) {
     uint64_t h = 0xbeefdeadcafe5678ULL;
@@ -593,7 +530,6 @@ static uint64_t crcComputation(const std::array<uint8_t, 16> &data, uint32_t pol
 
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
-    // Initialize test data
     std::array<uint32_t, 16> bitArrayData;
     for (unsigned i = 0; i < bitArrayData.size(); ++i)
         bitArrayData[i] = (uint32_t)(i * 0x9e3779b9);
@@ -615,7 +551,6 @@ int main() {
 
     uint64_t checksum = 0xdeadbeefdeadbeefULL;
     
-    // Run all bitwise operation tests
     checksum ^= basicBitwiseOperations(0x12345678, 0x9ABCDEF0);
     checksum ^= basicBitwiseOperations(0xDEADBEEF, 0xCAFEBABE);
     checksum ^= bitShiftingOperations(0x12345678);
