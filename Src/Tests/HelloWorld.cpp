@@ -13,6 +13,6 @@ int Foo(int x, int y)
 
 int main()
 {
-    srand(time(nullptr));
+    //srand(time(nullptr));
     std::cout << Foo(rand(), rand()) << std::endl;
 }

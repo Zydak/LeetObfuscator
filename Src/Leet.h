@@ -148,8 +148,6 @@ extern "C" inline void* __leet_exception_resolve_address(uint32_t nanomiteId)
 static thread_local uintptr_t s_PointerStack[512];
 static thread_local uint32_t s_StackPointer = 0;
 
-#include <iostream>
-
 extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 {
 	// windows doesn't advance RIP immediately, linux does
@@ -169,7 +167,7 @@ extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
     {
         if (s_StackPointer == 0)
         {
-            std::cout << "KURWA" << std::endl;
+            fputs("ERROR: Exception Handler Stack Underflow!\n", stderr);
         }
         s_StackPointer--;
         target = reinterpret_cast<void*>(s_PointerStack[s_StackPointer]);
@@ -193,6 +191,11 @@ extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 
         s_PointerStack[s_StackPointer] = ip + garbageBytesOffset;
         s_StackPointer++;
+
+        if (s_StackPointer >= 512)
+        {
+            fputs("ERROR: Exception Handler Stack Overflow!\n", stderr);
+        }
     }
 
     __leet_exception_set_ip(ctx, (uintptr_t)target);
