@@ -26,10 +26,7 @@
 
 __attribute__((noinline))
 __attribute__((optnone))
-extern "C" void __leet_nanomite_marker()
-{
-    
-}
+extern "C" void __leet_nanomite_marker();
 
 // Macro to mark individual call sites for nanomite obfuscation
 // Usage: LEET_NANOMITE_CALL(targetFunction(args))
@@ -77,6 +74,13 @@ extern "C" void __leet_nanomite_marker()
 #define LEET_MAX_BLOCK_SIZE_ALL(size) LEET_PASS_LIST(LEET_MAX_BLOCK_SIZE_EXPAND, size)
 
 #ifdef LEET_IMPLEMENTATION
+
+__attribute__((noinline))
+__attribute__((optnone))
+extern "C" void __leet_nanomite_marker()
+{
+    
+}
 
 #include <cstdint>
 #include <cstdio>

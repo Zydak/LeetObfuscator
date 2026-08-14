@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cmath>
 #include <chrono>
+#include <iostream>
 
 #define LEET_IMPLEMENTATION
 #include "../Leet.h"
@@ -957,6 +958,6 @@ int main() {
 
     auto end = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-    printf("%ld\n", diff);
+    std::cout << diff << "\n";
     return 0;
 }

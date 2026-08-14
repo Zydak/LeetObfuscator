@@ -72,7 +72,7 @@ namespace LeetObfuscator
 
             uint32_t antiAnalysisProbability = 100;
             BogusInsertPosition antiAnalysisInsertPosition = BogusInsertPosition::Random;
-            uint32_t antiAnalysisRdtscProbability = 50;
+            uint32_t antiAnalysisRdtscProbability = 0;
             uint32_t validBogusBlocksProbability = 0; // Unused for now
             uint32_t invalidBogusBlocksProbability = 100; // Unused for now
 

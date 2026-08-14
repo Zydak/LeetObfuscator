@@ -9,10 +9,7 @@
 #include <random>
 #include "llvm/IR/InstIterator.h"
 
-namespace LeetObfuscator
-{
-
-void SettingsParser::SetArgument(PassArguments& arguments, llvm::StringRef key, std::vector<std::string> values)
+void LeetObfuscator::SettingsParser::SetArgument(PassArguments& arguments, llvm::StringRef key, std::vector<std::string> values)
 {
     auto it = std::find_if(arguments.begin(), arguments.end(), [key](const auto& argument)
     {
@@ -25,7 +22,7 @@ void SettingsParser::SetArgument(PassArguments& arguments, llvm::StringRef key, 
         it->second = std::move(values);
 }
 
-const std::vector<std::string>* SettingsParser::FindArgument(const PassArguments& arguments, llvm::StringRef key)
+const std::vector<std::string>* LeetObfuscator::SettingsParser::FindArgument(const PassArguments& arguments, llvm::StringRef key)
 {
     auto it = std::find_if(arguments.begin(), arguments.end(), [key](const auto& argument)
     {
@@ -33,7 +30,7 @@ const std::vector<std::string>* SettingsParser::FindArgument(const PassArguments
     });
     return it == arguments.end() ? nullptr : &it->second;
 }
-std::vector<std::string> SettingsParser::ParseValues(llvm::StringRef value)
+std::vector<std::string> LeetObfuscator::SettingsParser::ParseValues(llvm::StringRef value)
 {
     std::vector<std::string> values;
     while (true)
@@ -45,20 +42,22 @@ std::vector<std::string> SettingsParser::ParseValues(llvm::StringRef value)
         value = split.second;
     }
 }
-std::vector<std::string> SettingsParser::GetFunctionOption(llvm::Function& function, llvm::StringRef key)
+std::vector<std::string> LeetObfuscator::SettingsParser::GetFunctionOption(llvm::Function& function, llvm::StringRef key)
 {
     if (!function.hasFnAttribute(key))
         return {};
     return ParseValues(function.getFnAttribute(key).getValueAsString());
 }
-void SettingsParser::ReportInvalidArgument(llvm::Function& function, llvm::StringRef key, llvm::StringRef reason)
+
+void LeetObfuscator::SettingsParser::ReportInvalidArgument(llvm::Function& function, llvm::StringRef key, llvm::StringRef reason)
 {
     llvm::errs()
         << "LeetObfuscator: invalid '" << key << "' for function '"
         << function.getName() << "': " << reason << "; using the default value\n";
 }
+
 template <typename T>
-bool SettingsParser::ParseUnsignedArgument(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, T& output, T maximum)
+bool LeetObfuscator::SettingsParser::ParseUnsignedArgument(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, T& output, T maximum)
 {
     if (!values)
         return true;
@@ -78,7 +77,8 @@ bool SettingsParser::ParseUnsignedArgument(llvm::Function& function, const std::
     output = (T)parsed;
     return true;
 }
-void SettingsParser::ParseStringList(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, std::vector<std::string>& output)
+
+void LeetObfuscator::SettingsParser::ParseStringList(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, std::vector<std::string>& output)
 {
     if (!values)
         return;
@@ -89,8 +89,9 @@ void SettingsParser::ParseStringList(llvm::Function& function, const std::vector
     }
     output = *values;
 }
+
 template <typename T>
-bool SettingsParser::ParseEnumArgument(
+bool LeetObfuscator::SettingsParser::ParseEnumArgument(
     llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key,
     T& output, const std::vector<std::pair<llvm::StringRef, T>>& namedValues, llvm::StringRef expected)
 {
@@ -124,22 +125,24 @@ bool SettingsParser::ParseEnumArgument(
 // ---------------------------------------------------------------------------
 
 template <typename T>
-SettingsParser::OptionApplier SettingsParser::UnsignedOption(T FunctionAttributes::* field, T maximum)
+LeetObfuscator::SettingsParser::OptionApplier LeetObfuscator::SettingsParser::UnsignedOption(T FunctionAttributes::* field, T maximum)
 {
     return [field, maximum](llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
     {
         ParseUnsignedArgument<T>(function, values, name, result.*field, maximum);
     };
 }
-SettingsParser::OptionApplier SettingsParser::StringListOption(std::vector<std::string> FunctionAttributes::* field)
+
+LeetObfuscator::SettingsParser::OptionApplier LeetObfuscator::SettingsParser::StringListOption(std::vector<std::string> FunctionAttributes::* field)
 {
     return [field](llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
     {
         ParseStringList(function, values, name, result.*field);
     };
 }
+
 template <typename T>
-SettingsParser::OptionApplier SettingsParser::EnumOption(T FunctionAttributes::* field, std::vector<std::pair<llvm::StringRef, T>> namedValues, llvm::StringRef expected)
+LeetObfuscator::SettingsParser::OptionApplier LeetObfuscator::SettingsParser::EnumOption(T FunctionAttributes::* field, std::vector<std::pair<llvm::StringRef, T>> namedValues, llvm::StringRef expected)
 {
     return [field, namedValues = std::move(namedValues), expected](llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
     {
@@ -147,12 +150,12 @@ SettingsParser::OptionApplier SettingsParser::EnumOption(T FunctionAttributes::*
     };
 }
 
-const std::vector<std::pair<llvm::StringRef, SettingsParser::GlobalParseMode>> SettingsParser::kParseModeValues = {
+const std::vector<std::pair<llvm::StringRef, LeetObfuscator::SettingsParser::GlobalParseMode>> LeetObfuscator::SettingsParser::kParseModeValues = {
     {"all", SettingsParser::GlobalParseMode::All},
     {"none", SettingsParser::GlobalParseMode::None},
 };
 
-void SettingsParser::ApplyRuntimeSeed(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
+void LeetObfuscator::SettingsParser::ApplyRuntimeSeed(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
 {
     if (!values)
         return;
@@ -163,7 +166,8 @@ void SettingsParser::ApplyRuntimeSeed(llvm::Function& function, const std::vecto
     }
     ParseUnsignedArgument<uint64_t>(function, values, name, result.runtimeSeed, std::numeric_limits<uint64_t>::max());
 }
-void SettingsParser::ApplyDefaultParseMode(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
+
+void LeetObfuscator::SettingsParser::ApplyDefaultParseMode(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
 {
     if (!values)
         return;
@@ -182,14 +186,16 @@ void SettingsParser::ApplyDefaultParseMode(llvm::Function& function, const std::
     else
         ReportInvalidArgument(function, name, "expected all or none");
 }
-void SettingsParser::ApplySkip(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
+
+void LeetObfuscator::SettingsParser::ApplySkip(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
 {
     if (!values)
         return;
 
     result.skip = true;
 }
-void SettingsParser::ApplyForcePass(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
+
+void LeetObfuscator::SettingsParser::ApplyForcePass(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
 {
     if (!values)
         return;
@@ -198,7 +204,7 @@ void SettingsParser::ApplyForcePass(llvm::Function&, const std::vector<std::stri
 }
 
 // Settings specific to one pass, namespaced as "leet.<PassName>.<name>".
-const std::vector<SettingsParser::Option>& SettingsParser::GetPassOptions(SettingsParser::PassType passType)
+const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::SettingsParser::GetPassOptions(SettingsParser::PassType passType)
 {
     using FA = FunctionAttributes;
 
@@ -301,7 +307,8 @@ const std::vector<SettingsParser::Option>& SettingsParser::GetPassOptions(Settin
         default: return noOptions;
     }
 }
-void SettingsParser::OverlayFunctionAttributes(llvm::Function& function, llvm::StringRef attributePrefix, const std::vector<Option>& options, PassArguments& effective)
+
+void LeetObfuscator::SettingsParser::OverlayFunctionAttributes(llvm::Function& function, llvm::StringRef attributePrefix, const std::vector<Option>& options, PassArguments& effective)
 {
     for (const Option& option : options)
     {
@@ -310,7 +317,8 @@ void SettingsParser::OverlayFunctionAttributes(llvm::Function& function, llvm::S
             SetArgument(effective, option.name, GetFunctionOption(function, attributeKey));
     }
 }
-void SettingsParser::ExtractOptions(llvm::Function& function, const std::vector<Option>& options, const PassArguments& effective, FunctionAttributes& result)
+
+void LeetObfuscator::SettingsParser::ExtractOptions(llvm::Function& function, const std::vector<Option>& options, const PassArguments& effective, FunctionAttributes& result)
 {
     for (const Option& option : options)
     {
@@ -318,7 +326,7 @@ void SettingsParser::ExtractOptions(llvm::Function& function, const std::vector<
     }
 }
 
-bool SettingsParser::IsKnownOption(const std::vector<Option>& options, llvm::StringRef key)
+bool LeetObfuscator::SettingsParser::IsKnownOption(const std::vector<Option>& options, llvm::StringRef key)
 {
     for (const auto& o : options)
         if (o.name == key)
@@ -345,7 +353,8 @@ bool SettingsParser::IsKnownOption(const std::vector<Option>& options, llvm::Str
 
     return false;
 }
-size_t SettingsParser::FindTopLevelSeparator(llvm::StringRef text, char separator, int& depth)
+
+size_t LeetObfuscator::SettingsParser::FindTopLevelSeparator(llvm::StringRef text, char separator, int& depth)
 {
     for (size_t i = 0; i < text.size(); ++i)
     {
@@ -355,7 +364,8 @@ size_t SettingsParser::FindTopLevelSeparator(llvm::StringRef text, char separato
     }
     return llvm::StringRef::npos;
 }
-void SettingsParser::ParsePassList(SettingsParser::GlobalAttributes& settings, llvm::StringRef value)
+
+void LeetObfuscator::SettingsParser::ParsePassList(SettingsParser::GlobalAttributes& settings, llvm::StringRef value)
 {
     int depth = 0;
     while (true)
@@ -369,8 +379,6 @@ void SettingsParser::ParsePassList(SettingsParser::GlobalAttributes& settings, l
             return;
         value = value.drop_front(comma + 1);
     }
-}
-
 }
 
 LeetObfuscator::SettingsParser::PassType LeetObfuscator::SettingsParser::ParsePassTypeName(llvm::StringRef passName)
@@ -580,39 +588,24 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
 #   Passes that work on basic blocks (like MBA, AAMBA, AntiAnalysis) will skip
 #   blocks outside this range.
 #
-# PASS-SPECIFIC SETTINGS
-# Can be set on any pass, MBAPass(probability=50)
+# PASS SPECIFIC SETTINGS
+# Can be set on almost any pass, MBAPass(probability=50)
 #
 # Available: defaultParseMode, skip, forcePass, runtimeSeed, probability,
 # minFunctionSize, maxFunctionSize, minBlockSize, maxBlockSize
 # probability is 0-100.
 #
-# Some passes have additional specific attributes:
-# - MBAPass: expansionCount, instructionSet
-# - BlockSplitterPass: blockSplitSize
-# - AntiAnalysisPass: bogusInsertPosition, rdtscProbability, validBogusBlocksProbability, invalidBogusBlocksProbability
-# - AAMBAPass: targetOps
+# Some passes have additional specific attributes
 #
 # THE PASSES
 #
 # StringEncryptionPass:
-#   Encrypts string literals at compile time and inserts runtime decryption at every use.
-#   This completely disables the ability to search for any strings in the binary.
-#   Every string has its own unique key hardcoded in the decrypt function which
-#   makes dumping and decrypting them a lot harder.
-#
 #   Performance impact: Very small
 #   Just a decryption call per string use. You won't notice it unless you have a ton of strings.
 #
 #   Attributes: defaultParseMode, skip, forcePass, probability
 #
 # MBAPass (Mixed Boolean Arithmetic):
-#   Replaces simple arithmetic operations with their MBA equivalents.
-#   It's basically impossible to see what the original operation did unless you run
-#   it through an MBA deobfuscator first. Of course this obfuscation is kinda weak
-#   because MBA is a trick older than the world so there are many tools to deal
-#   with that, for example CoBRA. That's why AAMBA pass exists.
-#
 #   Performance impact: Mild to high (depends on expansionCount)
 #
 #   Attributes:
@@ -622,93 +615,39 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
 #   probability (0-100): Chance to apply the transform to an operation.
 #
 # BlockSplitterPass:
-#   Breaks large basic blocks into smaller ones. Increases control flow complexity,
-#   useless on its own, very useful together with DispatcherPass. The dispatcher
-#   pass works best when there are many small blocks to route through.
-#
-#   Performance impact: Mild
+#   Performance impact: High when running with the dispatcher
 #
 #   Attributes:
 #   blockSplitSize (int): Target size for the split blocks. Default is 50 instructions.
 #   probability (0-100): Chance to split a block.
 #
 # DispatcherPass:
-#   Definitely the strongest and most useful pass. It collects all the blocks inside
-#   a function and makes one giant state machine out of them. It creates a jump table
-#   at the beginning of the function and places all the block pointers inside it.
-#   Then instead of normal jump at the end of each block everything gets routed through
-#   the dispatcher which uses indirect jumps. These are almost impossible to resolve
-#   statically without any execution.
-#
 #   Performance impact: High (scales with block count, since you'll have an indirect jump for every block in the function)
 #
 #   Attributes:
 #   probability (0-100): Chance to apply control flow flattening to a function.
 #
 # AntiAnalysisPass:
-#   It creates a bunch of bogus blocks containing invalid assembly. This throws
-#   disassemblers immensely because if the disassembler encounters a technically
-#   invalid byte that never gets executed, it will still try to make sense of it.
-#   So if the byte is incomplete, it will create an instruction from whatever bytes
-#   happen to be after it, that creates a desynch essentially destroying every
-#   instruction after that. On Windows it's able to somewhat get through this,
-#   in rare cases it will be able generate a graph and decompile what it can
-#   (tho it will be broken and incomplete), while on Linux it completely breaks
-#   the graph view and disables decompilation.
-#
-#   If the pass sees any instruction starting with 0xFF, it inserts a single 0xEB
-#   byte before it. This will create JMP RIP+1, so control flow is unchanged
-#   (RIP simply advances one byte into the original instruction), but disassemblers
-#   become desynchronized. Instructions beginning with 0xFF are mostly INC/DEC and
-#   indirect JMP/CALL. The technique is especially useful around with the dispatcher
-#   pass since everything there uses indirect jumps.
-#
-#   Performance impact: Very small, the bogus blocks are never executed.
+#   Performance impact: Very small, the bogus blocks are never executed, so it's only 1 opaque check / rdtsc.
 #
 #   Attributes:
 #   bogusInsertPosition (start|random): Where to insert bogus blocks in the function.
+#   rdtscProbability: Probability of inserting an anti debug RDTSC check
 #
 # AntiAliasingPass:
-#   Throws every stack local in a function into one big shared stack buffer to which
-#   indices are computed at runtime. This way decompilers can't alias variables and
-#   even access to the same variable multiple times will show up as possibly accessing
-#   different values.
-#
 #   Performance impact: low to mild
 #
 #   Attributes:
 #   probability (0-100): Chance to apply anti aliasing to a function.
 #
 # AAMBAPass (Architectural Hardening MBA):
-#   Replaces operands of binary operations with ADC(X, 255) - 255 - CF and
-#   SBB(X, 255) + 255 + CF. Of course it always evaluates to X, but it makes the
-#   expression dependent on the carry flag. Unless a decompiler tracks the state
-#   of CF (which sometimes is impossible) it will get very confused and won't be
-#   unable to fold these expressions. It pairs very nicely with the previous MBA
-#   pass obfuscating the arithmetic even further. The decompiler creates additional
-#   stack variables and uses a lot of __PAIR64__ and __CFADD__ calls, so it becomes
-#   a lot harder to paste that into tools like CoBRA. IDA's goomba plugin is also
-#   no help in simplifying this. IDA's decompiler does track the carry flag to some
-#   degree, but combining this with control flow obfuscation makes tracking impossible
-#   without execution.
-#
 #   Performance impact: Mild
 #
 #   Attributes:
 #   probability (0-100): Chance to apply AAMBA to an operation.
 #
 # NanomitesPass:
-#   I think the second most useful pass after the dispatcher. It obfuscates control
-#   flow through exceptions. It replaces all calls with int3 traps. When the trap
-#   is triggered the control flow goes to the exception handler which adjusts RIP
-#   to the actual call. It also inserts invalid bytes right after the trap to
-#   desynchronize the disassembler.
-#
-#   Performance impact: Very high, it will fire an exception leaving the program and
-#   going to kernel, and interrupts are just slow. Use very sparingly. It's best to
-#   set defaultParsingMode on this to none and manually mark which functions or even
-#   which calls you want to obfuscate with this explicitly. Obfuscating every call
-#   inside a binary is pointless and costs a lot.
+#   Performance impact: Very high
 #
 #   Attributes:
 #   probability (0-100): Chance to apply nanomites to a call.
@@ -716,8 +655,8 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
 # =====================================
 # DEFAULT PRESET, works well on small binaries
 # =====================================
-# This preset is designed to provide good obfuscation for small to medium
-# sized binaries while keeping performance reasonable. Nanomites are disabled
+# Made for small to medium sized binaries while keeping
+# the performance reasonable. Nanomites are disabled
 # by default because they have a huge performance impact.
 #
 # You can customize this by:
@@ -736,12 +675,12 @@ passes=
     StringEncryptionPass(),
     MBAPass(expansionCount=2, probability=50),
     BlockSplitterPass(blockSplitSize=50),
-    AntiAnalysisPass(bogusInsertPosition=random,probability=25),
+    AntiAnalysisPass(rdtscProbability=100,bogusInsertPosition=random,probability=25),
     DispatcherPass(),
     MBAPass(expansionCount=1),
     AAMBAPass(probability=35),
     AntiAliasingPass(),
-    AntiAnalysisPass(bogusInsertPosition=start,probability=25),
+    AntiAnalysisPass(rdtscProbability=0,bogusInsertPosition=start,probability=25),
     NanomitesPass(defaultParseMode=none); # This is very expensive, I set the default to none, change it if you need to
 
 )";

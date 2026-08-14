@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Optional, Union
 from dataclasses import dataclass, field
 from collections import Counter
 from tabulate import tabulate
-
+import signal
 
 TEST_FILES = [
     "StdContainersTest.cpp",
@@ -29,6 +29,7 @@ TEST_FILES = [
     "ClassesTest.cpp",
     "IndirectCallsTest.cpp",
     "TemplatesTest.cpp",
+    "MultiModuleTest",
 ]
 
 TARGET_ENVIRONMENTS = {
@@ -37,13 +38,18 @@ TARGET_ENVIRONMENTS = {
         "run_prefix": "",
         "ext": ""
     },
-    # "linux-x86": {
-    #     "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
+    "linux-x86": {
+        "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
+        "run_prefix": "",
+        "ext": ""
+    },
+    # "linux-x64-noopt": {
+    #     "flags": "--target=x86_64-linux-gnu --gcc-toolchain=/usr -O0 -fno-exceptions",
     #     "run_prefix": "",
     #     "ext": ""
     # },
-    # "linux-x64-noopt": {
-    #     "flags": "--target=x86_64-linux-gnu --gcc-toolchain=/usr -O0 -fno-exceptions",
+    # "linux-x86-noopt": {
+    #     "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O0 -fno-exceptions",
     #     "run_prefix": "",
     #     "ext": ""
     # },
@@ -52,20 +58,25 @@ TARGET_ENVIRONMENTS = {
         "run_prefix": "wine",
         "ext": ".exe"
     },
-    # "windows-x86": {
-    #     "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+    "windows-x86": {
+        "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+        "run_prefix": "wine",
+        "ext": ".exe"
+    },
+    # "windows-x64-noopt": {
+    #     "flags": "--target=x86_64-w64-mingw32 -O0 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
     #     "run_prefix": "wine",
     #     "ext": ".exe"
     # },
-    # "windows-x64-noopt": {
-    #     "flags": "--target=x86_64-w64-mingw32 -O0 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+    # "windows-x86-noopt": {
+    #     "flags": "--target=i686-w64-mingw32 -O0 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
     #     "run_prefix": "wine",
     #     "ext": ".exe"
     # },
 }
 
 RUN_COUNT = 2
-REBUILD_PER_RUN = False
+REBUILD_PER_RUN = True
 WARMUP_COMPILE = False
 COMPILE_TIMEOUT = 300
 EXECUTE_TIMEOUT = 300
@@ -220,17 +231,38 @@ def compile_test(sources: List[Path], output_path: Path, compiler: str,
     cmd = f'{compiler} {flags} {src_args} -o "{output_path}"'
 
     start_time = time.time()
+    proc = None
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=COMPILE_TIMEOUT
+        proc = subprocess.Popen(
+            cmd, shell=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True   # own process group
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=COMPILE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # Kill the entire process group
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            # Reap to avoid zombies
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            return False, time.time() - start_time, f"Compilation timeout after {COMPILE_TIMEOUT}s"
+
         compile_time = time.time() - start_time
-        if result.returncode != 0:
-            return False, compile_time, result.stderr
+        if proc.returncode != 0:
+            return False, compile_time, stderr
         return True, compile_time, ""
-    except subprocess.TimeoutExpired:
-        return False, time.time() - start_time, f"Compilation timeout after {COMPILE_TIMEOUT}s"
     except Exception as e:
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
         return False, time.time() - start_time, str(e)
 
 
@@ -246,18 +278,36 @@ def run_test(executable_path: Path, target: str) -> Tuple[bool, str, str]:
         env["WINEDLLOVERRIDES"] = "winedbg.exe=d,mscoree=d,mshtml=d"
         env["WINEDEBUG"] = "-all"
 
+    proc = None
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=EXECUTE_TIMEOUT, env=env
+        proc = subprocess.Popen(
+            cmd, shell=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=env, start_new_session=True
         )
-        if result.returncode != 0:
-            return False, "", result.stderr
-        return True, result.stdout, ""
-    except subprocess.TimeoutExpired:
-        return False, "", f"Execution timeout after {EXECUTE_TIMEOUT}s"
-    except Exception as e:
-        return False, "", str(e)
+        try:
+            stdout, stderr = proc.communicate(timeout=EXECUTE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            return False, "", f"Execution timeout after {EXECUTE_TIMEOUT}s"
 
+        if proc.returncode != 0:
+            return False, "", stderr
+        return True, stdout, ""
+    except Exception as e:
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        return False, "", str(e)
 
 def run_single_test(spec: TestSpec, target: str, obfuscated: bool,
                     run_number: int, output_path: Path, compiler: str) -> TestResult:

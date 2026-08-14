@@ -474,16 +474,19 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         if (auto* switchInst = llvm::dyn_cast<llvm::SwitchInst>(terminator))
         {
             RewriteSwitchTerminator(switchInst, basicBlocks, permutationTableType, permutationTable, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+            continue;
         }
 
         if (auto* indirectBr = llvm::dyn_cast<llvm::IndirectBrInst>(terminator))
         {
             RewriteIndirectBrTerminator(indirectBr, basicBlocks, permutationTableType, permutationTable, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+            continue;
         }
 
         if (auto* callBr = llvm::dyn_cast<llvm::CallBrInst>(terminator))
         {
             RewriteCallBrTerminator(callBr, basicBlocks, permutationTableType, permutationTable, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+            continue;
         }
     }
 

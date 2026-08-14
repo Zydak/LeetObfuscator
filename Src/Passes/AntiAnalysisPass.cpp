@@ -99,8 +99,7 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, b
     llvm::BasicBlock* bogus = CreateInvalidBogusBlock(block->getParent(), generator);
     llvm::BasicBlock* newSplitBlock = nullptr;
 
-    // RDTSC checks don't won't for now, TODO
-    if (false)
+    if (rdtsc)
         newSplitBlock = ChainBogusIntoBlockRdtsc(block, bogus, randomPos, generator);
     else
         newSplitBlock = ChainBogusIntoBlock(block, bogus, randomPos, generator);
