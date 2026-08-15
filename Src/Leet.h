@@ -22,7 +22,8 @@
 #define LEET_AAMBA_PROBABILITY(value) __attribute__((annotate("leet.AAMBAPass.probability=" #value)))
 #define LEET_AAMBA_TARGET_OPS(values) __attribute__((annotate("leet.AAMBAPass.targetOps=" values)))
 
-#define LEET_NANOMITES_PROBABILITY(value) __attribute__((annotate("leet.NanomitesPass.probability=" #value)))
+#define LEET_NANOMITES_CALLS_PROBABILITY(value) __attribute__((annotate("leet.NanomitesPass.callsProbability=" #value)))
+#define LEET_NANOMITES_JUMPS_PROBABILITY(value) __attribute__((annotate("leet.NanomitesPass.jumpsProbability=" #value)))
 
 __attribute__((noinline))
 __attribute__((optnone))
@@ -149,9 +150,6 @@ extern "C" inline void* __leet_exception_resolve_address(uint32_t nanomiteId)
     return nullptr;
 }
 
-static thread_local uintptr_t s_PointerStack[512];
-static thread_local uint32_t s_StackPointer = 0;
-
 extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 {
 	// windows doesn't advance RIP immediately, linux does
@@ -163,44 +161,13 @@ extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 
     uintptr_t ip = __leet_exception_get_ip(ctx);
     uint32_t nanomiteId = *((uint32_t*)((uint8_t*)ip + nanomiteIDOffset));
-    bool popFromStack = (nanomiteId == 0);
 
     void* target = nullptr;
 
-    if (popFromStack)
-    {
-        if (s_StackPointer == 0)
-        {
-            fputs("ERROR: Exception Handler Stack Underflow!\n", stderr);
-        }
-        s_StackPointer--;
-        target = reinterpret_cast<void*>(s_PointerStack[s_StackPointer]);
-    }
-    else
-    {
-        target = __leet_exception_resolve_address(nanomiteId);
-    }
+    target = __leet_exception_resolve_address(nanomiteId);
 
     if (target == nullptr)
         return false;
-
-    if (!popFromStack)
-    {
-		// windows doesn't advance RIP immediately, linux does
-		#if defined(_WIN32)
-		uint32_t garbageBytesOffset = 9;
-		#else
-		uint32_t garbageBytesOffset = 8;
-		#endif
-
-        s_PointerStack[s_StackPointer] = ip + garbageBytesOffset;
-        s_StackPointer++;
-
-        if (s_StackPointer >= 512)
-        {
-            fputs("ERROR: Exception Handler Stack Overflow!\n", stderr);
-        }
-    }
 
     __leet_exception_set_ip(ctx, (uintptr_t)target);
     return true;

@@ -290,7 +290,8 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"runtimeSeed", ApplyRuntimeSeed},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
-        {"probability", UnsignedOption(&FA::NanomitesProbability, 100u)},
+        {"callsProbability", UnsignedOption(&FA::nanomitesCallsProbability, 100u)},
+        {"jumpsProbability", UnsignedOption(&FA::nanomitesJumpsProbability, 100u)},
     };
     static const std::vector<Option> noOptions;
 

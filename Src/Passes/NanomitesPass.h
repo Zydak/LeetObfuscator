@@ -18,7 +18,10 @@ namespace LeetObfuscator
 
     private:
         void ObfuscateFunction(llvm::Function* function, std::vector<llvm::Constant*>& nanomitesEntries);
+        void ObfuscateFunctionPointerTables(llvm::Module& module,std::vector<llvm::Constant*>& nanomitesEntries);
         void CreateGlobalNanomitesTable(llvm::Module& module, std::vector<llvm::Constant*>& nanomitesEntries);
+
+        llvm::Constant* MakeEntry(uint32_t id, llvm::Constant* addr, llvm::LLVMContext& context);
 
         uint32_t GenerateUniqueNanomiteId(llvm::Module& module, RandomNumberGenerator& generator);
         llvm::Function* CreateForwardFunction(llvm::Module& module, llvm::Function* realFunc, uint32_t id);
@@ -43,6 +46,6 @@ namespace LeetObfuscator
 
     private:
         bool ParseLeetID(llvm::StringRef name, uint32_t& id);
-        void InsertTrap(uint32_t id, llvm::MachineInstr& machineInstruction);
+        void InsertTrap(uint32_t id, llvm::MachineInstr& machineInstruction, bool isConditionalJump);
     };
 }
