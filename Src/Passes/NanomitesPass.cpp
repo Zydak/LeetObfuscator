@@ -218,7 +218,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
                     nextCallMarked = false;
                     
                     // If not marked, use probability based selection
-                    if (!isMarked && generator->DrawRange(1u, 100u) > attributes.nanomitesCallsProbability)
+                    if (!isMarked && generator->DrawRange(1u, 100u) > attributes.nanomitesProbability)
                         continue;
 
                     callInstructions.push_back(callInst);
@@ -257,14 +257,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         m_Logger.LogInstruction(*callInst, "Rewriting call site", 4);
         m_Logger.Log(callInst->getCalledFunction() ? std::string("Target call: ") + callInst->getCalledFunction()->getName().str() : "Target call: <unknown>", 5);
 
-        if (generator->DrawRange(0u, 100u) >= 50)
-        {
-            // Forward func
-            llvm::Function* forwardFunc = CreateForwardFunction(*module, realFunc, callSiteId);
-            callInst->setCalledFunction(forwardFunc);
-            nanomitesEntries.push_back(MakeEntry(callSiteId, realFunc, context));
-        }
-        else
+        if (generator->DrawRange(1u, 100u) <= attributes.nanomitesTrampolineProbability)
         {
             // Trampoline
             llvm::Function* trampoline = CreateTrampoline(*module, realFunc, callSiteId);
@@ -280,6 +273,13 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
 
             nanomitesEntries.push_back(MakeEntry(callSiteId, trampoline, context));
             callInst->setTailCallKind(llvm::CallInst::TCK_NoTail);
+        }
+        else
+        {
+            // Forward func
+            llvm::Function* forwardFunc = CreateForwardFunction(*module, realFunc, callSiteId);
+            callInst->setCalledFunction(forwardFunc);
+            nanomitesEntries.push_back(MakeEntry(callSiteId, realFunc, context));
         }
 
         m_Logger.LogFunction(*function, "Registered nanomite entry for call site", 4);
