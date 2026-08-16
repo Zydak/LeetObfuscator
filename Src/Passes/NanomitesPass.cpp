@@ -257,7 +257,8 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         m_Logger.LogInstruction(*callInst, "Rewriting call site", 4);
         m_Logger.Log(callInst->getCalledFunction() ? std::string("Target call: ") + callInst->getCalledFunction()->getName().str() : "Target call: <unknown>", 5);
 
-        if (generator->DrawRange(1u, 100u) <= attributes.nanomitesTrampolineProbability)
+        // Trampolines are fucking broken again, I don't know why TODO
+        if (generator->DrawRange(1u, 100u) <= 0)
         {
             // Trampoline
             llvm::Function* trampoline = CreateTrampoline(*module, realFunc, callSiteId);
