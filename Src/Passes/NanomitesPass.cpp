@@ -147,7 +147,6 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
     std::vector<llvm::CallInst*> callInstructions;
-    std::vector<llvm::BranchInst*> branchInstructions;
 
     // Don't obfuscate exception stuff because it will break, also skip dispatcher barriers because there's too
     // many of them and it will be slow, they're also empty calls so what's the point
@@ -227,21 +226,6 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
             }
         }
     }
-
-    for (auto& basicBlock : *function)
-    {
-        for (auto& inst : basicBlock)
-        {
-            llvm::BranchInst* branchInstruction = llvm::dyn_cast<llvm::BranchInst>(&inst);
-            if (branchInstruction)
-            {
-                if (generator->DrawRange(1u, 100u) <= attributes.nanomitesJumpsProbability)
-                {
-                    branchInstructions.push_back(branchInstruction);
-                }
-            }
-        }
-    }
     
     // Remove marker calls as they're just placeholders
     for (auto* markerCall : markerCallsToRemove)
@@ -299,14 +283,6 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         }
 
         m_Logger.LogFunction(*function, "Registered nanomite entry for call site", 4);
-    }
-
-    for (auto& branchInstruction : branchInstructions)
-    {
-        uint32_t callSiteId = GenerateUniqueNanomiteId(*module, *generator);
-        m_Logger.LogFunction(*function, "Injecting nanomite wrapper", 3);
-        m_Logger.LogInstruction(*branchInstruction, "Rewriting jump site", 4);
-
     }
 
     // Verify the function at the end
