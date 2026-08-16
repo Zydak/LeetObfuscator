@@ -21,6 +21,10 @@ add_llvm_component_library(LLVMLeetObfuscator
     CodeGen
 )
 
+target_include_directories(LLVMLeetObfuscator PRIVATE
+  ${LLVM_MAIN_SRC_DIR}/..          # so #include "llvm/lib/Target/X86/X86InstrInfo.h" works
+  ${LLVM_BINARY_DIR}/lib/Target/X86  # for the TableGen-generated .inc files
+)
 
 find_program(CLANGXX_EXE NAMES clang++ REQUIRED)
 set(HELPER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringEncryptionHelper.cpp)

@@ -150,24 +150,53 @@ extern "C" inline void* __leet_exception_resolve_address(uint32_t nanomiteId)
     return nullptr;
 }
 
+static thread_local uintptr_t s_PointerStack[512];
+static thread_local uint32_t s_StackPointer = 0;
 extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 {
 	// windows doesn't advance RIP immediately, linux does
 	#if defined(_WIN32)
 	uint32_t nanomiteIDOffset = 4;
+    uint32_t garbageBytesOffset = 9;
 	#else
 	uint32_t nanomiteIDOffset = 3;
+    uint32_t garbageBytesOffset = 8;
 	#endif
 
     uintptr_t ip = __leet_exception_get_ip(ctx);
     uint32_t nanomiteId = *((uint32_t*)((uint8_t*)ip + nanomiteIDOffset));
+    bool popFromStack = (nanomiteId == 0);
+    bool isTrampolineCall = *((bool*)((uint8_t*)ip + nanomiteIDOffset + 4));
 
     void* target = nullptr;
 
-    target = __leet_exception_resolve_address(nanomiteId);
+    if (!isTrampolineCall || (isTrampolineCall && !popFromStack))
+    {
+        target = __leet_exception_resolve_address(nanomiteId);
+    }
+    else
+    {
+        if (s_StackPointer == 0)
+        {
+            fputs("ERROR: Exception Handler Stack Underflow!\n", stderr);
+        }
+        s_StackPointer--;
+        target = reinterpret_cast<void*>(s_PointerStack[s_StackPointer]);
+    }
 
     if (target == nullptr)
         return false;
+
+    if (isTrampolineCall && !popFromStack)
+    {
+        s_PointerStack[s_StackPointer] = ip + garbageBytesOffset;
+        s_StackPointer++;
+
+        if (s_StackPointer >= 512)
+        {
+            fputs("ERROR: Exception Handler Stack Overflow!\n", stderr);
+        }
+    }
 
     __leet_exception_set_ip(ctx, (uintptr_t)target);
     return true;

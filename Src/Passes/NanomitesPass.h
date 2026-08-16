@@ -40,12 +40,13 @@ namespace LeetObfuscator
 
         bool runOnMachineFunction(llvm::MachineFunction &MF) override;
 
-        llvm::StringRef getPassName() const override {
+        llvm::StringRef getPassName() const override
+        {
             return "Leet Nanomites Machine Code Pass";
         }
 
     private:
         bool ParseLeetID(llvm::StringRef name, uint32_t& id);
-        void InsertTrap(uint32_t id, llvm::MachineInstr& machineInstruction, bool isConditionalJump);
+        void InsertTrap(uint32_t id, llvm::MachineInstr& machineInstruction, bool isTrampoline);
     };
 }

@@ -28,6 +28,8 @@
 #include <limits>
 #include <vector>
 
+#include "llvm/IR/MDBuilder.h"
+
 llvm::PreservedAnalyses LeetObfuscator::NanomitesPass::run(llvm::Module& module, llvm::ModuleAnalysisManager&)
 {
     std::cout << "Running NanomitesPass" << std::endl;
@@ -79,7 +81,7 @@ uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(llvm::Module& m
     return (moduleTag << 17) | localId;
 }
 
-static std::string MakeIdTrailer(uint32_t nanomiteId, bool isConditionalJump)
+static std::string MakeIdTrailer(uint32_t nanomiteId, bool isTrampoline)
 {
     std::shared_ptr<LeetObfuscator::RandomNumberGenerator> generator = LeetObfuscator::SettingsParser::GetGenerator(); // TODO
 
@@ -111,7 +113,7 @@ static std::string MakeIdTrailer(uint32_t nanomiteId, bool isConditionalJump)
         << "\t.byte " << ((nanomiteId >>  8) & 0xFF) << "\n"
         << "\t.byte " << ((nanomiteId >> 16) & 0xFF) << "\n"
         << "\t.byte " << ((nanomiteId >> 24) & 0xFF) << "\n"
-        << "\t.byte " << ((isConditionalJump) & 0xFF) << "\n";
+        << "\t.byte " << (uint32_t(isTrampoline) & 0xFF);
 
     return asmText;
 }
@@ -144,7 +146,8 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
-    std::vector<llvm::CallInst*> instructions;
+    std::vector<llvm::CallInst*> callInstructions;
+    std::vector<llvm::BranchInst*> branchInstructions;
 
     // Don't obfuscate exception stuff because it will break, also skip dispatcher barriers because there's too
     // many of them and it will be slow, they're also empty calls so what's the point
@@ -219,7 +222,22 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
                     if (!isMarked && generator->DrawRange(1u, 100u) > attributes.nanomitesCallsProbability)
                         continue;
 
-                    instructions.push_back(callInst);
+                    callInstructions.push_back(callInst);
+                }
+            }
+        }
+    }
+
+    for (auto& basicBlock : *function)
+    {
+        for (auto& inst : basicBlock)
+        {
+            llvm::BranchInst* branchInstruction = llvm::dyn_cast<llvm::BranchInst>(&inst);
+            if (branchInstruction)
+            {
+                if (generator->DrawRange(1u, 100u) <= attributes.nanomitesJumpsProbability)
+                {
+                    branchInstructions.push_back(branchInstruction);
                 }
             }
         }
@@ -231,7 +249,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         markerCall->eraseFromParent();
     }
 
-    if (instructions.empty())
+    if (callInstructions.empty())
     {
         m_Logger.LogFunction(*function, "No eligible call sites found", 2);
         return;
@@ -244,7 +262,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     llvm::LLVMContext& context = function->getContext();
     llvm::Module* module = function->getParent();
 
-    for (auto* callInst : instructions)
+    for (auto* callInst : callInstructions)
     {
         llvm::Function* realFunc = callInst->getCalledFunction();
         realFunc->addFnAttr(llvm::Attribute::NoInline);
@@ -255,11 +273,40 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         m_Logger.LogInstruction(*callInst, "Rewriting call site", 4);
         m_Logger.Log(callInst->getCalledFunction() ? std::string("Target call: ") + callInst->getCalledFunction()->getName().str() : "Target call: <unknown>", 5);
 
-        llvm::Function* forwardFunc = CreateForwardFunction(*module, realFunc, callSiteId);
-        callInst->setCalledFunction(forwardFunc);
+        if (generator->DrawRange(0u, 100u) >= 50)
+        {
+            // Forward func
+            llvm::Function* forwardFunc = CreateForwardFunction(*module, realFunc, callSiteId);
+            callInst->setCalledFunction(forwardFunc);
+            nanomitesEntries.push_back(MakeEntry(callSiteId, realFunc, context));
+        }
+        else
+        {
+            // Trampoline
+            llvm::Function* trampoline = CreateTrampoline(*module, realFunc, callSiteId);
 
-        nanomitesEntries.push_back(MakeEntry(callSiteId, realFunc, context));
+            llvm::IRBuilder<> builder(callInst);
+            llvm::InlineAsm *IA = llvm::InlineAsm::get(
+                llvm::FunctionType::get(llvm::Type::getVoidTy(context), false), 
+                "/*__nanomite_call_marker_" + std::to_string(callSiteId) + "*/",
+                "",
+                true
+            );
+            builder.CreateCall(IA);
+
+            nanomitesEntries.push_back(MakeEntry(callSiteId, trampoline, context));
+            callInst->setTailCallKind(llvm::CallInst::TCK_NoTail);
+        }
+
         m_Logger.LogFunction(*function, "Registered nanomite entry for call site", 4);
+    }
+
+    for (auto& branchInstruction : branchInstructions)
+    {
+        uint32_t callSiteId = GenerateUniqueNanomiteId(*module, *generator);
+        m_Logger.LogFunction(*function, "Injecting nanomite wrapper", 3);
+        m_Logger.LogInstruction(*branchInstruction, "Rewriting jump site", 4);
+
     }
 
     // Verify the function at the end
@@ -328,6 +375,61 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunctionPointerTables(llvm::Module&
         if (changed)
             global.setInitializer(llvm::ConstantArray::get(constArr->getType(), newElems));
     }
+}
+
+// Fuck win32
+static std::string GetMangledSymbolName(llvm::Function* function)
+{
+    llvm::SmallString<128> buffer;
+    llvm::raw_svector_ostream os(buffer);
+    llvm::Mangler mangler;
+    mangler.getNameWithPrefix(os, function, false);
+    return std::string(buffer.str());
+}
+
+llvm::Function* LeetObfuscator::NanomitesPass::CreateTrampoline(llvm::Module& module, llvm::Function* realFunc, uint32_t callSiteId)
+{
+    llvm::LLVMContext& context = module.getContext();
+
+    llvm::FunctionType* trampolineTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+
+    std::string trampolineName = "__leet_trampoline_" + std::to_string(callSiteId);
+    
+    llvm::Function* trampoline = llvm::Function::Create(
+        trampolineTy,
+        llvm::GlobalValue::PrivateLinkage,
+        trampolineName,
+        module
+    );
+
+    trampoline->addFnAttr(llvm::Attribute::Naked);
+    trampoline->addFnAttr(llvm::Attribute::NoInline);
+
+    llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", trampoline);
+    llvm::IRBuilder<> builder(entry);
+    
+    // Mangled names can contian $ in them, so change it to $$ so llvm doesn't cry
+    std::string target = GetMangledSymbolName(realFunc);
+    for (size_t pos = 0; (pos = target.find('$', pos)) != std::string::npos; pos += 2)
+        target.replace(pos, 1, "$$");
+
+    std::string asmText = "call " + target + "\n\t" + MakeIdTrailer(0, true); // Empty ID, exception handler will pop the address from the stack
+
+    llvm::InlineAsm* trampolineAsm = llvm::InlineAsm::get(
+        llvm::FunctionType::get(builder.getVoidTy(), false),
+        asmText,
+        "",
+        true
+    );
+
+    builder.CreateCall(trampolineAsm);
+    builder.CreateUnreachable();
+
+    // Trampoline block is technically orphaned, so make sure it's not opted out
+    llvm::appendToCompilerUsed(module, {trampoline});
+    llvm::appendToCompilerUsed(module, {realFunc});
+
+    return trampoline;
 }
 
 llvm::Function* LeetObfuscator::NanomitesPass::CreateForwardFunction(llvm::Module& module, llvm::Function* realFunc, uint32_t id)
@@ -427,13 +529,13 @@ void LeetObfuscator::NanomitesPass::CreateGlobalNanomitesTable(llvm::Module& mod
 
 char LeetObfuscator::NanomitesMachineCodePass::ID = 0;
 
-void LeetObfuscator::NanomitesMachineCodePass::InsertTrap(uint32_t id, llvm::MachineInstr& machineInstruction, bool isConditionalJump)
+void LeetObfuscator::NanomitesMachineCodePass::InsertTrap(uint32_t id, llvm::MachineInstr& machineInstruction, bool isTrampoline)
 {
     llvm::MachineBasicBlock* machineBlock = machineInstruction.getParent();
     llvm::MachineFunction* machineFunction = machineBlock->getParent();
     const llvm::TargetInstrInfo* instructionInfo = machineFunction->getSubtarget().getInstrInfo();
 
-    std::string asmText = MakeIdTrailer(id, isConditionalJump);
+    std::string asmText = MakeIdTrailer(id, isTrampoline);
     
     const char *AsmSym = machineFunction->createExternalSymbolName(asmText);
 
@@ -469,14 +571,6 @@ bool LeetObfuscator::NanomitesMachineCodePass::runOnMachineFunction(llvm::Machin
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator();
 
-    // TODO
-    // uint32_t jumpProbability = 0;
-    // if (machineFunction.getFunction().hasFnAttribute("leet.NanomitesPass.jumpsProbability"))
-    // {
-    //     std::cout << "OBFUSCATING JUMPS: " << machineFunction.getName().str() << std::endl;
-    //     jumpProbability = (uint32_t)machineFunction.getFunction().getFnAttribute("leet.NanomitesPass.jumpsProbability").getValueAsInt();
-    // }
-
     bool changed = false;
 
     bool isForwardCall = false;
@@ -490,6 +584,7 @@ bool LeetObfuscator::NanomitesMachineCodePass::runOnMachineFunction(llvm::Machin
         return changed;
     }
 
+    bool nextCallIsNanomite = false;
     for (auto& machineBlock : machineFunction)
     {
         for (auto iterator = machineBlock.begin(); iterator != machineBlock.end();)
@@ -503,21 +598,60 @@ bool LeetObfuscator::NanomitesMachineCodePass::runOnMachineFunction(llvm::Machin
                 if (!machineInstruction.isCall() && !machineInstruction.isReturn())
                     continue;
     
-                InsertTrap(nanomiteID, machineInstruction, /* is conditional jump*/ false);
+                InsertTrap(nanomiteID, machineInstruction, false);
                 machineInstruction.eraseFromParent();
                 changed = true;
             }
-            // else TODO
-            // {
-            //     // Check for jumps?
+            else
+            {
+                // Look for marker
+                if (machineInstruction.getOpcode() == llvm::TargetOpcode::INLINEASM)
+                {
+                    const char *AsmStr = machineInstruction.getOperand(0).getSymbolName();
+                    llvm::StringRef Name(AsmStr);
+                    if (Name.consume_front("/*__nanomite_call_marker_"))
+                    {
+                        uint32_t id = 0;
+                        if (!Name.consumeInteger(10, id))
+                        {
+                            if (nextCallIsNanomite)
+                            {
+                                llvm::errs() << "This should never happen! Something reordered the markers really badly!\n";
+                                exit(1);
+                            }
+                            nextCallIsNanomite = true;
+                            nanomiteID = id;
+                            machineInstruction.eraseFromParent();
+                            continue;
+                        }
+                    }
+                }
 
-            //     if (/*is jump &&*/ (generator->DrawRange(1u, 100u) <= jumpProbability))
-            //     {
-            //         InsertTrap(nanomiteID, machineInstruction, /* is conditional jump?*/);
-            //         machineInstruction.eraseFromParent();
-            //         changed = true;
-            //     }
-            // }
+                if (!machineInstruction.isCall() || !nextCallIsNanomite)
+                    continue;
+
+                if (machineInstruction.isReturn())
+                {
+                    std::cout << "TAIL" << std::endl;
+                    exit(1);
+                }
+
+                std::string trampolineName = "__leet_trampoline_" + std::to_string(nanomiteID);
+                llvm::Function* trampolineFunction = machineFunction.getFunction().getParent()->getFunction(trampolineName);
+
+                if (!trampolineFunction)
+                {
+                    std::cout << "Counldn't find trampoline!" << std::endl;
+                    nextCallIsNanomite = false;
+                    continue;
+                }
+
+                nextCallIsNanomite = false;
+
+                InsertTrap(nanomiteID, machineInstruction, true);
+                machineInstruction.eraseFromParent();
+                changed = true;
+            }
         }
     }
 
