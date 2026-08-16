@@ -81,7 +81,8 @@ namespace LeetObfuscator
             uint32_t aambaProbability = 100;
             std::vector<std::string> aambaTargetOps;
 
-            uint32_t NanomitesProbability = 100;
+            uint32_t nanomitesProbability = 100;
+            uint32_t nanomitesTrampolineProbability = 50;
         };
 
         static FunctionAttributes ParseFunctionAttributes(

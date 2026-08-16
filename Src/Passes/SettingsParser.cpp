@@ -290,7 +290,8 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"runtimeSeed", ApplyRuntimeSeed},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
-        {"probability", UnsignedOption(&FA::NanomitesProbability, 100u)},
+        {"probability", UnsignedOption(&FA::nanomitesProbability, 100u)},
+        {"trampolineProbability", UnsignedOption(&FA::nanomitesTrampolineProbability, 100u)},
     };
     static const std::vector<Option> noOptions;
 
@@ -651,6 +652,7 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
 #
 #   Attributes:
 #   probability (0-100): Chance to apply nanomites to a call.
+#   trampolineProbability (0-100): Chance to make the call use trampoline vs forward function
 #
 # =====================================
 # DEFAULT PRESET, works well on small binaries

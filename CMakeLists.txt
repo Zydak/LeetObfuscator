@@ -21,7 +21,6 @@ add_llvm_component_library(LLVMLeetObfuscator
     CodeGen
 )
 
-
 find_program(CLANGXX_EXE NAMES clang++ REQUIRED)
 set(HELPER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringEncryptionHelper.cpp)
 set(HELPER_BC  ${CMAKE_CURRENT_BINARY_DIR}/leet_string_encryption_template.bc)
