@@ -32,7 +32,8 @@ namespace LeetObfuscator
             AAMBAPass,
             AntiAnalysisPass,
             AntiAliasingPass,
-            NanomitesPass
+            NanomitesPass,
+            VariableSplittingPass
         };
 
         struct Pass

@@ -293,6 +293,14 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"probability", UnsignedOption(&FA::nanomitesProbability, 100u)},
         {"trampolineProbability", UnsignedOption(&FA::nanomitesTrampolineProbability, 100u)},
     };
+    static const std::vector<Option> variableSplittingOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
+        {"skip", ApplySkip},
+        {"forcePass", ApplyForcePass},
+        {"runtimeSeed", ApplyRuntimeSeed},
+        {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
+        {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
+    };
     static const std::vector<Option> noOptions;
 
     switch (passType)
@@ -305,6 +313,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         case SettingsParser::PassType::AAMBAPass: return aambaOptions;
         case SettingsParser::PassType::AntiAliasingPass: return antiAliasingOptions;
         case SettingsParser::PassType::NanomitesPass: return nanomitesOptions;
+        case SettingsParser::PassType::VariableSplittingPass: return variableSplittingOptions;
         default: return noOptions;
     }
 }
@@ -343,6 +352,7 @@ bool LeetObfuscator::SettingsParser::IsKnownOption(const std::vector<Option>& op
         SettingsParser::PassType::AntiAnalysisPass,
         SettingsParser::PassType::AntiAliasingPass,
         SettingsParser::PassType::NanomitesPass,
+        SettingsParser::PassType::VariableSplittingPass,
     };
     for (auto pt : allPassTypes)
     {
@@ -393,6 +403,7 @@ LeetObfuscator::SettingsParser::PassType LeetObfuscator::SettingsParser::ParsePa
     if (passName == "AntiAnalysisPass") return PassType::AntiAnalysisPass;
     if (passName == "AntiAliasingPass") return PassType::AntiAliasingPass;
     if (passName == "NanomitesPass") return PassType::NanomitesPass;
+    if (passName == "VariableSplittingPass") return PassType::VariableSplittingPass;
     return PassType::INVALID;
 }
 
@@ -408,6 +419,7 @@ llvm::StringRef LeetObfuscator::SettingsParser::GetPassTypeName(PassType passTyp
         case PassType::AntiAnalysisPass: return "AntiAnalysisPass";
         case PassType::AntiAliasingPass: return "AntiAliasingPass";
         case PassType::NanomitesPass: return "NanomitesPass";
+        case PassType::VariableSplittingPass: return "VariableSplittingPass";
         default:
             std::cout << "WRONG PASS NAME WTF?" << std::endl;
             exit(1);

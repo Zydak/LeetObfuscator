@@ -13,6 +13,7 @@ add_llvm_component_library(LLVMLeetObfuscator
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/PermutationHelper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/SettingsParser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringEncryptionPass.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/VariableSplittingPass.cpp
 
     LINK_COMPONENTS
     Analysis
