@@ -293,6 +293,16 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"probability", UnsignedOption(&FA::nanomitesProbability, 100u)},
         {"trampolineProbability", UnsignedOption(&FA::nanomitesTrampolineProbability, 100u)},
     };
+    static const std::vector<Option> variableSplittingOptions = {
+        {"defaultParseMode", ApplyDefaultParseMode},
+        {"skip", ApplySkip},
+        {"forcePass", ApplyForcePass},
+        {"runtimeSeed", ApplyRuntimeSeed},
+        {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
+        {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
+        {"probability", UnsignedOption(&FA::variableSplittingProbability, 100u)},
+        {"splitCount", UnsignedOption(&FA::variableSplittingCount, 100u)},
+    };
     static const std::vector<Option> noOptions;
 
     switch (passType)
@@ -305,6 +315,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         case SettingsParser::PassType::AAMBAPass: return aambaOptions;
         case SettingsParser::PassType::AntiAliasingPass: return antiAliasingOptions;
         case SettingsParser::PassType::NanomitesPass: return nanomitesOptions;
+        case SettingsParser::PassType::VariableSplittingPass: return variableSplittingOptions;
         default: return noOptions;
     }
 }
@@ -343,6 +354,7 @@ bool LeetObfuscator::SettingsParser::IsKnownOption(const std::vector<Option>& op
         SettingsParser::PassType::AntiAnalysisPass,
         SettingsParser::PassType::AntiAliasingPass,
         SettingsParser::PassType::NanomitesPass,
+        SettingsParser::PassType::VariableSplittingPass,
     };
     for (auto pt : allPassTypes)
     {
@@ -393,6 +405,7 @@ LeetObfuscator::SettingsParser::PassType LeetObfuscator::SettingsParser::ParsePa
     if (passName == "AntiAnalysisPass") return PassType::AntiAnalysisPass;
     if (passName == "AntiAliasingPass") return PassType::AntiAliasingPass;
     if (passName == "NanomitesPass") return PassType::NanomitesPass;
+    if (passName == "VariableSplittingPass") return PassType::VariableSplittingPass;
     return PassType::INVALID;
 }
 
@@ -408,6 +421,7 @@ llvm::StringRef LeetObfuscator::SettingsParser::GetPassTypeName(PassType passTyp
         case PassType::AntiAnalysisPass: return "AntiAnalysisPass";
         case PassType::AntiAliasingPass: return "AntiAliasingPass";
         case PassType::NanomitesPass: return "NanomitesPass";
+        case PassType::VariableSplittingPass: return "VariableSplittingPass";
         default:
             std::cout << "WRONG PASS NAME WTF?" << std::endl;
             exit(1);
@@ -635,6 +649,13 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
 #   bogusInsertPosition (start|random): Where to insert bogus blocks in the function.
 #   rdtscProbability: Probability of inserting an anti debug RDTSC check
 #
+# VariableSplittingPass:
+#   Performance impact: High, also bloats the binary size by a LOT
+#
+#   Attributes:
+#   probability (0-100): Chance to split operands of an instruction
+#   splitCount: how many times to split the variable, uint32_t on splitCount 1 becomes 2 uint16_t, on splitCount 2, 4 uint8_t and so on.
+#
 # AntiAliasingPass:
 #   Performance impact: low to mild
 #
@@ -681,6 +702,7 @@ passes=
     DispatcherPass(),
     MBAPass(expansionCount=1),
     AAMBAPass(probability=35),
+    VariableSplittingPass(probability=100,splitCount=2)
     AntiAliasingPass(),
     AntiAnalysisPass(rdtscProbability=0,bogusInsertPosition=start,probability=25),
     NanomitesPass(defaultParseMode=none); # This is very expensive, I set the default to none, change it if you need to

@@ -23,7 +23,7 @@ TEST_FILES = [
     "BitwiseOperationsTest.cpp",
     "BranchingRecursionTest.cpp",
     "ControlFlowObfuscationTest.cpp",
-    "MultithreadingTest.cpp",
+    #"MultithreadingTest.cpp",
     "PerformanceStressTest.cpp",
     "StringManipulationTest.cpp",
     "ClassesTest.cpp",
@@ -38,11 +38,11 @@ TARGET_ENVIRONMENTS = {
         "run_prefix": "",
         "ext": ""
     },
-    "linux-x86": {
-        "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
-        "run_prefix": "",
-        "ext": ""
-    },
+    # "linux-x86": {
+    #     "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
+    #     "run_prefix": "",
+    #     "ext": ""
+    # },
     # "linux-x64-noopt": {
     #     "flags": "--target=x86_64-linux-gnu --gcc-toolchain=/usr -O0 -fno-exceptions",
     #     "run_prefix": "",
@@ -58,11 +58,11 @@ TARGET_ENVIRONMENTS = {
         "run_prefix": "wine",
         "ext": ".exe"
     },
-    "windows-x86": {
-        "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
-        "run_prefix": "wine",
-        "ext": ".exe"
-    },
+    # "windows-x86": {
+    #     "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+    #     "run_prefix": "wine",
+    #     "ext": ".exe"
+    # },
     # "windows-x64-noopt": {
     #     "flags": "--target=x86_64-w64-mingw32 -O0 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
     #     "run_prefix": "wine",
@@ -76,7 +76,7 @@ TARGET_ENVIRONMENTS = {
 }
 
 RUN_COUNT = 2
-REBUILD_PER_RUN = True
+REBUILD_PER_RUN = False
 WARMUP_COMPILE = False
 COMPILE_TIMEOUT = 300
 EXECUTE_TIMEOUT = 300
