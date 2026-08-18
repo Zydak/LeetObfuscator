@@ -23,7 +23,9 @@
 #define LEET_AAMBA_TARGET_OPS(values) __attribute__((annotate("leet.AAMBAPass.targetOps=" values)))
 
 #define LEET_NANOMITES_CALLS_PROBABILITY(value) __attribute__((annotate("leet.NanomitesPass.callsProbability=" #value)))
-#define LEET_NANOMITES_JUMPS_PROBABILITY(value) __attribute__((annotate("leet.NanomitesPass.jumpsProbability=" #value)))
+
+#define LEET_VARIABLE_SPLITTING_PROBABILITY(value) __attribute__((annotate("leet.VariableSplittingPass.probability=" #value)))
+#define LEET_VARIABLE_SPLITTING_SPLIT_COUNT(value) __attribute__((annotate("leet.VariableSplittingPass.splitCount=" #value)))
 
 __attribute__((noinline))
 __attribute__((optnone))

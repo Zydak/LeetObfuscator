@@ -14,7 +14,7 @@
 ╚██████╔╝██████╔╝██║     ╚██████╔╝███████║╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║
  ╚═════╝ ╚═════╝ ╚═╝      ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
-A very simple obfuscator for C/C++ x64 and x86 code
+A simple obfuscator for C/C++ x64 and x86 code
 ```
 
 This is made as an LLVM fork, so you need the actual source to obfuscate. It's not an arbitrary executable obfuscator. It's a modified version of the compiler.
@@ -116,9 +116,26 @@ Instructions beginning with 0xFF are mostly `INC/DEC` and indirect `JMP/CALL`. S
 
 <img alt="" src="Pictures/AntiAnalysisLin64EB.png" />
 
+### Variable Splitting
+
+Splits variables into multiple parts and performs operation on each part individually, adds very nicely to the MBA pass, making simple logic even more convoluted than it already is. In simple words int32 can be split into 4 int8s and if any supported operation (`AND, OR, XOR, ADD, SUB, ICMP`) is performed on it, it will be performed on the int8s one by one instead of the original int32.
+
+<table>
+  <tr>
+    <td align="center">
+      <img alt="" src="Pictures/VariableSplitting.png" /><br>
+      <b>Before the pass</b>
+    </td>
+    <td align="center">
+      <img alt="" src="Pictures/VariableSplittingObf.png" /><br>
+      <b>After</b>
+    </td>
+  </tr>
+</table>
+
 ### Anti Aliasing
 
-Throws every stack local in a function into one big shared stack buffer to which indices are computed at runtime. This way decompilers can't alias variables, which makes accesses to the same variable multiple times show up as accessing different values. This plays really nicely with the dispatcher since it demotes registers to stack, so there will be a lot of these stack slots.
+Throws every stack local in a function into one big shared stack buffer to which indices are randomized for each run and computed at runtime. This way decompilers can't alias variables, which makes accesses to the same variable multiple times show up as accessing different values. This plays really nicely with the dispatcher and variable splitting passes. Dispatcher demotes registers to stack, and variable splitting splits them into multiple variables, so there will be a lot of these stack slots.
 
 <table>
   <tr>
@@ -152,7 +169,7 @@ Obfuscates control flow through exceptions. It replaces all calls with `int3` tr
 
 ## Combining Every Pass
 
-By combining every pass static analysis becomes very hard without some extra tools that would deobfuscate this. Even if you somehow nop all the invalid bytes and you're able to decompile this to some pseudocode or at least get a graph view, you're still left with control flow obfuscation through exceptions and the dispatcher, and even if you break through that, there's a mountain of redundant MBAs, bogus blocks, stack variables and string encryption obfuscating the actual operations. Here are screenshots of the main entry point of a simple program containing that simple xor Foo function from before in all of the three big boy disassemblers. As you can see they can't make much of it.
+By combining every pass static analysis becomes very hard without some extra tools that would deobfuscate this. Even if you somehow nop all the invalid bytes and you're able to decompile this to some pseudocode or at least get a graph view, you're still left with control flow obfuscation through exceptions and the dispatcher, and even if you break through that, there's a mountain of redundant MBAs, bogus blocks, split stack variables and string encryption obfuscating the actual operations. Here are screenshots of the main entry point of a simple program containing that simple xor Foo function from before in all of the three big boy disassemblers. As you can see they can't make much of it.
 
 <table>
   <tr>
@@ -171,19 +188,19 @@ By combining every pass static analysis becomes very hard without some extra too
   </tr>
 </table>
 
-I really wanted to include some kind of result of deobfuscators trying to make sense of this, but unfortunately I wasn't able to find any working ones with symbolic execution to see the actual control flow. All of the ones that I was able to find are either very limited to specific usecases (like deobfuscating VMProtect specifically), too old, not maintained and broken (almost every IDA/BN plugin I've tried), or are heavy machinery that requires too much manual guiding and setup through APIs I'm just not familiar with (Angr, Triton, IntelPin). If you know of any deobfuscators for arbitrary binaries that would be able to extract anything at all let me know.
+I really wanted to include some kind of result of deobfuscators trying to make sense of this, but unfortunately I wasn't able to find any working ones. Every single tool that I was able to find is either very limited to specific usecases (like deobfuscating VMProtect specifically), too old, not maintained and broken (almost every IDA/BN plugin I've tried), or is heavy machinery that requires too much manual guiding and setup through APIs I'm just not familiar with (Angr, Triton, IntelPin). If you know of any deobfuscators for arbitrary binaries that would be able to extract anything at all let me know.
 
 ## Performance
 
-Of course inserting all this bullshit into the binary will slow it down immensely, over 200 times slower on the default settings on average:
+Of course inserting all this bullshit into the binary will slow it down immensely, around 700 times slower on the default settings on average for my tests (of course it will vary a lot per application, so benchmark it urself if you use it):
 
-<img alt="" src="Pictures/NanomitesOn.png" /><br>
+<img alt="" src="Pictures/PerformanceNanoOn.png" /><br>
 
-Though it's not as bad as it looks because of 2 things. 1. almost 95% of the performance cost here is caused by nanomites, because well, interrupts are just slow. The exception has to leave to the kernel and come back to the app, that takes time. Without nanomites it's down to being only 7.5x slower:
+Though it's not as bad as it looks because of 2 things. 1. over 95% of the performance cost here is caused by nanomites, because well, interrupts are just slow. The exception has to leave to the kernel and come back to the app, that takes time. Without nanomites it's down to being only 18x slower:
 
-<img alt="" src="Pictures/NanomitesOff.png" /><br>
+<img alt="" src="Pictures/PerformanceNanoOff.png" /><br>
 
-So I highly advise to just mark the functions and calls you want to obfuscate with nanomites manually instead of just setting it to all. Obfuscating every call inside a binary is pointless and costs a lot. And the reason number 2. most of the time you don't really care about the performance of the things you want to hide. This obfuscator has the ability to get selectively enabled and disabled. So you can disable it for the performance critical sections of your code and enable it wherever it's actually needed. Nobody cares whether your license check takes 1ms or 0.001ms, it's still unnoticeable for a human.
+So I highly advise to just mark the functions and calls you want to obfuscate with nanomites manually instead of just setting it to all. Obfuscating every call inside a binary is pointless and costs a lot. And the reason number 2. most of the time you don't really care about the performance of the things you want to hide. This obfuscator has the ability to get selectively enabled and disabled. So you can disable it for the performance critical sections of your code and enable it wherever it's actually needed. Nobody cares whether your license check takes 1ms or 0.001ms, it's still unnoticeable for anyone.
 
 For the configuration options and the full guide refer to the [wiki](https://github.com/Zydak/LeetObfuscator/wiki/Full-Guide).
 

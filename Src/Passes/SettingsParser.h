@@ -84,6 +84,8 @@ namespace LeetObfuscator
 
             uint32_t nanomitesProbability = 100;
             uint32_t nanomitesTrampolineProbability = 50;
+            uint32_t variableSplittingProbability = 100;
+            uint32_t variableSplittingCount = 2;
         };
 
         static FunctionAttributes ParseFunctionAttributes(

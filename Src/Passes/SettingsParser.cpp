@@ -300,6 +300,8 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"runtimeSeed", ApplyRuntimeSeed},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
+        {"probability", UnsignedOption(&FA::variableSplittingProbability, 100u)},
+        {"splitCount", UnsignedOption(&FA::variableSplittingCount, 100u)},
     };
     static const std::vector<Option> noOptions;
 
@@ -647,6 +649,13 @@ LeetObfuscator::SettingsParser::GlobalAttributes LeetObfuscator::SettingsParser:
 #   bogusInsertPosition (start|random): Where to insert bogus blocks in the function.
 #   rdtscProbability: Probability of inserting an anti debug RDTSC check
 #
+# VariableSplittingPass:
+#   Performance impact: High, also bloats the binary size by a LOT
+#
+#   Attributes:
+#   probability (0-100): Chance to split operands of an instruction
+#   splitCount: how many times to split the variable, uint32_t on splitCount 1 becomes 2 uint16_t, on splitCount 2, 4 uint8_t and so on.
+#
 # AntiAliasingPass:
 #   Performance impact: low to mild
 #
@@ -693,6 +702,7 @@ passes=
     DispatcherPass(),
     MBAPass(expansionCount=1),
     AAMBAPass(probability=35),
+    VariableSplittingPass(probability=100,splitCount=2)
     AntiAliasingPass(),
     AntiAnalysisPass(rdtscProbability=0,bogusInsertPosition=start,probability=25),
     NanomitesPass(defaultParseMode=none); # This is very expensive, I set the default to none, change it if you need to
