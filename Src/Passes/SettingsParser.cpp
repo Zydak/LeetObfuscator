@@ -702,7 +702,7 @@ passes=
     DispatcherPass(),
     MBAPass(expansionCount=1),
     AAMBAPass(probability=35),
-    VariableSplittingPass(probability=100,splitCount=2)
+    VariableSplittingPass(probability=100,splitCount=2),
     AntiAliasingPass(),
     AntiAnalysisPass(rdtscProbability=0,bogusInsertPosition=start,probability=25),
     NanomitesPass(defaultParseMode=none); # This is very expensive, I set the default to none, change it if you need to
