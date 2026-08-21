@@ -320,9 +320,17 @@ llvm::BasicBlock* LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlock(llvm::Ba
         return nullptr;
     }
 
-    llvm::DominatorTree tree(*function);
-    llvm::Value* input = FindUsableInput(tree, block, insertPoint);
-    if (!input)
+    // If it's unable to find usable input, try moving the insert point forward until it finds one, or until the end of the block
+    llvm::Value* input;
+    do
+    {
+        llvm::DominatorTree tree(*function);
+        input = FindUsableInput(tree, block, insertPoint);
+
+        insertPoint++;
+    } while (input == nullptr && insertPoint != block->end());
+
+    if (!input || insertPoint == block->end())
         return nullptr;
 
     llvm::BasicBlock* newSplitBlock = block->splitBasicBlock(insertPoint);

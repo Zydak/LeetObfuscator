@@ -30,7 +30,7 @@ All of this was compiled with `-O3` flag and all screenshots come from IDA Pro 9
 
 ### String Encryption
 
-Encrypts strings at compile time and inserts a decrypt function at every use of the encrypted string. This completely disables the ability to search for any strings in the binary. And every string has its own unique key hardcoded in the decrypt function which makes dumping and decrypting them a lot harder.
+Encrypts strings at compile time and inserts a decrypt function at every use of the encrypted string. This completely disables the ability to search for any strings in the binary. And every string has its own unique key hardcoded in the decrypt function which makes dumping and decrypting them a lot harder. These decrypt functions will also be inlined. (not inlined below just for showcase)
 
 <table>
   <tr>
@@ -96,7 +96,7 @@ Collects all the blocks inside a function and makes one giant state machine out 
 
 ### Anti Analysis
 
-Creates a bunch of bogus blocks containing invalid assembly. This throws disassemblers off immensely because if the disassembler encounters a technically invalid byte that never gets executed, it will still try to make sense of it. So if the byte is incomplete, it will create an instruction from whatever bytes happen to be after it essentially consuming them. That creates a desynch destroying every instruction after that. On Windows binaries IDA will be able to somewhat recover from this, in rare cases it will be able to generate a graph and decompile what it can (tho it will be broken and incomplete), while on Linux binaries it completely breaks the graph view and disables decompilation. Additionaly it will insert RDTSC timer checks, if it takes too long (for example when debugger is attached) you crash.
+Creates a bunch of bogus blocks containing invalid assembly. This throws disassemblers off immensely because if the disassembler encounters a technically invalid byte that never gets executed, it will still try to make sense of it. So if the byte is incomplete, it will create an instruction from whatever bytes happen to be after it essentially consuming them. That creates a desynch destroying every instruction after that. On Windows binaries IDA will be able to somewhat recover from this, in rare cases it will be able to generate a graph and decompile what it can (tho it will be broken and incomplete), while on Linux binaries it completely breaks the graph view and disables decompilation. Additionaly it will insert RDTSC timer and some other anti debug checks checks, if it detects a debugger you crash.
 
 <table>
   <tr>
