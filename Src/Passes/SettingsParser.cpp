@@ -133,6 +133,28 @@ LeetObfuscator::SettingsParser::OptionApplier LeetObfuscator::SettingsParser::Un
     };
 }
 
+template<typename T>
+LeetObfuscator::SettingsParser::OptionApplier LeetObfuscator::SettingsParser::BoolOption(T FunctionAttributes::* field)
+{
+    return [field](llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
+    {
+        if (!values)
+            return;
+        if (values->size() != 1)
+        {
+            ReportInvalidArgument(function, name, "expected exactly one value");
+            return;
+        }
+        const std::string& value = values->front();
+        if (value == "true" || value == "True" || value == "1")
+            result.*field = true;
+        else if (value == "false" || value == "False" || value == "0")
+            result.*field = false;
+        else
+            ReportInvalidArgument(function, name, "expected true or false");
+    };
+}
+
 LeetObfuscator::SettingsParser::OptionApplier LeetObfuscator::SettingsParser::StringListOption(std::vector<std::string> FunctionAttributes::* field)
 {
     return [field](llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
@@ -165,6 +187,14 @@ void LeetObfuscator::SettingsParser::ApplyRuntimeSeed(llvm::Function& function, 
         return;
     }
     ParseUnsignedArgument<uint64_t>(function, values, name, result.runtimeSeed, std::numeric_limits<uint64_t>::max());
+}
+
+void LeetObfuscator::SettingsParser::ApplyOnlyEntryBlock(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result)
+{
+    if (!values)
+        return;
+
+    result.antiAnalysisOnlyEntryBlock = true;
 }
 
 void LeetObfuscator::SettingsParser::ApplyDefaultParseMode(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result)
@@ -213,6 +243,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"skip", ApplySkip},
         {"forcePass", ApplyForcePass},
         {"probability", UnsignedOption(&FA::stringEncryptionProbability, 100u)},
+        {"inlineProbability", UnsignedOption(&FA::stringDecryptInlineProbability, 100u)},
     };
     static const std::vector<Option> mbaOptions = {
         {"defaultParseMode", ApplyDefaultParseMode},
@@ -258,9 +289,11 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
             {"start", SettingsParser::BogusInsertPosition::Start},
             {"random", SettingsParser::BogusInsertPosition::Random},
         }, "expected start or random")},
-        {"rdtscProbability", UnsignedOption(&FunctionAttributes::antiAnalysisRdtscProbability, 100u)},
-        {"validBogusBlocksProbability", UnsignedOption(&FA::validBogusBlocksProbability, 100u)},
-        {"invalidBogusBlocksProbability", UnsignedOption(&FA::invalidBogusBlocksProbability, 100u)},
+        {"rdtscRatio", UnsignedOption(&FunctionAttributes::antiAnalysisRdtscRatio)},
+        {"opaqueRatio", UnsignedOption(&FunctionAttributes::antiAnalysisOpaqueRatio)},
+        {"pidRatio", UnsignedOption(&FunctionAttributes::antiAnalysisPIDRatio)},
+        {"blackListRatio", UnsignedOption(&FunctionAttributes::antiAnalysisBlackListRatio)},
+        {"onlyEntryBlock", BoolOption(&FunctionAttributes::antiAnalysisOnlyEntryBlock)},
     };
     static const std::vector<Option> aambaOptions = {
         {"defaultParseMode", ApplyDefaultParseMode},
@@ -695,16 +728,17 @@ minBlockSize=0
 maxBlockSize=0
 
 passes=
-    StringEncryptionPass(),
+    StringEncryptionPass(inlineProbability=100),
     MBAPass(expansionCount=2, probability=50),
+    AntiAnalysisPass(rdtscRatio=0,pidRatio=1,blackListRatio=1,opaqueRatio=0,bogusInsertPosition=start,probability=10,onlyEntryBlock=true),
     BlockSplitterPass(blockSplitSize=50),
-    AntiAnalysisPass(rdtscProbability=100,bogusInsertPosition=random,probability=25),
     DispatcherPass(),
+    AntiAnalysisPass(rdtscRatio=1,pidRatio=0,blackListRatio=0,opaqueRatio=0,bogusInsertPosition=random,probability=25),
     MBAPass(expansionCount=1),
     AAMBAPass(probability=35),
     VariableSplittingPass(probability=100,splitCount=2),
     AntiAliasingPass(),
-    AntiAnalysisPass(rdtscProbability=0,bogusInsertPosition=start,probability=25),
+    AntiAnalysisPass(rdtscRatio=0,pidRatio=0,blackListRatio=0,opaqueRatio=100,bogusInsertPosition=start,probability=100),
     NanomitesPass(defaultParseMode=none); # This is very expensive, I set the default to none, change it if you need to
 
 )";

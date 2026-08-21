@@ -158,6 +158,8 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
         function->getName().find("sigemptyset") != std::string::npos ||
         function->getName().find("sigaction") != std::string::npos ||
         function->getName().find("AddVectoredExceptionHandler") != std::string::npos ||
+        function->getName().find("__leet_is_debugger_present_tracer_pid") != std::string::npos ||
+        function->getName().find("__leet_is_debugger_present_blacklist") != std::string::npos ||
         function->getName().find("RemoveVectoredExceptionHandler") != std::string::npos
     )
     {

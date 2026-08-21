@@ -1,5 +1,6 @@
 #include "StringEncryptionPass.h"
 
+#include "llvm/IR/Analysis.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/ReplaceConstant.h"
 #include "llvm/IR/IRBuilder.h"
@@ -14,7 +15,58 @@
 
 llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
-    llvm::errs() << "Running StringEncryptionPass\n";
+    std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
+
+    if (!m_StartCallback)
+    {
+        llvm::errs() << "Running StringEncryptionPass\n";
+
+        std::vector<llvm::Function*> functionsToInline;
+        for (auto& function : module)
+        {
+            if (function.getName().starts_with("__leet_decrypt_string"))
+            {
+                functionsToInline.push_back(&function);
+            }
+        }
+
+        uint32_t inlineProbability = 50;
+        const auto* probArg = SettingsParser::FindArgument(m_Arguments, "inlineProbability");
+        if (probArg && !probArg->empty())
+            inlineProbability = std::stoul(probArg->front());
+
+        for (auto& function : functionsToInline)
+        {
+            if (generator->DrawRange(1u, 100u) > inlineProbability)
+                continue;
+            
+            std::vector<llvm::CallInst*> callSites;
+            for (llvm::User* user : function->users())
+            {
+                if (auto* call = llvm::dyn_cast<llvm::CallInst>(user))
+                    callSites.push_back(call);
+            }
+
+            for (llvm::CallInst* call : callSites)
+            {
+                llvm::InlineFunctionInfo ifi;
+                llvm::InlineResult res = llvm::InlineFunction(*call, ifi);
+                if (!res.isSuccess())
+                {
+                    llvm::errs() << "WARNING: failed to inline string decrypt function '" << function->getName() << "': " << res.getFailureReason() << "\n";
+                }
+            }
+
+            if (function->use_empty())
+                function->eraseFromParent();
+            else
+                llvm::errs() << "WARNING: function '" << function->getName() << "' still has uses after inlining, leaving it in place\n";
+
+        }
+        return llvm::PreservedAnalyses::none();
+    }
+
+    llvm::errs() << "Running StringEncryptionPass (Pre process)\n";
     m_Logger.LogModule(module, "Starting pass", 0);
 
     EmittedTemplate templates = GetTemplateFunctions(module);
@@ -25,19 +77,16 @@ llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &
         return llvm::PreservedAnalyses::all();
     }
 
+    uint32_t stringEncryptionProbability = 100;
+    const auto* probArg = SettingsParser::FindArgument(m_Arguments, "probability");
+    if (probArg && !probArg->empty())
+        stringEncryptionProbability = std::stoul(probArg->front());
+
     std::vector<StringGlobalInfo> stringGlobals;
     for (auto& global : module.globals())
     {
         if (IsEncryptableStringGlobal(&global))
         {
-            SettingsParser::GlobalAttributes globalAttributes = SettingsParser::ParseGlobalAttributes();
-            std::shared_ptr<RandomNumberGenerator> generator = RandomNumberGenerator::GetGlobalRandomNumberGenerator();
-
-            uint32_t stringEncryptionProbability = 100;
-            const auto* probArg = SettingsParser::FindArgument(globalAttributes.parameters, "stringEncryptionProbability");
-            if (probArg && !probArg->empty())
-                stringEncryptionProbability = std::stoul(probArg->front());
-
             if (generator->DrawRange(1u, 100u) > stringEncryptionProbability)
                 continue;
 
@@ -257,3 +306,4 @@ LeetObfuscator::StringEncryptionPass::EmittedTemplate LeetObfuscator::StringEncr
 
     return result;
 }
+

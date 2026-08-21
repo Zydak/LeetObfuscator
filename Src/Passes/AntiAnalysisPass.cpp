@@ -6,26 +6,62 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/IntrinsicsX86.h"
+#include <llvm/Linker/Linker.h>
 #include "SettingsParser.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
+#include "llvm/Support/MemoryBuffer.h"
 
+#include "../../build/LeetObfuscator/leet_anti_analysis_template.inc" // template bitcode
+
+#include <iostream>
+#include <sstream>
 #include <random>
 #include <algorithm>
 #include <math.h>
+
+static int opaqueCounter = 0;
+static int pidCounter = 0;
+static int blacklistCounter = 0;
+static int rdtscCounter = 0;
+
+const char* ANTI_ANALYSIS_TAG = "leet.anti.analysis";
 
 llvm::PreservedAnalyses LeetObfuscator::AntiAnalysisPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running AntiAnalysisPass\n";
     m_Logger.LogModule(module, "Starting pass", 0);
 
-    for (auto& function : module)
+    EmittedTemplate templates;
+    if (!LinkTemplateModule(module, templates))
     {
-        ObfuscateFunction(function);
+        llvm::errs() << "AntiAnalysisPass Failed to link template module?\n";
+        exit(1);
     }
 
+    for (auto& function : module)
+    {
+        if (!function.getName().contains("__leet_is_debugger_present_blacklist") &&
+            !function.getName().contains("__leet_is_debugger_present_tracer_pid")
+        )
+        {
+            ObfuscateFunction(function, templates);
+        }
+    }
+
+    std::ostringstream message;
+    message << "Inserted " << opaqueCounter << " Opaques | " << rdtscCounter << " RDTSCs | " << pidCounter << " PIDs | " << blacklistCounter << " Blacklists";
+    m_Logger.LogModule(module, message.str());
+    opaqueCounter = 0;
+    pidCounter = 0;
+    blacklistCounter = 0;
+    rdtscCounter = 0;
     return llvm::PreservedAnalyses::none();
 }
 
-void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &function)
+void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &function, EmittedTemplate& templates)
 {
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
         function, SettingsParser::PassType::AntiAnalysisPass, m_Arguments
@@ -41,33 +77,42 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
 
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
+    bool onePerFunction = attributes.antiAnalysisOnlyEntryBlock;
     {
         std::vector<llvm::BasicBlock*> blocksToObfuscate;
-        for (auto& block : function)
-        {
-            if (SettingsParser::ShouldSkipBlock(&block, attributes))
-                continue;
 
-            if (generator->DrawRange(1u, 100u) > attributes.antiAnalysisProbability)
-                continue;
+        if (onePerFunction)
+        {
+            auto& block = function.getEntryBlock();
             
-            blocksToObfuscate.push_back(&block);
+            if (!SettingsParser::ShouldSkipBlock(&block, attributes) && !block.getFirstNonPHIIt()->getMetadata(ANTI_ANALYSIS_TAG))
+            {
+                if (generator->DrawRange(1u, 100u) <= attributes.antiAnalysisProbability)
+                    blocksToObfuscate.push_back(&block);
+            } 
+        }
+        else
+        {
+            for (auto& block : function)
+            {
+                if (SettingsParser::ShouldSkipBlock(&block, attributes))
+                    continue;
+    
+                if (block.getFirstNonPHIIt()->getMetadata(ANTI_ANALYSIS_TAG))
+                {
+                    continue;
+                }
+    
+                if (generator->DrawRange(1u, 100u) > attributes.antiAnalysisProbability)
+                    continue;
+                
+                blocksToObfuscate.push_back(&block);
+            }
         }
 
         for (llvm::BasicBlock* block : blocksToObfuscate)
         {
-            bool rdtsc = false;
-            m_Logger.LogFunction(function, "Instrumenting basic block", 2);
-            if (generator->DrawRange(1u, 100u) <= attributes.antiAnalysisRdtscProbability)
-                rdtsc = true;
-            
-            if (attributes.antiAnalysisInsertPosition == SettingsParser::BogusInsertPosition::Start)
-                ObfuscateBlock(block, false, generator, rdtsc);
-            else
-            {
-                if (!ObfuscateBlock(block, true, generator, rdtsc))
-                    ObfuscateBlock(block, true, generator, rdtsc); // Try one reroll
-            }
+            ObfuscateBlock(block, attributes, templates, generator);
         }
     }
 
@@ -94,21 +139,68 @@ void LeetObfuscator::AntiAnalysisPass::ObfuscateFunction(llvm::Function &functio
     }
 }
 
-bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator, bool rdtsc)
+bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, SettingsParser::FunctionAttributes& attributes, EmittedTemplate& templates, std::shared_ptr<RandomNumberGenerator> generator)
 {
+    float rdtscProb = (float)attributes.antiAnalysisRdtscRatio;
+    float pidProb = (float)attributes.antiAnalysisPIDRatio;
+    float blacklistProb = (float)attributes.antiAnalysisBlackListRatio;
+    float opaqueProb = (float)attributes.antiAnalysisOpaqueRatio;
+
+    if (block->getParent()->getName().contains("__leet_exception"))
+    {
+        blacklistProb = 0;
+        pidProb = 0;
+    }
+
+    bool randomPos = true;
+    if (attributes.antiAnalysisInsertPosition == SettingsParser::BogusInsertPosition::Start)
+        randomPos = false;
+
+    float probabilitySum = rdtscProb + pidProb + blacklistProb + opaqueProb;
+
+    if (probabilitySum <= 0.0)
+    {
+        return false;
+    }
+
     llvm::BasicBlock* bogus = CreateInvalidBogusBlock(block->getParent(), generator);
     llvm::BasicBlock* newSplitBlock = nullptr;
 
-    if (rdtsc)
+    float randomNumber = generator->DrawRange(1.0f, 100.0f);
+
+    if (randomNumber <= (rdtscProb / probabilitySum) * 100.0f)
+    {
         newSplitBlock = ChainBogusIntoBlockRdtsc(block, bogus, randomPos, generator);
-    else
+        if (newSplitBlock)
+            rdtscCounter++;
+    }
+    else if (randomNumber <= (rdtscProb + pidProb) / probabilitySum * 100.0f)
+    {
+        newSplitBlock = ChainBogusIntoBlockAntiDebug(block, bogus, AntiDebugType::pid, randomPos, generator, templates);
+        if (newSplitBlock)
+            pidCounter++;
+    }
+    else if (randomNumber <= (rdtscProb + pidProb + blacklistProb) / probabilitySum * 100.0f)
+    {
+        newSplitBlock = ChainBogusIntoBlockAntiDebug(block, bogus, AntiDebugType::blacklist, randomPos, generator, templates);
+        if (newSplitBlock)
+            blacklistCounter++;
+    }
+    else if (randomNumber <= (rdtscProb + pidProb + blacklistProb + opaqueProb) / probabilitySum * 100.0f)
+    {
         newSplitBlock = ChainBogusIntoBlock(block, bogus, randomPos, generator);
+        if (newSplitBlock)
+            opaqueCounter++;
+    }
 
     if (!newSplitBlock || !bogus)
     {
         bogus->eraseFromParent();
         return false;
     }
+
+    block->getFirstNonPHIIt()->setMetadata(ANTI_ANALYSIS_TAG, llvm::MDNode::get(block->getContext(), {}));
+    bogus->getFirstNonPHIIt()->setMetadata(ANTI_ANALYSIS_TAG, llvm::MDNode::get(block->getContext(), {}));
 
     return true;
 }
@@ -339,6 +431,110 @@ llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockRdtsc(llv
 
     llvm::IRBuilder<> bogusBlockBuilder(bogusBlock, bogusBlock->end());
     bogusBlockBuilder.CreateBr(newSplitBlock);
+
+    return newSplitBlock;
+}
+
+bool LeetObfuscator::AntiAnalysisPass::LinkTemplateModule(llvm::Module& module, EmittedTemplate& templates)
+{
+    llvm::LLVMContext& context = module.getContext();
+    llvm::StringRef data(reinterpret_cast<const char*>(leet_anti_analysis_template_bc), leet_anti_analysis_template_bc_len);
+    auto buffer = llvm::MemoryBuffer::getMemBuffer(data, "leet_anti_analysis_templates", false);
+    auto modOrErr = llvm::parseBitcodeFile(buffer->getMemBufferRef(), context);
+    if (!modOrErr)
+    {
+        llvm::errs() << modOrErr.takeError() << "\n";
+        return false;
+    }
+    std::unique_ptr<llvm::Module> templateMod = std::move(modOrErr.get());
+
+    if (llvm::NamedMDNode* flags = templateMod->getModuleFlagsMetadata())
+        templateMod->eraseNamedMetadata(flags);
+
+    templateMod->setTargetTriple(module.getTargetTriple());
+    templateMod->setDataLayout(module.getDataLayout());
+
+    llvm::Linker linker(module);
+    if (linker.linkInModule(std::move(templateMod), llvm::Linker::Flags::None))
+    {
+        llvm::errs() << "ERROR: failed to link antianalysis template module\n";
+        return false;
+    }
+
+    templates.pidFunction = module.getFunction("__leet_is_debugger_present_tracer_pid");
+    templates.blacklistFunction = module.getFunction("__leet_is_debugger_present_blacklist");
+
+    if (!templates.pidFunction || !templates.blacklistFunction)
+    {
+        llvm::errs() << "ERROR: antidebug template functions missing after link\n";
+        return false;
+    }
+
+    templates.pidFunction->setLinkage(llvm::GlobalValue::InternalLinkage);
+    templates.pidFunction->setName(templates.pidFunction->getName());
+
+    templates.blacklistFunction->setLinkage(llvm::GlobalValue::InternalLinkage);
+    templates.blacklistFunction->setName(templates.blacklistFunction->getName());
+
+    return true;
+}
+
+llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockAntiDebug(llvm::BasicBlock *block, llvm::BasicBlock *bogusBlock, AntiDebugType antiDebugType, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator, EmittedTemplate& templates)
+{
+    llvm::Function* function = block->getParent();
+
+    auto insertPoint = block->getFirstInsertionPt();
+    
+    uint32_t instructionCount = 0;
+    for (auto it = block->getFirstInsertionPt(); it != block->end(); it++)
+    {
+        instructionCount++;
+    }
+
+    if(randomPos)
+    {
+        uint32_t t = generator->DrawRange(0u, (uint32_t)std::max(int(instructionCount)-1, 0));
+        std::advance(insertPoint, t);
+    }
+
+    if (insertPoint == block->end())
+    {
+        return nullptr;
+    }
+
+    llvm::Function* templateFunction;
+    switch (antiDebugType)
+    {
+        case AntiDebugType::blacklist:
+            templateFunction = templates.blacklistFunction;
+            break;
+        case AntiDebugType::pid:
+            templateFunction = templates.pidFunction;
+            break;
+    }
+
+    llvm::LLVMContext& context = function->getContext();
+    llvm::Type* i32Type = llvm::Type::getInt32Ty(context);
+
+    llvm::BasicBlock* newSplitBlock = block->splitBasicBlock(insertPoint);
+    block->getTerminator()->eraseFromParent();
+
+    llvm::IRBuilder<> originalBlockBuilder(block, block->end());
+    llvm::CallInst* isDebuggingOn = originalBlockBuilder.CreateCall(templateFunction);
+
+    llvm::Value* condition = originalBlockBuilder.CreateICmpEQ(isDebuggingOn, llvm::ConstantInt::get(i32Type, 0));
+    originalBlockBuilder.CreateCondBr(condition, newSplitBlock, bogusBlock);
+
+    llvm::IRBuilder<> bogusBlockBuilder(bogusBlock, bogusBlock->end());
+    bogusBlockBuilder.CreateBr(newSplitBlock);
+
+    llvm::InlineFunctionInfo ifi;
+    llvm::InlineResult res = llvm::InlineFunction(*isDebuggingOn, ifi);
+    if (!res.isSuccess())
+    {
+        llvm::errs() << "WARNING: failed to inline anti debug helper: " << res.getFailureReason() << "\n";
+        exit(1);
+    }
 
     return newSplitBlock;
 }

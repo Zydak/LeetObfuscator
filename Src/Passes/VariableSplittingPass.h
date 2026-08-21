@@ -13,7 +13,7 @@ namespace LeetObfuscator
     {
     public:
         explicit VariableSplittingPass(SettingsParser::PassArguments arguments)
-            : m_Arguments(std::move(arguments)), m_Logger("StringEncryptionPass") {}
+            : m_Arguments(std::move(arguments)), m_Logger("VariableSplittingPass") {}
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
         // A value represented as parts

@@ -59,6 +59,7 @@ namespace LeetObfuscator
             uint64_t maxFunctionSize = 0;
 
             uint32_t stringEncryptionProbability = 100;
+            uint32_t stringDecryptInlineProbability = 50;
 
             uint32_t mbaExpansionCount = 2;
             std::vector<std::string> mbaInstructionSet; // Unused for now
@@ -73,9 +74,11 @@ namespace LeetObfuscator
 
             uint32_t antiAnalysisProbability = 100;
             BogusInsertPosition antiAnalysisInsertPosition = BogusInsertPosition::Random;
-            uint32_t antiAnalysisRdtscProbability = 0;
-            uint32_t validBogusBlocksProbability = 0; // Unused for now
-            uint32_t invalidBogusBlocksProbability = 100; // Unused for now
+            uint32_t antiAnalysisRdtscRatio = 25;
+            uint32_t antiAnalysisOpaqueRatio = 100;
+            uint32_t antiAnalysisPIDRatio = 1;
+            uint32_t antiAnalysisBlackListRatio = 1;
+            bool antiAnalysisOnlyEntryBlock = false;
 
             uint32_t antiAliasingProbability = 100;
 
@@ -88,8 +91,7 @@ namespace LeetObfuscator
             uint32_t variableSplittingCount = 2;
         };
 
-        static FunctionAttributes ParseFunctionAttributes(
-            llvm::Function& function, PassType passType, const PassArguments& passArguments);
+        static FunctionAttributes ParseFunctionAttributes(llvm::Function& function, PassType passType, const PassArguments& passArguments);
         static GlobalAttributes ParseGlobalAttributes();
         static Pass ParsePassString(const std::string& passStr);
 
@@ -131,13 +133,15 @@ namespace LeetObfuscator
 
         template <typename T>
         static OptionApplier EnumOption(T FunctionAttributes::* field, std::vector<std::pair<llvm::StringRef, T>> namedValues, llvm::StringRef expected);
-
+        template <typename T>
+        static OptionApplier BoolOption(T FunctionAttributes::* field);
         static const std::vector<std::pair<llvm::StringRef, GlobalParseMode>> kParseModeValues;
 
         static void ApplyRuntimeSeed(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result);
         static void ApplyDefaultParseMode(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result);
         static void ApplySkip(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result);
         static void ApplyForcePass(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result);
+        static void ApplyOnlyEntryBlock(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result);
 
         static const std::vector<Option>& GetPassOptions(PassType passType);
         static void OverlayFunctionAttributes(llvm::Function& function, llvm::StringRef attributePrefix, const std::vector<Option>& options, PassArguments& effective);

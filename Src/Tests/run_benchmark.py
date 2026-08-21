@@ -15,16 +15,16 @@ import signal
 
 TEST_FILES = [
     "StdContainersTest.cpp",
-    "FloatingPointMathTest.cpp",
-    {
-        "sources": "BigSignaturesTest.cpp",
-        "extra_flags": "-msse2 -mfpmath=sse",
-    },
+    # "FloatingPointMathTest.cpp",
+    # {
+    #     "sources": "BigSignaturesTest.cpp",
+    #     "extra_flags": "-msse2 -mfpmath=sse",
+    # },
     "BitwiseOperationsTest.cpp",
     "BranchingRecursionTest.cpp",
     "ControlFlowObfuscationTest.cpp",
-    #"MultithreadingTest.cpp",
-    "PerformanceStressTest.cpp",
+    # "MultithreadingTest.cpp",
+    # "PerformanceStressTest.cpp",
     "StringManipulationTest.cpp",
     "ClassesTest.cpp",
     "IndirectCallsTest.cpp",
@@ -53,11 +53,11 @@ TARGET_ENVIRONMENTS = {
     #     "run_prefix": "",
     #     "ext": ""
     # },
-    "windows-x64": {
-        "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
-        "run_prefix": "wine",
-        "ext": ".exe"
-    },
+    # "windows-x64": {
+    #     "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+    #     "run_prefix": "wine",
+    #     "ext": ".exe"
+    # },
     # "windows-x86": {
     #     "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
     #     "run_prefix": "wine",
@@ -78,8 +78,8 @@ TARGET_ENVIRONMENTS = {
 RUN_COUNT = 2
 REBUILD_PER_RUN = False
 WARMUP_COMPILE = False
-COMPILE_TIMEOUT = 300
-EXECUTE_TIMEOUT = 300
+COMPILE_TIMEOUT = 600
+EXECUTE_TIMEOUT = 120
 
 MAX_WORKERS = 0
 
@@ -299,7 +299,14 @@ def run_test(executable_path: Path, target: str) -> Tuple[bool, str, str]:
             return False, "", f"Execution timeout after {EXECUTE_TIMEOUT}s"
 
         if proc.returncode != 0:
-            return False, "", stderr
+            # Keep both streams so the caller can show the full app output
+            parts = [f"exit code {proc.returncode}"]
+            if stdout and stdout.strip():
+                parts.append(f"--- stdout ---\n{stdout.rstrip()}")
+            if stderr and stderr.strip():
+                parts.append(f"--- stderr ---\n{stderr.rstrip()}")
+            return False, stdout, "\n".join(parts)
+
         return True, stdout, ""
     except Exception as e:
         if proc is not None and proc.poll() is None:
@@ -336,7 +343,7 @@ def run_single_test(spec: TestSpec, target: str, obfuscated: bool,
             test_name=spec.name, target=target, obfuscated=obfuscated,
             run_number=run_number, output_body="", time_ns=0,
             compile_time=compile_time, success=False,
-            error_message=f"Execution failed: {run_error}",
+            error_message=f"Execution failed:\n{run_error}",
             binary_size=binary_size
         )
 

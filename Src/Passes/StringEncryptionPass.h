@@ -9,8 +9,8 @@ namespace LeetObfuscator
     class StringEncryptionPass : public llvm::PassInfoMixin<StringEncryptionPass>
     {
     public:
-        explicit StringEncryptionPass(SettingsParser::PassArguments arguments)
-            : m_Arguments(std::move(arguments)), m_Logger("StringEncryptionPass") {}
+        explicit StringEncryptionPass(SettingsParser::PassArguments arguments, bool startCallback)
+            : m_Arguments(std::move(arguments)), m_Logger("StringEncryptionPass"), m_StartCallback(startCallback) {}
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
     private:
@@ -33,5 +33,6 @@ namespace LeetObfuscator
         EmittedTemplate GetTemplateFunctions(llvm::Module& module);
         SettingsParser::PassArguments m_Arguments;
         Logger m_Logger;
+        bool m_StartCallback;
     };
 }

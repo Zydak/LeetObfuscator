@@ -11,7 +11,7 @@ extern "C" uint8_t* __leet_decrypt_string(uint8_t* enc, uint8_t* out, uint32_t l
     const uint32_t key = __leet_get_key();
     for (uint32_t i = 0; i < len; ++i) {
         uint8_t keyByte = uint8_t((key >> (8 * (i % 4))) & 0xFF);
-        out[i] = enc[i] ^ keyByte;
+        out[i] = ((volatile uint8_t *)enc)[i] ^ keyByte;
     }
     return out;
 }

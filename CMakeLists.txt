@@ -23,18 +23,35 @@ add_llvm_component_library(LLVMLeetObfuscator
 )
 
 find_program(CLANGXX_EXE NAMES clang++ REQUIRED)
-set(HELPER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringEncryptionHelper.cpp)
-set(HELPER_BC  ${CMAKE_CURRENT_BINARY_DIR}/leet_string_encryption_template.bc)
-set(HELPER_INC ${CMAKE_CURRENT_BINARY_DIR}/leet_string_encryption_template.inc)
+
+set(STRING_HELPER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringEncryptionHelper.cpp)
+set(STRING_HELPER_BC  ${CMAKE_CURRENT_BINARY_DIR}/leet_string_encryption_template.bc)
+set(STRING_HELPER_INC ${CMAKE_CURRENT_BINARY_DIR}/leet_string_encryption_template.inc)
 
 add_custom_command(
-    OUTPUT ${HELPER_BC} ${HELPER_INC}
-    COMMAND ${CLANGXX_EXE} -std=c++17 -O2 -emit-llvm -c ${HELPER_SRC} -o ${HELPER_BC}
-    COMMAND xxd -i leet_string_encryption_template.bc > ${HELPER_INC}
-    DEPENDS ${HELPER_SRC}
+    OUTPUT ${STRING_HELPER_BC} ${STRING_HELPER_INC}
+    COMMAND ${CLANGXX_EXE} -std=c++17 -O3 -emit-llvm -c ${STRING_HELPER_SRC} -o ${STRING_HELPER_BC}
+    COMMAND xxd -i leet_string_encryption_template.bc > ${STRING_HELPER_INC}
+    DEPENDS ${STRING_HELPER_SRC}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Compiling obfuscation runtime helper to embedded bitcode"
+    COMMENT "Compiling string obfuscation runtime helper to embedded bitcode"
     VERBATIM
 )
-add_custom_target(LeetRuntimeBitcode DEPENDS ${HELPER_INC})
-add_dependencies(LLVMLeetObfuscator LeetRuntimeBitcode)
+add_custom_target(LeetRuntimeStringBitcode DEPENDS ${STRING_HELPER_INC})
+add_dependencies(LLVMLeetObfuscator LeetRuntimeStringBitcode)
+
+set(ANTI_ANALYSIS_HELPER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/AntiAnalysisHelper.cpp)
+set(ANTI_ANALYSIS_HELPER_BC  ${CMAKE_CURRENT_BINARY_DIR}/leet_anti_analysis_template.bc)
+set(ANTI_ANALYSIS_HELPER_INC ${CMAKE_CURRENT_BINARY_DIR}/leet_anti_analysis_template.inc)
+
+add_custom_command(
+    OUTPUT ${ANTI_ANALYSIS_HELPER_BC} ${ANTI_ANALYSIS_HELPER_INC}
+    COMMAND ${CLANGXX_EXE} -std=c++17 -O3 -emit-llvm -c ${ANTI_ANALYSIS_HELPER_SRC} -o ${ANTI_ANALYSIS_HELPER_BC}
+    COMMAND xxd -i leet_anti_analysis_template.bc > ${ANTI_ANALYSIS_HELPER_INC}
+    DEPENDS ${ANTI_ANALYSIS_HELPER_SRC}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Compiling anti analysis obfuscation runtime helper to embedded bitcode"
+    VERBATIM
+)
+add_custom_target(LeetRuntimeAntiAnalysisBitcode DEPENDS ${ANTI_ANALYSIS_HELPER_INC})
+add_dependencies(LLVMLeetObfuscator LeetRuntimeAntiAnalysisBitcode)

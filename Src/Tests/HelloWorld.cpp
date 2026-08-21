@@ -8,6 +8,11 @@
 __attribute__((noinline))
 int Foo(int x, int y)
 {
+    printf("HelloWorld\n");
+    printf("orld\n");
+    printf("ld\n");
+    printf("\n");
+    printf("1d\n");
     return (x^y) * 10;
 }
 
