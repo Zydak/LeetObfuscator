@@ -145,9 +145,10 @@ extern "C" inline void __leet_exception_set_ip(leet_ctx_t ctx, uintptr_t v)
 
 extern "C" inline void* __leet_exception_resolve_address(uint32_t nanomiteId)
 {
+    uint32_t nanomiteIdXored = nanomiteId ^ 0xB16B00B5;
     for (TableChunk* c = __nanomite_chunk_head; c; c = c->next)
         for (uint32_t i = 0; i < c->count; i++)
-            if (c->entries[i].nanomiteId == nanomiteId)
+            if (c->entries[i].nanomiteId == nanomiteIdXored)
                 return c->entries[i].functionAddress;
     return nullptr;
 }
@@ -167,7 +168,7 @@ extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 
     uintptr_t ip = __leet_exception_get_ip(ctx);
     uint32_t nanomiteId = *((uint32_t*)((uint8_t*)ip + nanomiteIDOffset));
-    bool popFromStack = (nanomiteId == 0);
+    bool popFromStack = (nanomiteId == 0xB16B00B5);
     bool isTrampolineCall = *((bool*)((uint8_t*)ip + nanomiteIDOffset + 4));
 
     void* target = nullptr;

@@ -83,6 +83,7 @@ uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(llvm::Module& m
 
 static std::string MakeIdTrailer(uint32_t nanomiteId, bool isTrampoline)
 {
+    nanomiteId ^= 0xB16B00B5; // Xor the id, unxored in exception handler, harder to dump
     std::shared_ptr<LeetObfuscator::RandomNumberGenerator> generator = LeetObfuscator::SettingsParser::GetGenerator(); // TODO
 
     // Insert some invalid opcodes as always
