@@ -13,10 +13,6 @@
 #define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
-#include <sys/ptrace.h>
-#include <errno.h>
-#include <stdio.h>
-
 __attribute__((noinline))
 uint64_t fnv1aHash(const std::string& s) {
     uint64_t hash = 14695981039346656037ULL;

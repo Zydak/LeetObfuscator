@@ -21,8 +21,8 @@ This is made as an LLVM fork, so you need the actual source to obfuscate. It's n
 
 If you want to check out the results, I've made and obfuscated 2 crackmes with this. You can get them in [releases](https://github.com/Zydak/LeetObfuscator/releases/) alongside the precompiled clang binary.
 
-- [Crackme1](https://github.com/Zydak/LeetObfuscator/releases/download/v0.1/Crackme1.tar.xz) - Very simple, a single xor of the hardcoded key and compare with user input. Without obfuscation it would take 5 minutes to crack.
-- [Crackme2](https://github.com/Zydak/LeetObfuscator/releases/download/v0.1/Crackme2.tar.xz) - A little bit more complex one. If you're done with 1 feel free to try it too. The keys are also hardcoded but the decryption is much more complicated. There are 4 flags in this one, you can either try making a keygen to unlock all features and grab all 4 at once or patch them one by one separately.
+- [Crackme1](https://github.com/Zydak/LeetObfuscator/releases/download/v0.1/Crackme1.tar.xz)(Release v0.1) - Very simple, a single xor of the hardcoded key and compare with user input. Without obfuscation it would take 5 minutes to crack.
+- Crackme2 coming soon once I get antidebug working on windows
 
 ## Features
 
@@ -200,7 +200,7 @@ Though it's not as bad as it looks because of 2 things. 1. over 95% of the perfo
 
 <img alt="" src="Pictures/PerformanceNanoOff.png" /><br>
 
-So I highly advise to just mark the functions and calls you want to obfuscate with nanomites manually instead of just setting it to all. Obfuscating every call inside a binary is pointless and costs a lot. And the reason number 2. most of the time you don't really care about the performance of the things you want to hide. This obfuscator has the ability to get selectively enabled and disabled. So you can disable it for the performance critical sections of your code and enable it wherever it's actually needed. Nobody cares whether your license check takes 1ms or 0.001ms, it's still unnoticeable for anyone.
+So I highly advise to just mark the functions and calls you want to obfuscate with nanomites manually instead of just setting it to all. Obfuscating every call inside a binary is pointless and costs a lot. And the reason number 2. most of the time you don't really care about the performance of the things you want to hide. This obfuscator has the ability to get selectively enabled and disabled. So you can disable it for the performance critical sections of your code and enable it wherever it's actually needed. Nobody cares whether your license check takes 1ms or 0.001ms, it's still unnoticeable for anyone. The only important thing is to ensure no expensive tranformations land in a hot path.
 
 For the configuration options and the full guide refer to the [wiki](https://github.com/Zydak/LeetObfuscator/wiki/Full-Guide).
 

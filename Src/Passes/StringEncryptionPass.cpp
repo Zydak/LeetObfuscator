@@ -10,8 +10,10 @@
 #include "SettingsParser.h"
 #include "RandomNumberGenerator.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
+#include "llvm/IR/Intrinsics.h"
 
-#include "../../build/LeetObfuscator/leet_string_encryption_template.inc" // template bitcode
+#include "../../build/LeetObfuscator/LeetRuntimeString.x64.inc" // template bitcode
+#include "../../build/LeetObfuscator/LeetRuntimeString.x86.inc"
 
 llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
 {
@@ -257,6 +259,36 @@ llvm::Function *LeetObfuscator::StringEncryptionPass::GetDecryptFunction(llvm::M
         return nullptr;
     }
 
+    // Force every CallInst that still points into the template module
+    // to use the equivalent declaration in the target module.
+    // This is required for llvm.assume (and any other intrinsics / external funcs).
+    for (auto& basicBlock : *clone)
+    {
+        for (auto& instruction : basicBlock)
+        {
+            if (auto* CB = llvm::dyn_cast<llvm::CallBase>(&instruction))
+            {
+                if (llvm::Function* Callee = CB->getCalledFunction())
+                {
+                    if (Callee->getParent() != &module)
+                    {
+                        if (Callee->isIntrinsic())
+                        {
+                            llvm::Function* NewCallee = llvm::Intrinsic::getOrInsertDeclaration(&module, Callee->getIntrinsicID());
+                            CB->setCalledFunction(NewCallee);
+                        }
+                        else
+                        {
+                            llvm::Function* NewCallee = llvm::cast<llvm::Function>(
+                                module.getOrInsertFunction(Callee->getName(), Callee->getFunctionType()).getCallee());
+                            CB->setCalledFunction(NewCallee);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Find all getKeys inside the clone and replace them with the actual key
     std::vector<llvm::CallInst*> callsToReplace;
     for (auto& basicBlock : *clone)
@@ -290,8 +322,18 @@ LeetObfuscator::StringEncryptionPass::EmittedTemplate LeetObfuscator::StringEncr
     EmittedTemplate result;
     llvm::LLVMContext& context = module.getContext();
 
+    llvm::StringRef data;
+    bool is64 = module.getDataLayout().getPointerSizeInBits() == 64;
+    if (is64)
+    {
+        data = llvm::StringRef(reinterpret_cast<const char*>(LeetRuntimeString_x64_bc), LeetRuntimeString_x64_bc_len);
+    }
+    else
+    {
+        data = llvm::StringRef(reinterpret_cast<const char*>(LeetRuntimeString_x86_bc), LeetRuntimeString_x86_bc_len);
+    }
+
     // Create a dummy module with template functions
-    llvm::StringRef data(reinterpret_cast<const char*>(leet_string_encryption_template_bc), leet_string_encryption_template_bc_len);
     std::unique_ptr<llvm::MemoryBuffer> buffer = llvm::MemoryBuffer::getMemBuffer(data, "leet_obf_runtime", false);
     auto modOrErr = llvm::parseBitcodeFile(buffer->getMemBufferRef(), context);
     if (!modOrErr)

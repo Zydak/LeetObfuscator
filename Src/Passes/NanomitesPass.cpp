@@ -565,9 +565,9 @@ bool LeetObfuscator::NanomitesMachineCodePass::runOnMachineFunction(llvm::Machin
         return changed;
     }
 
-    bool nextCallIsNanomite = false;
     for (auto& machineBlock : machineFunction)
     {
+        bool nextCallIsNanomite = false; // TODO fix this shit
         for (auto iterator = machineBlock.begin(); iterator != machineBlock.end();)
         {
             llvm::MachineInstr& machineInstruction = *iterator;

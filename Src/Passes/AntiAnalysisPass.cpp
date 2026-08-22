@@ -14,7 +14,8 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/Support/MemoryBuffer.h"
 
-#include "../../build/LeetObfuscator/leet_anti_analysis_template.inc" // template bitcode
+#include "../../build/LeetObfuscator/LeetRuntimeAntiAnalysis.x64.inc" // Template bitcode
+#include "../../build/LeetObfuscator/LeetRuntimeAntiAnalysis.x86.inc"
 
 #include <iostream>
 #include <sstream>
@@ -146,7 +147,9 @@ bool LeetObfuscator::AntiAnalysisPass::ObfuscateBlock(llvm::BasicBlock* block, S
     float blacklistProb = (float)attributes.antiAnalysisBlackListRatio;
     float opaqueProb = (float)attributes.antiAnalysisOpaqueRatio;
 
-    if (block->getParent()->getName().contains("__leet_exception"))
+    llvm::Triple triple(block->getParent()->getParent()->getTargetTriple());
+
+    if (block->getParent()->getName().contains("__leet_exception") || triple.isOSWindows())
     {
         blacklistProb = 0;
         pidProb = 0;
@@ -446,7 +449,18 @@ llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockRdtsc(llv
 bool LeetObfuscator::AntiAnalysisPass::LinkTemplateModule(llvm::Module& module, EmittedTemplate& templates)
 {
     llvm::LLVMContext& context = module.getContext();
-    llvm::StringRef data(reinterpret_cast<const char*>(leet_anti_analysis_template_bc), leet_anti_analysis_template_bc_len);
+    llvm::StringRef data;
+    
+    bool is64 = module.getDataLayout().getPointerSizeInBits() == 64;
+    if (is64)
+    {
+        data = llvm::StringRef(reinterpret_cast<const char*>(LeetRuntimeAntiAnalysis_x64_bc), LeetRuntimeAntiAnalysis_x64_bc_len);
+    }
+    else
+    {
+        data = llvm::StringRef(reinterpret_cast<const char*>(LeetRuntimeAntiAnalysis_x86_bc), LeetRuntimeAntiAnalysis_x86_bc_len);
+    }
+    
     auto buffer = llvm::MemoryBuffer::getMemBuffer(data, "leet_anti_analysis_templates", false);
     auto modOrErr = llvm::parseBitcodeFile(buffer->getMemBufferRef(), context);
     if (!modOrErr)

@@ -1,4 +1,5 @@
 // antidebug_linux.c
+#include <cstdlib>
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -14,30 +15,30 @@ int __leet_is_debugger_present_tracer_pid(void)
 {
     char buf[4096];
     int fd = open("/proc/self/status", O_RDONLY);
-    if (fd >= 0)
-    {
-        ssize_t n = read(fd, buf, sizeof(buf) - 1);
-        close(fd);
-        if (n > 0)
-        {
-            buf[n] = '\0';
-            // Look for the line "TracerPid:\t<number>"
-            char *p = strstr(buf, "TracerPid:");
-            if (p)
-            {
-                p += sizeof("TracerPid:") - 1;
-                // Skip whitespace
-                while (*p == ' ' || *p == '\t')
-                    p++;
-                // Any non-zero value means a tracer is attached
-                if (*p != '0' || (p[1] >= '0' && p[1] <= '9'))
-                {
-                   return 1;
-                }
-            }
-        }
-    }
-    return 0;
+    if (fd < 0)
+        return 0;
+
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0)
+        return 0;
+
+    buf[n] = '\0';
+    char *p = strstr(buf, "TracerPid:");
+    if (!p)
+        return 0;
+
+    p += sizeof("TracerPid:") - 1;
+    while (*p == ' ' || *p == '\t')
+        p++;
+
+    int tracer = atoi(p);
+
+    // getppid() = our own self tracer parent, allow it
+    if (tracer == 0 || tracer == getppid())
+        return 0;
+
+    return 1;   // foreign tracer
 }
 
 extern "C"
@@ -78,7 +79,7 @@ int __leet_is_debugger_present_blacklist(void)
         "qemu", "qemu-x86_64", "qemu-i386",
         "wine", "wineserver",
         "dotnet", "mono",           // sometimes used for managed debuggers
-        //"python", "python3",        // common for scripted debuggers / frida
+        "python", "python3",        // common for scripted debuggers / frida
         "perl", "ruby",
         NULL
     };

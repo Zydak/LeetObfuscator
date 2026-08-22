@@ -17,41 +17,66 @@ add_llvm_component_library(LLVMLeetObfuscator
 
     LINK_COMPONENTS
     Analysis
+    Linker
     Core
     TransformUtils
-    CodeGen
 )
 
 find_program(CLANGXX_EXE NAMES clang++ REQUIRED)
 
-set(STRING_HELPER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringEncryptionHelper.cpp)
-set(STRING_HELPER_BC  ${CMAKE_CURRENT_BINARY_DIR}/leet_string_encryption_template.bc)
-set(STRING_HELPER_INC ${CMAKE_CURRENT_BINARY_DIR}/leet_string_encryption_template.inc)
-
-add_custom_command(
-    OUTPUT ${STRING_HELPER_BC} ${STRING_HELPER_INC}
-    COMMAND ${CLANGXX_EXE} -std=c++17 -O3 -emit-llvm -c ${STRING_HELPER_SRC} -o ${STRING_HELPER_BC}
-    COMMAND xxd -i leet_string_encryption_template.bc > ${STRING_HELPER_INC}
-    DEPENDS ${STRING_HELPER_SRC}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Compiling string obfuscation runtime helper to embedded bitcode"
-    VERBATIM
+set(STRING_HELPER_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/StringEncryptionHelper.cpp
 )
-add_custom_target(LeetRuntimeStringBitcode DEPENDS ${STRING_HELPER_INC})
-add_dependencies(LLVMLeetObfuscator LeetRuntimeStringBitcode)
 
-set(ANTI_ANALYSIS_HELPER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/AntiAnalysisHelper.cpp)
-set(ANTI_ANALYSIS_HELPER_BC  ${CMAKE_CURRENT_BINARY_DIR}/leet_anti_analysis_template.bc)
-set(ANTI_ANALYSIS_HELPER_INC ${CMAKE_CURRENT_BINARY_DIR}/leet_anti_analysis_template.inc)
-
-add_custom_command(
-    OUTPUT ${ANTI_ANALYSIS_HELPER_BC} ${ANTI_ANALYSIS_HELPER_INC}
-    COMMAND ${CLANGXX_EXE} -std=c++17 -O3 -emit-llvm -c ${ANTI_ANALYSIS_HELPER_SRC} -o ${ANTI_ANALYSIS_HELPER_BC}
-    COMMAND xxd -i leet_anti_analysis_template.bc > ${ANTI_ANALYSIS_HELPER_INC}
-    DEPENDS ${ANTI_ANALYSIS_HELPER_SRC}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Compiling anti analysis obfuscation runtime helper to embedded bitcode"
-    VERBATIM
+set(ANTI_ANALYSIS_HELPER_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/Src/Passes/AntiAnalysisHelper.cpp
 )
-add_custom_target(LeetRuntimeAntiAnalysisBitcode DEPENDS ${ANTI_ANALYSIS_HELPER_INC})
-add_dependencies(LLVMLeetObfuscator LeetRuntimeAntiAnalysisBitcode)
+
+function(add_runtime_bitcode NAME SRC)
+    set(X86_BC  ${CMAKE_CURRENT_BINARY_DIR}/${NAME}.x86.bc)
+    set(X64_BC  ${CMAKE_CURRENT_BINARY_DIR}/${NAME}.x64.bc)
+    set(X86_INC ${CMAKE_CURRENT_BINARY_DIR}/${NAME}.x86.inc)
+    set(X64_INC ${CMAKE_CURRENT_BINARY_DIR}/${NAME}.x64.inc)
+
+    add_custom_command(
+        OUTPUT ${X86_BC} ${X86_INC} ${X64_BC} ${X64_INC}
+
+        COMMAND ${CLANGXX_EXE}
+            --target=i386-pc-linux-gnu
+            -std=c++17 -O3 -emit-llvm -c
+            ${SRC}
+            -o ${X86_BC}
+
+        COMMAND ${CLANGXX_EXE}
+            --target=x86_64-pc-linux-gnu
+            -std=c++17 -O3 -emit-llvm -c
+            ${SRC}
+            -o ${X64_BC}
+
+        COMMAND ${CMAKE_COMMAND} -E env
+            bash -c
+            "cd '${CMAKE_CURRENT_BINARY_DIR}' &&
+             xxd -i '${NAME}.x86.bc' > '${NAME}.x86.inc' &&
+             xxd -i '${NAME}.x64.bc' > '${NAME}.x64.inc'"
+
+        DEPENDS ${SRC}
+        COMMENT "Building ${NAME} runtime bitcode (x86/x64)"
+        VERBATIM
+    )
+
+    add_custom_target(${NAME}_Bitcode
+        DEPENDS ${X86_BC} ${X86_INC} ${X64_BC} ${X64_INC}
+    )
+
+    add_dependencies(LLVMLeetObfuscator ${NAME}_Bitcode)
+endfunction()
+
+add_runtime_bitcode(
+    LeetRuntimeString
+    ${STRING_HELPER_SRC}
+)
+
+add_runtime_bitcode(
+    LeetRuntimeAntiAnalysis
+    ${ANTI_ANALYSIS_HELPER_SRC}
+)
