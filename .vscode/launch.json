@@ -1,0 +1,28 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug LeetObfuscator compiler",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/bin/clang++",
+      "args": [
+        "../../Src/Tests/HelloWorld.cpp",
+        "-o",
+        "test",
+        "-fno-exceptions"
+      ],
+      "cwd": "${workspaceFolder}/build/bin",
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "setupCommands": [
+        { "text": "set pagination off" },
+        { "text": "set breakpoint pending on" },
+        { "text": "set detach-on-fork off" },
+        { "text": "set follow-fork-mode child" }
+      ]
+    }
+  ]
+}

@@ -49,8 +49,8 @@ extern "C" void __leet_nanomite_marker();
     X("AAMBAPass", __VA_ARGS__) \
     X("NanomitesPass", __VA_ARGS__)
 
-#define LEET_SKIP_PASS(pass) __attribute__((annotate("leet." pass ".skip")))
-#define LEET_FORCE_PASS(pass) __attribute__((annotate("leet." pass ".forcePass")))
+#define LEET_SKIP_PASS(pass) __attribute__((annotate("leet." pass ".skip=true")))
+#define LEET_FORCE_PASS(pass) __attribute__((annotate("leet." pass ".forcePass=true")))
 
 #define LEET_RUNTIME_SEED_PASS(pass, seed) __attribute__((annotate("leet." pass ".runtimeSeed=" #seed)))
 #define LEET_MIN_FUNCTION_SIZE(pass, size) __attribute__((annotate("leet." pass ".minFunctionSize=" #size)))

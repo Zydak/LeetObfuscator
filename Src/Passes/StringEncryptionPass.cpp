@@ -35,7 +35,7 @@ llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &
         uint32_t inlineProbability = 50;
         const auto* probArg = SettingsParser::FindArgument(m_Arguments, "inlineProbability");
         if (probArg && !probArg->empty())
-            inlineProbability = std::stoul(probArg->front());
+            inlineProbability = std::stoul(*probArg);
 
         for (auto& function : functionsToInline)
         {
@@ -82,7 +82,7 @@ llvm::PreservedAnalyses LeetObfuscator::StringEncryptionPass::run(llvm::Module &
     uint32_t stringEncryptionProbability = 100;
     const auto* probArg = SettingsParser::FindArgument(m_Arguments, "probability");
     if (probArg && !probArg->empty())
-        stringEncryptionProbability = std::stoul(probArg->front());
+        stringEncryptionProbability = std::stoul(*probArg);
 
     std::vector<StringGlobalInfo> stringGlobals;
     for (auto& global : module.globals())

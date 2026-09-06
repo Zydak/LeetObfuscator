@@ -4,11 +4,11 @@
 
 #include <memory>
 #include <cstdint>
+#include <functional>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
-#include <functional>
-#include <limits>
 #include "RandomNumberGenerator.h"
 
 namespace LeetObfuscator
@@ -16,8 +16,8 @@ namespace LeetObfuscator
     class SettingsParser
     {
     public:
-        // vector<pair<key, vector<values>>>
-        using PassArguments = std::vector<std::pair<std::string, std::vector<std::string>>>;
+        // vector<pair<key, values>>
+        using PassArguments = std::vector<std::pair<std::string, std::string>>;
 
         enum class GlobalParseMode { All, None };
         enum class BogusInsertPosition { Random, Start };
@@ -48,9 +48,6 @@ namespace LeetObfuscator
             std::vector<Pass> passes;
         };
 
-        // All settings after merging global defaults, pass defaults, and
-        // function annotations. ParseFunctionAttributes validates every raw
-        // string argument before returning this structure.
         struct FunctionAttributes
         {
             bool skip = false;
@@ -92,66 +89,43 @@ namespace LeetObfuscator
         };
 
         static FunctionAttributes ParseFunctionAttributes(llvm::Function& function, PassType passType, const PassArguments& passArguments);
-        static GlobalAttributes ParseGlobalAttributes();
-        static Pass ParsePassString(const std::string& passStr);
+        static std::shared_ptr<GlobalAttributes> ParseGlobalAttributes();
+        static const std::string* FindArgument(const PassArguments& arguments, std::string key);
 
         static bool ShouldSkipFunction(llvm::Function* function, const FunctionAttributes& attributes);
         static bool ShouldSkipBlock(llvm::BasicBlock* block, const FunctionAttributes& attributes);
         static std::shared_ptr<RandomNumberGenerator> GetGenerator(const FunctionAttributes& attributes);
         static std::shared_ptr<RandomNumberGenerator> GetGenerator(); // TODO
-        static const std::vector<std::string>* FindArgument(const PassArguments& arguments, llvm::StringRef key);
 
     private:
-        using OptionApplier = std::function<void(llvm::Function&, const std::vector<std::string>*, llvm::StringRef, FunctionAttributes&)>;
+        using OptionApplier = std::function<void(const std::string*, const std::string&, FunctionAttributes&)>;
 
         struct Option
         {
-            llvm::StringRef name;
-            OptionApplier apply;
+            std::string name;
+            OptionApplier applier;
         };
+        static inline std::shared_ptr<GlobalAttributes> m_GlobalSettings = nullptr;
+        static PassType GetPassTypeFromName(const std::string& name);
+        static std::string GetPassNameFromType(PassType type);
 
-        static void SetArgument(PassArguments& arguments, llvm::StringRef key, std::vector<std::string> values);
-        static std::vector<std::string> ParseValues(llvm::StringRef value);
-        static std::vector<std::string> GetFunctionOption(llvm::Function& function, llvm::StringRef key);
-        static void ReportInvalidArgument(llvm::Function& function, llvm::StringRef key, llvm::StringRef reason);
-
-        template <typename T>
-        static bool ParseUnsignedArgument(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, T& output, T maximum);
-
-        static void ParseStringList(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key, std::vector<std::string>& output);
-
-        template <typename T>
-        static bool ParseEnumArgument(
-            llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef key,
-            T& output, const std::vector<std::pair<llvm::StringRef, T>>& namedValues, llvm::StringRef expected
-        );
+        static const std::vector<Option>& GetPassOptions(PassType passType);
+        static void ReportInvalidArgument(const std::string& key, const std::string& reason);
 
         template <typename T>
         static OptionApplier UnsignedOption(T FunctionAttributes::* field, T maximum = std::numeric_limits<T>::max());
-
-        static OptionApplier StringListOption(std::vector<std::string> FunctionAttributes::* field);
-
         template <typename T>
-        static OptionApplier EnumOption(T FunctionAttributes::* field, std::vector<std::pair<llvm::StringRef, T>> namedValues, llvm::StringRef expected);
+        static bool ParseUnsignedArgument(const std::string* value, const std::string& key, T& output, T maximum);
+
         template <typename T>
         static OptionApplier BoolOption(T FunctionAttributes::* field);
-        static const std::vector<std::pair<llvm::StringRef, GlobalParseMode>> kParseModeValues;
+        static bool ParseBoolArgument(const std::string* value, const std::string& key, bool& output);
 
-        static void ApplyRuntimeSeed(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result);
-        static void ApplyDefaultParseMode(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result);
-        static void ApplySkip(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result);
-        static void ApplyForcePass(llvm::Function&, const std::vector<std::string>* values, llvm::StringRef, FunctionAttributes& result);
-        static void ApplyOnlyEntryBlock(llvm::Function& function, const std::vector<std::string>* values, llvm::StringRef name, FunctionAttributes& result);
+        static OptionApplier StringOption(std::string FunctionAttributes::* field);
 
-        static const std::vector<Option>& GetPassOptions(PassType passType);
-        static void OverlayFunctionAttributes(llvm::Function& function, llvm::StringRef attributePrefix, const std::vector<Option>& options, PassArguments& effective);
-        static void ExtractOptions(llvm::Function& function, const std::vector<Option>& options, const PassArguments& effective, FunctionAttributes& result);
-        static bool IsKnownOption(const std::vector<Option>& options, llvm::StringRef key);
-
-        static size_t FindTopLevelSeparator(llvm::StringRef text, char separator, int& depth);
-        static void ParsePassList(GlobalAttributes& settings, llvm::StringRef value);
-        static inline std::unique_ptr<GlobalAttributes> m_GlobalSettings = nullptr;
-        static PassType ParsePassTypeName(llvm::StringRef passName);
-        static llvm::StringRef GetPassTypeName(PassType passType);
+        template <typename T>
+        static OptionApplier EnumOption(T FunctionAttributes::* field, std::vector<std::pair<std::string, T>> namedValues, std::string expected);
+        template <typename T>
+        static bool ParseEnumArgument(const std::string* value, const std::string& key, T& output, const std::vector<std::pair<std::string, T>>& namedValues, std::string expected);
     };
 }

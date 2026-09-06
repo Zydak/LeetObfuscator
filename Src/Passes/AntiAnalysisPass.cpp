@@ -650,12 +650,12 @@ int LeetObfuscator::AntiAnalysisPass::RankValue(llvm::Value* value)
 
 void LeetObfuscator::AntiDissasemblyEmitter::encodeInstruction(const llvm::MCInst& instruction, llvm::SmallVectorImpl<char>& bytes, llvm::SmallVectorImpl<llvm::MCFixup>& fixups, const llvm::MCSubtargetInfo& sti) const
 {
-    static SettingsParser::GlobalAttributes globalSettings = SettingsParser::ParseGlobalAttributes();
+    static std::shared_ptr<SettingsParser::GlobalAttributes> globalSettings = SettingsParser::ParseGlobalAttributes();
     static bool antiAnalysisEnabled = false;
     static bool alreadySearched = false;
     if (!antiAnalysisEnabled && !alreadySearched)
     {
-        for (auto& pass : globalSettings.passes)
+        for (auto& pass : globalSettings->passes)
         {
             if (pass.type == SettingsParser::PassType::AntiAnalysisPass)
             {
