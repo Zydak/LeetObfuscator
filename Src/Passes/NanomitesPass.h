@@ -17,11 +17,17 @@ namespace LeetObfuscator
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
     private:
-        void ObfuscateFunction(llvm::Function* function, std::vector<llvm::Constant*>& nanomitesEntries);
-        void ObfuscateFunctionPointerTables(llvm::Module& module,std::vector<llvm::Constant*>& nanomitesEntries);
-        void CreateGlobalNanomitesTable(llvm::Module& module, std::vector<llvm::Constant*>& nanomitesEntries);
+        struct NanomiteEntry
+        {
+            uint32_t nanomiteId;
+            llvm::Function* function;
+        };
 
-        llvm::Constant* MakeEntry(uint32_t id, llvm::Constant* addr, llvm::LLVMContext& context);
+        void ObfuscateFunction(llvm::Function* function, std::vector<NanomiteEntry>& nanomitesEntries);
+        void ObfuscateFunctionPointerTables(llvm::Module& module,std::vector<NanomiteEntry>& nanomitesEntries);
+        void CreateGlobalNanomitesTable(llvm::Module& module, std::vector<NanomiteEntry>& nanomitesEntries);
+
+        llvm::Constant* MakeEntry(uint32_t id, llvm::Constant* addr, llvm::Module& module);
 
         uint32_t GenerateUniqueNanomiteId(llvm::Module& module, RandomNumberGenerator& generator);
         llvm::Function* CreateForwardFunction(llvm::Module& module, llvm::Function* realFunc, uint32_t id);

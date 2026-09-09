@@ -281,6 +281,14 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
         return;
     }
 
+    // Very special case, this function is used in the exception handler for function address lookup, no calls can be created there
+    // and this will obviously insert split_mix64
+    if (function->getName().contains("_ZNSt8__detail9_Map_baseIjSt4pairIKjPvESaIS4_ENS_10_Select1stESt8equal_toIjESt4hashIjENS_18_Mod_range_hashingENS_20_Default_ranged_hashENS_20_Prime_"))
+    {
+        llvm::errs() << "SKIPPING\n";
+        return;
+    }
+
     bool hasAnyBlocks = false;
     for (auto& block : *function)
     {

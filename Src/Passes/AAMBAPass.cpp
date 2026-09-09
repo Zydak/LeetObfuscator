@@ -8,6 +8,7 @@
 #include "llvm/IR/Verifier.h"
 #include "SettingsParser.h"
 
+#include <limits>
 #include <random>
 #include "RandomNumberGenerator.h"
 
@@ -129,7 +130,8 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
         );
         auto opaque = [&](llvm::Value* v) { return b.CreateCall(barrierAsm, {v}); };
 
-        llvm::Constant* C = llvm::ConstantInt::get(vType, 255); // TODO random constant
+        uint64_t randomConstant = generator->DrawRange(1ul, std::numeric_limits<uint64_t>::max());
+        llvm::Constant* C = llvm::ConstantInt::get(vType, randomConstant); // TODO random constant
 
         enum class Shape : uint32_t
         {

@@ -9,6 +9,7 @@
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "llvm/IR/Verifier.h"
@@ -30,12 +31,14 @@
 
 #include "llvm/IR/MDBuilder.h"
 
+#include "../NanomiteTraps.h"
+
 llvm::PreservedAnalyses LeetObfuscator::NanomitesPass::run(llvm::Module& module, llvm::ModuleAnalysisManager&)
 {
     std::cout << "Running NanomitesPass" << std::endl;
     m_Logger.LogModule(module, "Obfuscating module", 0);
 
-    std::vector<llvm::Constant*> nanomitesEntries;
+    std::vector<NanomiteEntry> nanomitesEntries;
 
     ObfuscateFunctionPointerTables(module, nanomitesEntries);
 
@@ -54,9 +57,9 @@ llvm::PreservedAnalyses LeetObfuscator::NanomitesPass::run(llvm::Module& module,
 
 uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(llvm::Module& module, RandomNumberGenerator& generator)
 {
-    // 15 bits module tag + 17 bits local ID, supports >100K IDs per module (should be enough?)
+    // 1bit reserved, 14 bits module tag + 17 bits local ID, supports >100K IDs per module (should be enough?)
 
-    // Stable 15-bit tag from module id
+    // Stable 14-bit tag from module id
     std::string uid = llvm::getUniqueModuleId(&module);
     if (uid.empty())
         uid = module.getModuleIdentifier();
@@ -65,7 +68,7 @@ uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(llvm::Module& m
     md5.update(uid);
     llvm::MD5::MD5Result res;
     md5.final(res);
-    const uint32_t moduleTag = (res[0] | (res[1] << 8) | (res[2] << 16)) & 0x7FFFu;
+    const uint32_t moduleTag = (res[0] | (res[1] << 8) | (res[2] << 16)) & 0x3FFFu;
 
     static std::vector<uint32_t> ids;
 
@@ -83,56 +86,63 @@ uint32_t LeetObfuscator::NanomitesPass::GenerateUniqueNanomiteId(llvm::Module& m
 
 static std::string MakeIdTrailer(uint32_t nanomiteId, bool isTrampoline)
 {
-    nanomiteId ^= 0xB16B00B5; // Xor the id, unxored in exception handler, harder to dump
-    std::shared_ptr<LeetObfuscator::RandomNumberGenerator> generator = LeetObfuscator::SettingsParser::GetGenerator(); // TODO
+    using namespace LeetObfuscator;
 
-    // Insert some invalid opcodes as always
-    // This will eat 4 ID bytes + the next instruction bytes after that as part of this instruction
-    static const uint8_t primaries[] = {
-        0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, // duplicated for better distribution
-        0xC7, // MOV
-        0x69, // IMUL
-        0xF7 // TEST
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator();
+
+    // Fold the flag into the top bit instead of appending a byte that
+    // belongs to no instruction encoding.
+    uint32_t payload = (nanomiteId & 0x7FFFFFFFu) | (uint32_t(isTrampoline) << 31);
+
+    size_t templateIndex = generator->DrawRange((size_t)0, kTemplateCount - 1);
+    const TrapTemplate& tmpl = gTrapTemplates[templateIndex];
+
+    size_t keyIndex = generator->DrawRange((size_t)0, std::size(gTrapKeyTable) - 1);
+    uint32_t encoded = payload ^ gTrapKeyTable[keyIndex];
+
+    uint8_t encodedBytes[4] = {
+        uint8_t((encoded >> 24) & 0xFF), uint8_t((encoded >> 16) & 0xFF),
+        uint8_t((encoded >> 8) & 0xFF),  uint8_t((encoded >> 0) & 0xFF),
     };
 
-    static const uint8_t longModRMs[] = {
-        0x84, 0x8C, 0x94, 0x9C, 0xA4, 0xAC, 0xB4, 0xBC
-    };
-
-    uint8_t primary = primaries[generator->DrawRange((size_t)0, std::size(primaries) - 1)];
-    uint8_t modrm = longModRMs[generator->DrawRange((size_t)0, std::size(longModRMs) - 1)];
-    uint8_t sib = generator->DrawRange(0u, 255u);
+    uint8_t primary = tmpl.opcodeCandidates[generator->DrawRange((size_t)0, (size_t)tmpl.opcodeCandidateCount - 1)];
 
     std::string asmText;
     llvm::raw_string_ostream os(asmText);
-    os 
-        << "\t.byte 0xCC\n"
-        << "\t.byte " << (int32_t)primary << "\n"
-        << "\t.byte " << (int32_t)modrm   << "\n"
-        << "\t.byte " << (int32_t)sib     << "\n"
-        << "\t.byte " << ((nanomiteId >>  0) & 0xFF) << "\n"
-        << "\t.byte " << ((nanomiteId >>  8) & 0xFF) << "\n"
-        << "\t.byte " << ((nanomiteId >> 16) & 0xFF) << "\n"
-        << "\t.byte " << ((nanomiteId >> 24) & 0xFF) << "\n"
-        << "\t.byte " << (uint32_t(isTrampoline) & 0xFF);
+    os << "\t.byte 0xCC\n";
+    os << "\t.byte " << (int)primary << "\n";
+
+    for (uint8_t i = 0; i < tmpl.decoyBytesBeforePayload; ++i)
+    {
+        uint8_t b = (uint8_t)generator->DrawRange(0u, 255u);
+        if (i == tmpl.sibRelativeOffset)
+            b = (uint8_t)((b & 0xF0) | (uint8_t)(keyIndex & 0x0F)); // key index hides in a junk byte
+        os << "\t.byte " << (int)b << "\n";
+    }
+
+    for (uint8_t i = 0; i < 4; ++i)
+        os << "\t.byte " << (int)encodedBytes[tmpl.shuffle.order[i]] << "\n";
+
+    for (uint8_t i = 0; i < tmpl.decoyBytesAfterPayload; ++i)
+        os << "\t.byte " << (int)generator->DrawRange(0u, 255u) << "\n";
 
     return asmText;
 }
 
-llvm::Constant* LeetObfuscator::NanomitesPass::MakeEntry(uint32_t id, llvm::Constant* addr, llvm::LLVMContext& context)
+llvm::Constant* LeetObfuscator::NanomitesPass::MakeEntry(uint32_t id, llvm::Constant* addr, llvm::Module& module)
 {
     llvm::StructType* entryType = llvm::StructType::get(
-        context,
-        {llvm::Type::getInt32Ty(context), llvm::PointerType::get(context, 0)}
+        module.getContext(),
+        {llvm::Type::getInt32Ty(module.getContext()), module.getDataLayout().getIntPtrType(module.getContext())}
     );
 
     return llvm::ConstantStruct::get(
         entryType,
-        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), id), addr}
+        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(module.getContext()), id ^ 0x2D9A0C63), addr}
     );
 }
 
-void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, std::vector<llvm::Constant*>& nanomitesEntries)
+void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, std::vector<NanomiteEntry>& nanomitesEntries)
 {
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
         *function,
@@ -274,7 +284,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
             );
             builder.CreateCall(IA);
 
-            nanomitesEntries.push_back(MakeEntry(callSiteId, trampoline, context));
+            nanomitesEntries.push_back({callSiteId, trampoline});
             callInst->setTailCallKind(llvm::CallInst::TCK_NoTail);
             callInst->addFnAttr(llvm::Attribute::NoInline);
             realFunc->addFnAttr(llvm::Attribute::OptimizeNone);
@@ -284,7 +294,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
             // Forward func
             llvm::Function* forwardFunc = CreateForwardFunction(*module, realFunc, callSiteId);
             callInst->setCalledFunction(forwardFunc);
-            nanomitesEntries.push_back(MakeEntry(callSiteId, realFunc, context));
+            nanomitesEntries.push_back({callSiteId, realFunc});
         }
 
         m_Logger.LogFunction(*function, "Registered nanomite entry for call site", 4);
@@ -315,7 +325,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
     m_Logger.LogFunction(*function, "Finished transforming function", 2);
 }
 
-void LeetObfuscator::NanomitesPass::ObfuscateFunctionPointerTables(llvm::Module& module, std::vector<llvm::Constant*>& nanomitesEntries)
+void LeetObfuscator::NanomitesPass::ObfuscateFunctionPointerTables(llvm::Module& module, std::vector<NanomiteEntry>& nanomitesEntries)
 {
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator();
     llvm::LLVMContext& context = module.getContext();
@@ -349,7 +359,7 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunctionPointerTables(llvm::Module&
             realFunc->addFnAttr(llvm::Attribute::NoInline);
 
             newElems.push_back(forwarder);
-            nanomitesEntries.push_back(MakeEntry(id, realFunc, context));
+            nanomitesEntries.push_back({id, realFunc});
             changed = true;
         }
 
@@ -453,12 +463,15 @@ llvm::Function* LeetObfuscator::NanomitesPass::CreateForwardFunction(llvm::Modul
     return forwardFunc;
 }
 
-void LeetObfuscator::NanomitesPass::CreateGlobalNanomitesTable(llvm::Module& module, std::vector<llvm::Constant*>& nanomitesEntries)
+void LeetObfuscator::NanomitesPass::CreateGlobalNanomitesTable(llvm::Module& module, std::vector<NanomiteEntry>& nanomitesEntries)
 {
     llvm::LLVMContext& context = module.getContext();
     llvm::PointerType* ptrTy = llvm::PointerType::get(context, 0);
+    llvm::Type* intptrTy = module.getDataLayout().getIntPtrType(context);
+    llvm::Type* int64Ty = llvm::Type::getInt64Ty(context);
+    llvm::Type* int32Ty = llvm::Type::getInt32Ty(context);
 
-    llvm::StructType* entryType = llvm::StructType::get(context, {llvm::Type::getInt32Ty(context), ptrTy});
+    llvm::StructType* entryType = llvm::StructType::get(context, {llvm::Type::getInt32Ty(context), intptrTy});
     llvm::ArrayType* tableType = llvm::ArrayType::get(entryType, nanomitesEntries.size());
 
     llvm::StructType* chunkType = llvm::StructType::get(context, {ptrTy, llvm::Type::getInt32Ty(context), ptrTy}); // entries, count, next
@@ -466,9 +479,9 @@ void LeetObfuscator::NanomitesPass::CreateGlobalNanomitesTable(llvm::Module& mod
     auto* table = new llvm::GlobalVariable(
         module,
         tableType,
-        true,
+        false,
         llvm::GlobalValue::InternalLinkage,
-        llvm::ConstantArray::get(tableType, nanomitesEntries),
+        nullptr,
         "__nanomites_local"
     );
 
@@ -477,13 +490,27 @@ void LeetObfuscator::NanomitesPass::CreateGlobalNanomitesTable(llvm::Module& mod
         chunkType,
         false,
         llvm::GlobalValue::InternalLinkage,
-        llvm::ConstantStruct::get(chunkType, {
-            table,
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (uint32_t)nanomitesEntries.size()),
-            llvm::ConstantPointerNull::get(ptrTy)
-        }),
+        nullptr,
         "__nanomites_chunk"
     );
+
+    std::vector<llvm::Constant*> entries;
+    for (auto& entry : nanomitesEntries)
+    {
+        llvm::Constant* tablePtr = llvm::ConstantExpr::getPtrToInt(chunk, intptrTy);
+        llvm::Constant* functionAddress = llvm::ConstantExpr::getPtrToInt(entry.function, intptrTy);
+        
+        llvm::Constant* relativeOffset = llvm::ConstantExpr::getSub(functionAddress, tablePtr);
+        entries.push_back(MakeEntry(entry.nanomiteId, relativeOffset, module));
+    }
+
+    table->setInitializer(llvm::ConstantArray::get(tableType, entries));
+
+    chunk->setInitializer(llvm::ConstantStruct::get(chunkType, {
+        table,
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (uint32_t)nanomitesEntries.size()),
+        llvm::ConstantPointerNull::get(ptrTy)
+    }));
 
     // Linked list
     // before = head -> A -> B -> C

@@ -13,9 +13,10 @@
 
 #define LEET_ANTI_ANALYSIS_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.probability=" #value)))
 #define LEET_ANTI_ANALYSIS_BOGUS_INSERT_POSITION(value) __attribute__((annotate("leet.AntiAnalysisPass.bogusInsertPosition=" value)))
-#define LEET_ANTI_ANALYSIS_RDTSC_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.rdtscProbability=" #value)))
-#define LEET_ANTI_ANALYSIS_VALID_BOGUS_BLOCKS_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.validBogusBlocksProbability=" #value)))
-#define LEET_ANTI_ANALYSIS_INVALID_BOGUS_BLOCKS_PROBABILITY(value) __attribute__((annotate("leet.AntiAnalysisPass.invalidBogusBlocksProbability=" #value)))
+#define LEET_ANTI_ANALYSIS_RDTSC_RATIO(value) __attribute__((annotate("leet.AntiAnalysisPass.rdtscRatio=" #value)))
+#define LEET_ANTI_ANALYSIS_OPAQUE_RATIO(value) __attribute__((annotate("leet.AntiAnalysisPass.opaqueRatio=" #value)))
+#define LEET_ANTI_ANALYSIS_PID_RATIO(value) __attribute__((annotate("leet.AntiAnalysisPass.pidRatio=" #value)))
+#define LEET_ANTI_ANALYSIS_BLACK_LIST_RATIO(value) __attribute__((annotate("leet.AntiAnalysisPass.blackListRatio=" #value)))
 
 #define LEET_ANTI_ALIASING_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.probability=" #value)))
 
@@ -76,7 +77,10 @@ extern "C" void __leet_nanomite_marker();
 #define LEET_MIN_BLOCK_SIZE_ALL(size) LEET_PASS_LIST(LEET_MIN_BLOCK_SIZE_EXPAND, size)
 #define LEET_MAX_BLOCK_SIZE_ALL(size) LEET_PASS_LIST(LEET_MAX_BLOCK_SIZE_EXPAND, size)
 
+//#define LEET_IMPLEMENTATION
 #ifdef LEET_IMPLEMENTATION
+
+#include "NanomiteTraps.h"
 
 __attribute__((noinline))
 __attribute__((optnone))
@@ -97,6 +101,18 @@ extern "C" void __leet_nanomite_marker()
 	#include <sys/ucontext.h>
 	#include <unistd.h>
 #endif
+
+#include <unordered_map>
+
+[[gnu::always_inline]]
+LEET_SKIP_ALL
+static std::unordered_map<uint32_t, void*>& GetNanomitesMap()
+{
+    // No delete here, this can't be deleted manually because lfietimes of these static constructors are ass.
+    // And since it's supposed to live through the entire process lifetime anyway it doesn't matter
+    static thread_local std::unordered_map<uint32_t, void*>* map = new std::unordered_map<uint32_t, void*>;
+    return *map;
+}
 
 struct NanomiteEntry { uint32_t nanomiteId; void* functionAddress; };
 struct TableChunk { const NanomiteEntry* entries; uint32_t count; TableChunk* next; };
@@ -143,33 +159,87 @@ extern "C" inline void __leet_exception_set_ip(leet_ctx_t ctx, uintptr_t v)
 #endif
 }
 
+LEET_VARIABLE_SPLITTING_SPLIT_COUNT(1)
+LEET_ANTI_ANALYSIS_BLACK_LIST_RATIO(0)
+LEET_ANTI_ANALYSIS_PID_RATIO(0)
 extern "C" inline void* __leet_exception_resolve_address(uint32_t nanomiteId)
 {
-    uint32_t nanomiteIdXored = nanomiteId ^ 0xB16B00B5;
+    // TODO maybe? fix this
+    // nanomiteId ^= 0x2D9A0C63;
+    // uintptr_t offset = (uintptr_t)GetNanomitesMap()[nanomiteId];
+
+    // // // Find the anchor which is map
+    // // uintptr_t anchor = 0;
+    // // for (TableChunk* chunk = __nanomite_chunk_head; chunk; chunk = chunk->next)
+    // // {
+    // //     uint32_t moduleIdNanomite = (nanomiteId >> 17) & 0x3FFFu;
+    // //     for (uint32_t i = 0; i < chunk->count; i++)
+    // //     {
+    // //         uint32_t moduleIdChunk = (chunk->entries[i].nanomiteId >> 17) & 0x3FFFu;
+    // //         if (moduleIdNanomite == moduleIdChunk)
+    // //         {
+    // //             anchor = (uintptr_t)chunk;
+    // //             break;
+    // //         }
+    // //     }
+    // // }
+
+    // return (void*)(0 + offset);
+
     for (TableChunk* c = __nanomite_chunk_head; c; c = c->next)
         for (uint32_t i = 0; i < c->count; i++)
-            if (c->entries[i].nanomiteId == nanomiteIdXored)
-                return c->entries[i].functionAddress;
+            if (((c->entries[i].nanomiteId) ^ 0x2D9A0C63) == nanomiteId)
+                return (void*)((uintptr_t)c + (uintptr_t)c->entries[i].functionAddress);
     return nullptr;
 }
 
 static thread_local uintptr_t s_PointerStack[512];
 static thread_local uint32_t s_StackPointer = 0;
-extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
+
+extern "C"
+//LEET_MBA_PROBABILITY(10)
+LEET_VARIABLE_SPLITTING_SPLIT_COUNT(1)
+LEET_ANTI_ANALYSIS_BLACK_LIST_RATIO(0)
+LEET_ANTI_ANALYSIS_PID_RATIO(0)
+inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 {
-	// windows doesn't advance RIP immediately, linux does
-	#if defined(_WIN32)
-	uint32_t nanomiteIDOffset = 4;
-    uint32_t garbageBytesOffset = 9;
-	#else
-	uint32_t nanomiteIDOffset = 3;
-    uint32_t garbageBytesOffset = 8;
-	#endif
+    using namespace LeetObfuscator;
+
+#if defined(_WIN32)
+    constexpr uintptr_t kCCAdjust = 1; // linux advances the ip right away, windows doesn't
+#else
+    constexpr uintptr_t kCCAdjust = 0;
+#endif
 
     uintptr_t ip = __leet_exception_get_ip(ctx);
-    uint32_t nanomiteId = *((uint32_t*)((uint8_t*)ip + nanomiteIDOffset));
-    bool popFromStack = (nanomiteId == 0xB16B00B5);
-    bool isTrampolineCall = *((bool*)((uint8_t*)ip + nanomiteIDOffset + 4));
+    const uint8_t* base = (const uint8_t*)(ip + kCCAdjust); // base[0] == selector/primary opcode
+
+    uint8_t primary = base[0];
+    uint8_t templateIndex = gPrimaryOpcodeToTemplate.data[primary];
+    if (templateIndex == 0xFF)
+        return false; // not leet trap
+
+    const TrapTemplate& trapTemplate = gTrapTemplates[templateIndex];
+
+    uint8_t keyIndex = base[1 + trapTemplate.sibRelativeOffset] & 0x0F;
+    uint32_t key = gTrapKeyTable[keyIndex];
+
+    const uint8_t* rawPayload = base + 1 + trapTemplate.decoyBytesBeforePayload;
+    uint8_t orderedBytes[4];
+    for (int i = 0; i < 4; i++)
+        orderedBytes[trapTemplate.shuffle.order[i]] = rawPayload[i];
+
+    uint32_t encoded = (uint32_t(orderedBytes[0]) << 24) | (uint32_t(orderedBytes[1]) << 16)
+        | (uint32_t(orderedBytes[2]) << 8) | uint32_t(orderedBytes[3]);
+    
+    uint32_t payload = encoded ^ key;
+
+    bool isTrampolineCall = (payload >> 31) & 1u;
+    uint32_t nanomiteId = payload & 0x7FFFFFFFu;
+    bool popFromStack = (nanomiteId == 0);
+
+    uint32_t totalLen = 1u + trapTemplate.decoyBytesBeforePayload + 4u + trapTemplate.decoyBytesAfterPayload;
+    uintptr_t afterTrap = (uintptr_t)base + totalLen;
 
     void* target = nullptr;
 
@@ -179,10 +249,10 @@ extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
     }
     else
     {
+        #ifdef LEET_NANOMITE_ASSERTS
         if (s_StackPointer == 0)
-        {
             fputs("ERROR: Exception Handler Stack Underflow!\n", stderr);
-        }
+        #endif
         s_StackPointer--;
         target = reinterpret_cast<void*>(s_PointerStack[s_StackPointer]);
     }
@@ -192,13 +262,12 @@ extern "C" inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 
     if (isTrampolineCall && !popFromStack)
     {
-        s_PointerStack[s_StackPointer] = ip + garbageBytesOffset;
+        s_PointerStack[s_StackPointer] = afterTrap;
         s_StackPointer++;
-
+        #ifdef LEET_NANOMITE_ASSERTS
         if (s_StackPointer >= 512)
-        {
             fputs("ERROR: Exception Handler Stack Overflow!\n", stderr);
-        }
+        #endif
     }
 
     __leet_exception_set_ip(ctx, (uintptr_t)target);
@@ -215,18 +284,25 @@ extern "C" LONG CALLBACK __leet_exception_veh_handler(PEXCEPTION_POINTERS Except
     if (__leet_exception_handle_trap(ExceptionInfo->ContextRecord))
         return EXCEPTION_CONTINUE_EXECUTION;
 
+    #ifdef LEET_NANOMITE_ASSERTS
     fputs("ERROR: Invalid nanomite ID!\n", stderr);
     _exit(1);
+    #else
+    return EXCEPTION_CONTINUE_EXECUTION;
+    #endif
 }
 
 static PVOID s_leetVehHandle = nullptr;
 
-extern "C" bool __leet_exception_handler_setup()
+extern "C" [[gnu::always_inline]] bool __leet_exception_handler_setup()
 {
     s_leetVehHandle = AddVectoredExceptionHandler(1, __leet_exception_veh_handler);
     if (!s_leetVehHandle)
     {
+        #ifdef LEET_NANOMITE_ASSERTS
         fprintf(stderr, "AddVectoredExceptionHandler failed: %lu\n", GetLastError());
+        #endif
+
         return false;
     }
     return true;
@@ -245,21 +321,22 @@ extern "C" void __leet_exception_handler_teardown()
 
 extern "C" void __leet_exception_handler(int signum, siginfo_t *info, void *ucontext)
 {
-    static const char invalidIdMessage[] = "ERROR: Invalid nanomite ID!\n";
-
     ucontext_t *uc = (ucontext_t *)ucontext;
 
     if (!__leet_exception_handle_trap(uc))
     {
+        #ifdef LEET_NANOMITE_ASSERTS
+        static const char invalidIdMessage[] = "ERROR: Invalid nanomite ID!\n";
         write(STDOUT_FILENO, invalidIdMessage, sizeof(invalidIdMessage) - 1);
         _exit(1);
+        #endif
     }
 }
 
 static constexpr size_t kAltStackSize = 8192 * 4;
 static uint8_t g_altStack[kAltStackSize];
 
-extern "C" bool __leet_exception_handler_setup()
+extern "C" [[gnu::always_inline]] bool __leet_exception_handler_setup()
 {
     stack_t ss;
     ss.ss_sp = g_altStack;
@@ -267,7 +344,9 @@ extern "C" bool __leet_exception_handler_setup()
     ss.ss_flags = 0;
     if (sigaltstack(&ss, nullptr) == -1)
     {
+        #ifdef LEET_NANOMITE_ASSERTS
         perror("sigaltstack failed");
+        #endif
         return false;
     }
 
@@ -278,7 +357,9 @@ extern "C" bool __leet_exception_handler_setup()
 
     if (sigaction(SIGTRAP, &sa, NULL) == -1)
     {
+        #ifdef LEET_NANOMITE_ASSERTS
         perror("sigaction failed");
+        #endif
         return false;
     }
 
@@ -287,11 +368,24 @@ extern "C" bool __leet_exception_handler_setup()
 
 #endif // _WIN32 / Linux
 
-[[gnu::constructor]]
+[[gnu::constructor(101)]]
 static void __leet_exception_handler_init()
 {
+    for (TableChunk* c = __nanomite_chunk_head; c; c = c->next)
+    {
+        for (uint32_t i = 0; i < c->count; i++)
+        {
+            NanomiteEntry entry = c->entries[i];
+            GetNanomitesMap()[entry.nanomiteId] = entry.functionAddress;
+        }
+    }
+    
     if (!__leet_exception_handler_setup())
+    {
+        #ifdef LEET_NANOMITE_ASSERTS
         exit(1);
+        #endif
+    }
 }
 
 #endif // LEET_IMPLEMENTATION

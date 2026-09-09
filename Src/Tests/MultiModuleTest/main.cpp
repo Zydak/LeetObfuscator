@@ -1,7 +1,8 @@
-#include "Common.h"
 
 #define LEET_IMPLEMENTATION
 #include "../../Leet.h"
+
+#include "Common.h"
 #include <iostream>
 #include <chrono>
 

@@ -8,6 +8,8 @@
 #include <string>
 #include <chrono>
 
+#include "math.h"
+
 #define LEET_IMPLEMENTATION
 #include "../Leet.h"
 
@@ -130,7 +132,7 @@ __attribute__((noinline))
 double trigIdentityChecksum() {
     double checksum = 0.0;
     for (int i = 0; i <= 36; ++i) {
-        double angle = (static_cast<double>(i) / 36.0) * 2.0 * M_PI;
+        double angle = (static_cast<double>(i) / 36.0) * 2.0 * 3.14159265;
         double s = std::sin(angle);
         double c = std::cos(angle);
         double identity = s * s + c * c;
@@ -463,7 +465,7 @@ double roundingChecksum() {
 }
 
 __attribute__((noinline))
-double lerp(double a, double b, double t) {
+double lerp1(double a, double b, double t) {
     return a + (b - a) * t;
 }
 
@@ -472,7 +474,7 @@ double lerpChecksum() {
     double checksum = 0.0;
     for (int i = 0; i <= 10; ++i) {
         double t = static_cast<double>(i) / 10.0;
-        checksum += lerp(-100.0, 250.0, t);
+        checksum += lerp1(-100.0, 250.0, t);
     }
     return checksum;
 }
@@ -595,7 +597,7 @@ int main() {
     }
 
     std::cout << "\n-- Numerical integration --\n";
-    double trapResult = integrateTrapezoid(0.0, M_PI, 100000);
+    double trapResult = integrateTrapezoid(0.0, 3.14159265, 100000);
     double simpsonResult = integrateSimpson(0.0, 10.0, 100000);
     printResult("integral of sin(x) over [0, pi] (trapezoid)", trapResult);
     printResult("integral of x^2 over [0, 10] (simpson)", simpsonResult);

@@ -5,6 +5,7 @@ import re
 import time
 import shutil
 import threading
+import shlex
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Union
@@ -15,16 +16,16 @@ import signal
 
 TEST_FILES = [
     "StdContainersTest.cpp",
-    # "FloatingPointMathTest.cpp",
-    # {
-    #     "sources": "BigSignaturesTest.cpp",
-    #     "extra_flags": "-msse2 -mfpmath=sse",
-    # },
+    "FloatingPointMathTest.cpp",
+    {
+        "sources": "BigSignaturesTest.cpp",
+        "extra_flags": "-msse2 -mfpmath=sse",
+    },
     "BitwiseOperationsTest.cpp",
     "BranchingRecursionTest.cpp",
     "ControlFlowObfuscationTest.cpp",
-    # "MultithreadingTest.cpp",
-    # "PerformanceStressTest.cpp",
+    "MultithreadingTest.cpp",
+    "PerformanceStressTest.cpp",
     "StringManipulationTest.cpp",
     "ClassesTest.cpp",
     "IndirectCallsTest.cpp",
@@ -32,17 +33,25 @@ TEST_FILES = [
     "MultiModuleTest",
 ]
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+BUILD_BIN = (SCRIPT_DIR / "../../build/bin").resolve()
+
+OBFUSCATED_COMPILER = BUILD_BIN / "clang++"
+REGULAR_COMPILER   = Path(shutil.which("clang++") or "/usr/bin/clang++").resolve()
+
+OBF_LLD = BUILD_BIN / "ld.lld"
+
 TARGET_ENVIRONMENTS = {
     "linux-x64": {
-        "flags": "--target=x86_64-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
+        "flags": f"--target=x86_64-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions -fuse-ld={OBF_LLD}",
         "run_prefix": "",
         "ext": ""
     },
-    "linux-x86": {
-        "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
-        "run_prefix": "",
-        "ext": ""
-    },
+    # "linux-x86": {
+    #     "flags": "--target=i686-linux-gnu --gcc-toolchain=/usr -O3 -fno-exceptions",
+    #     "run_prefix": "",
+    #     "ext": ""
+    # },
     # "linux-x64-noopt": {
     #     "flags": "--target=x86_64-linux-gnu --gcc-toolchain=/usr -O0 -fno-exceptions",
     #     "run_prefix": "",
@@ -53,16 +62,16 @@ TARGET_ENVIRONMENTS = {
     #     "run_prefix": "",
     #     "ext": ""
     # },
-    "windows-x64": {
-        "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
-        "run_prefix": "wine",
-        "ext": ".exe"
-    },
-    "windows-x86": {
-        "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
-        "run_prefix": "wine",
-        "ext": ".exe"
-    },
+    # "windows-x64": {
+    #     "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+    #     "run_prefix": "wine",
+    #     "ext": ".exe"
+    # },
+    # "windows-x86": {
+    #     "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+    #     "run_prefix": "wine",
+    #     "ext": ".exe"
+    # },
     # "windows-x64-noopt": {
     #     "flags": "--target=x86_64-w64-mingw32 -O0 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
     #     "run_prefix": "wine",
@@ -75,15 +84,14 @@ TARGET_ENVIRONMENTS = {
     # },
 }
 
-RUN_COUNT = 2
+RUN_COUNT = 4
 REBUILD_PER_RUN = False
 WARMUP_COMPILE = False
-COMPILE_TIMEOUT = 300
+COMPILE_TIMEOUT = 600
 EXECUTE_TIMEOUT = 120
 
 MAX_WORKERS = 0
 
-SCRIPT_DIR = Path(__file__).parent
 TESTS_DIR = SCRIPT_DIR
 BUILD_DIR = SCRIPT_DIR / "benchmark_build"
 OBFUSCATED_COMPILER = SCRIPT_DIR / "../../build/bin/clang++"
@@ -226,30 +234,38 @@ def compile_test(sources: List[Path], output_path: Path, compiler: str,
     flags = env_config.get("flags", "")
     if extra_flags:
         flags = f"{flags} {extra_flags}"
-    src_args = " ".join(f'"{s}"' for s in sources)
-    
-    cmd = f'{compiler} {flags} {src_args} -o "{output_path}"'
+
+    # Build argument list instead of shell command to avoid shell wrappers
+    args: List[str] = [compiler]
+    if flags:
+        args.extend(shlex.split(flags))
+    args.extend(str(s) for s in sources)
+    args.extend(["-o", str(output_path)])
 
     start_time = time.time()
     proc = None
     try:
         proc = subprocess.Popen(
-            cmd, shell=True,
+            args,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            start_new_session=True   # own process group
+            start_new_session=True
         )
         try:
             stdout, stderr = proc.communicate(timeout=COMPILE_TIMEOUT)
         except subprocess.TimeoutExpired:
-            # Kill the entire process group
+            # Attempt to kill the whole process group reliably
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-            # Reap to avoid zombies
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            # Try to reap and collect any output
             try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
+                stdout, stderr = proc.communicate(timeout=2)
+            except Exception:
                 pass
             return False, time.time() - start_time, f"Compilation timeout after {COMPILE_TIMEOUT}s"
 
@@ -260,17 +276,24 @@ def compile_test(sources: List[Path], output_path: Path, compiler: str,
     except Exception as e:
         if proc is not None and proc.poll() is None:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         return False, time.time() - start_time, str(e)
 
 
 def run_test(executable_path: Path, target: str) -> Tuple[bool, str, str]:
     env_config = TARGET_ENVIRONMENTS[target]
     run_prefix = env_config.get("run_prefix", "")
-    
-    cmd = f'{run_prefix} "{executable_path}"'.strip()
+    # Build argument list so we don't run through a shell
+    if run_prefix:
+        args = shlex.split(run_prefix) + [str(executable_path)]
+    else:
+        args = [str(executable_path)]
 
     env = os.environ.copy()
     
@@ -281,7 +304,7 @@ def run_test(executable_path: Path, target: str) -> Tuple[bool, str, str]:
     proc = None
     try:
         proc = subprocess.Popen(
-            cmd, shell=True,
+            args,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env=env, start_new_session=True
         )
@@ -289,17 +312,20 @@ def run_test(executable_path: Path, target: str) -> Tuple[bool, str, str]:
             stdout, stderr = proc.communicate(timeout=EXECUTE_TIMEOUT)
         except subprocess.TimeoutExpired:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
             try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
+                stdout, stderr = proc.communicate(timeout=2)
+            except Exception:
                 pass
             return False, "", f"Execution timeout after {EXECUTE_TIMEOUT}s"
 
         if proc.returncode != 0:
-            # Keep both streams so the caller can show the full app output
             parts = [f"exit code {proc.returncode}"]
             if stdout and stdout.strip():
                 parts.append(f"--- stdout ---\n{stdout.rstrip()}")
@@ -311,9 +337,13 @@ def run_test(executable_path: Path, target: str) -> Tuple[bool, str, str]:
     except Exception as e:
         if proc is not None and proc.poll() is None:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         return False, "", str(e)
 
 def run_single_test(spec: TestSpec, target: str, obfuscated: bool,

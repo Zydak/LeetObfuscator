@@ -268,7 +268,6 @@ std::shared_ptr<LeetObfuscator::RandomNumberGenerator> LeetObfuscator::SettingsP
 
 std::shared_ptr<LeetObfuscator::SettingsParser::GlobalAttributes> LeetObfuscator::SettingsParser::ParseGlobalAttributes()
 {
-    std::cout << "Parsing global attributes" << std::endl;
     if (m_GlobalSettings)
         return m_GlobalSettings;
 
@@ -469,6 +468,9 @@ passes=
             PassArguments passArguments;
             for (const auto& arg : args)
             {
+                if (arg.empty())
+                    continue;
+
                 size_t equal = arg.find('=');
                 if (equal == std::string::npos)
                 {
@@ -501,27 +503,12 @@ passes=
 
             if (key == "passes")
             {
-                std::cout << "Key: " << key << ", Value: " << value << std::endl;
                 readingPassList = true;
                 continue;
             }
 
             m_GlobalSettings->parameters.emplace_back(key, value);
         }
-    }
-
-    // Debug print
-    for (const auto& pass : m_GlobalSettings->passes)
-    {
-        llvm::errs() << "Pass: " << GetPassNameFromType(pass.type) << "\n";
-        for (const auto& arg : pass.parameters)
-        {
-            llvm::errs() << "  Arg: " << arg.first << " = " << arg.second << "\n";
-        }
-    }
-    for (auto& param : m_GlobalSettings->parameters)
-    {
-        llvm::errs() << "Global Param: " << param.first << " = " << param.second << "\n";
     }
 
     return m_GlobalSettings;
@@ -595,7 +582,6 @@ LeetObfuscator::SettingsParser::FunctionAttributes LeetObfuscator::SettingsParse
         });
         if (it != passOptions.end())
         {
-            std::cout << "Applying global attribute: " << argument.first << " = " << argument.second << std::endl;
             it->applier(&argument.second, argument.first, attributes);
         }
     }
@@ -609,7 +595,6 @@ LeetObfuscator::SettingsParser::FunctionAttributes LeetObfuscator::SettingsParse
         });
         if (it != passOptions.end())
         {
-            std::cout << "Applying pass attribute: " << argument.first << " = " << argument.second << std::endl;
             it->applier(&argument.second, argument.first, attributes);
         }
     }
@@ -621,7 +606,6 @@ LeetObfuscator::SettingsParser::FunctionAttributes LeetObfuscator::SettingsParse
         if (function.hasFnAttribute(fullAttributeName))
         {
             std::string value = function.getFnAttribute(fullAttributeName).getValueAsString().str();
-            std::cout << "Applying function attribute: " << option.name << " = " << value << " To function " << function.getName().str() << std::endl;
             option.applier(&value, option.name, attributes);
         }
     }
