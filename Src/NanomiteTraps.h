@@ -54,6 +54,8 @@ inline constexpr uint32_t gTrapKeyTable[16] = {
     0x3EB27A1C, 0x60F5C8D9, 0xD12A3B47, 0x877C90EE,
 };
 
+#define kNanomiteTableMask 0x2D9A0C63
+
 struct OpcodeToTemplateTable
 {
     uint8_t data[256]{};

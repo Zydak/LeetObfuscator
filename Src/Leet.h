@@ -77,6 +77,7 @@ extern "C" void __leet_nanomite_marker();
 #define LEET_MIN_BLOCK_SIZE_ALL(size) LEET_PASS_LIST(LEET_MIN_BLOCK_SIZE_EXPAND, size)
 #define LEET_MAX_BLOCK_SIZE_ALL(size) LEET_PASS_LIST(LEET_MAX_BLOCK_SIZE_EXPAND, size)
 
+
 //#define LEET_IMPLEMENTATION
 #ifdef LEET_IMPLEMENTATION
 
@@ -101,18 +102,6 @@ extern "C" void __leet_nanomite_marker()
 	#include <sys/ucontext.h>
 	#include <unistd.h>
 #endif
-
-#include <unordered_map>
-
-[[gnu::always_inline]]
-LEET_SKIP_ALL
-static std::unordered_map<uint32_t, void*>& GetNanomitesMap()
-{
-    // No delete here, this can't be deleted manually because lfietimes of these static constructors are ass.
-    // And since it's supposed to live through the entire process lifetime anyway it doesn't matter
-    static thread_local std::unordered_map<uint32_t, void*>* map = new std::unordered_map<uint32_t, void*>;
-    return *map;
-}
 
 struct NanomiteEntry { uint32_t nanomiteId; void* functionAddress; };
 struct TableChunk { const NanomiteEntry* entries; uint32_t count; TableChunk* next; };
@@ -164,37 +153,47 @@ LEET_ANTI_ANALYSIS_BLACK_LIST_RATIO(0)
 LEET_ANTI_ANALYSIS_PID_RATIO(0)
 extern "C" inline void* __leet_exception_resolve_address(uint32_t nanomiteId)
 {
-    // TODO maybe? fix this
-    // nanomiteId ^= 0x2D9A0C63;
-    // uintptr_t offset = (uintptr_t)GetNanomitesMap()[nanomiteId];
-
-    // // // Find the anchor which is map
-    // // uintptr_t anchor = 0;
-    // // for (TableChunk* chunk = __nanomite_chunk_head; chunk; chunk = chunk->next)
-    // // {
-    // //     uint32_t moduleIdNanomite = (nanomiteId >> 17) & 0x3FFFu;
-    // //     for (uint32_t i = 0; i < chunk->count; i++)
-    // //     {
-    // //         uint32_t moduleIdChunk = (chunk->entries[i].nanomiteId >> 17) & 0x3FFFu;
-    // //         if (moduleIdNanomite == moduleIdChunk)
-    // //         {
-    // //             anchor = (uintptr_t)chunk;
-    // //             break;
-    // //         }
-    // //     }
-    // // }
-
-    // return (void*)(0 + offset);
+    using namespace LeetObfuscator;
+    const uint32_t searchKey = nanomiteId ^ kNanomiteTableMask;
 
     for (TableChunk* c = __nanomite_chunk_head; c; c = c->next)
-        for (uint32_t i = 0; i < c->count; i++)
-            if (((c->entries[i].nanomiteId) ^ 0x2D9A0C63) == nanomiteId)
-                return (void*)((uintptr_t)c + (uintptr_t)c->entries[i].functionAddress);
+    {
+        if (c->count == 0)
+            continue;
+
+        // quick boundary check
+        if (searchKey < c->entries[0].nanomiteId || searchKey > c->entries[c->count - 1].nanomiteId)
+            continue;
+
+        // Binary search
+        int32_t low = 0;
+        int32_t high = int32_t(c->count) - 1;
+        while (low <= high)
+        {
+            int32_t mid = low + ((high - low) >> 1);
+            uint32_t midVal = c->entries[mid].nanomiteId;
+
+            if (midVal == searchKey)
+            {
+                return (void*)((uintptr_t)c + (uintptr_t)c->entries[mid].functionAddress);
+            }
+
+            if (midVal < searchKey)
+            {
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+    }
     return nullptr;
 }
 
 static thread_local uintptr_t s_PointerStack[512];
 static thread_local uint32_t s_StackPointer = 0;
+static uint64_t stackHash = __rdtsc();
 
 extern "C"
 //LEET_MBA_PROBABILITY(10)
@@ -254,7 +253,7 @@ inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
             fputs("ERROR: Exception Handler Stack Underflow!\n", stderr);
         #endif
         s_StackPointer--;
-        target = reinterpret_cast<void*>(s_PointerStack[s_StackPointer]);
+        target = (void*)(s_PointerStack[s_StackPointer] ^ stackHash);
     }
 
     if (target == nullptr)
@@ -262,7 +261,7 @@ inline bool __leet_exception_handle_trap(leet_ctx_t ctx)
 
     if (isTrampolineCall && !popFromStack)
     {
-        s_PointerStack[s_StackPointer] = afterTrap;
+        s_PointerStack[s_StackPointer] = afterTrap ^ stackHash;
         s_StackPointer++;
         #ifdef LEET_NANOMITE_ASSERTS
         if (s_StackPointer >= 512)
@@ -371,15 +370,6 @@ extern "C" [[gnu::always_inline]] bool __leet_exception_handler_setup()
 [[gnu::constructor(101)]]
 static void __leet_exception_handler_init()
 {
-    for (TableChunk* c = __nanomite_chunk_head; c; c = c->next)
-    {
-        for (uint32_t i = 0; i < c->count; i++)
-        {
-            NanomiteEntry entry = c->entries[i];
-            GetNanomitesMap()[entry.nanomiteId] = entry.functionAddress;
-        }
-    }
-    
     if (!__leet_exception_handler_setup())
     {
         #ifdef LEET_NANOMITE_ASSERTS

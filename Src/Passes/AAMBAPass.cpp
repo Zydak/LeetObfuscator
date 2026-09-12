@@ -131,7 +131,7 @@ void LeetObfuscator::AAMBAPass::ObfuscateInstruction(llvm::Instruction* instruct
         auto opaque = [&](llvm::Value* v) { return b.CreateCall(barrierAsm, {v}); };
 
         uint64_t randomConstant = generator->DrawRange(1ul, std::numeric_limits<uint64_t>::max());
-        llvm::Constant* C = llvm::ConstantInt::get(vType, randomConstant); // TODO random constant
+        llvm::Constant* C = llvm::ConstantInt::get(vType, randomConstant);
 
         enum class Shape : uint32_t
         {

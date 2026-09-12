@@ -53,6 +53,7 @@ namespace LeetObfuscator
 
     private:
         bool ParseLeetID(llvm::StringRef name, uint32_t& id);
+        bool ParseCallsiteID(const llvm::MachineInstr& machineInstruction, uint32_t& id);
         void InsertTrap(uint32_t id, llvm::MachineInstr& machineInstruction, bool isTrampoline);
     };
 }

@@ -62,11 +62,11 @@ TARGET_ENVIRONMENTS = {
     #     "run_prefix": "",
     #     "ext": ""
     # },
-    # "windows-x64": {
-    #     "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
-    #     "run_prefix": "wine",
-    #     "ext": ".exe"
-    # },
+    "windows-x64": {
+        "flags": "--target=x86_64-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
+        "run_prefix": "wine",
+        "ext": ".exe"
+    },
     # "windows-x86": {
     #     "flags": "--target=i686-w64-mingw32 -O3 -femulated-tls -fno-exceptions -static -static-libgcc -static-libstdc++ -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -s",
     #     "run_prefix": "wine",
