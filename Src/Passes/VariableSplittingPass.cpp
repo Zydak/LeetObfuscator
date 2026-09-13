@@ -4,6 +4,7 @@
 #include "llvm/IR/Analysis.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Verifier.h"
@@ -15,11 +16,18 @@ extern bool TryGetAllocaTotalSize(llvm::AllocaInst* allocaInst, const llvm::Data
 llvm::PreservedAnalyses LeetObfuscator::VariableSplittingPass::run(llvm::Module& module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running VariableSplittingPass\n";
+    m_Logger.LogModule(module, "Starting pass", 0);
 
     for (auto& function : module)
     {
         ObfuscateFunction(&function);
     }
+
+    m_Logger.LogModule(module, "Summary: Replaced " + std::to_string(m_Stats.replacedAllocas) + " allocas, " + 
+        std::to_string(m_Stats.replacedAdds) + " additions, " +
+        std::to_string(m_Stats.replacedSubs) + " subtractions, " +
+        std::to_string(m_Stats.replacedBitwise) + " bitwise ops, " +
+        std::to_string(m_Stats.replacedICmps) + " icmps", 0);
 
     return llvm::PreservedAnalyses::none();
 }
@@ -54,15 +62,20 @@ void LeetObfuscator::VariableSplittingPass::ObfuscateFunction(llvm::Function* fu
         llvm::Type* allocatedType = allocaInstruction->getAllocatedType();
         llvm::IntegerType* intType = llvm::dyn_cast<llvm::IntegerType>(allocatedType);
         if (!intType || intType->getBitWidth() % 8 != 0)
+        {
+            m_Logger.LogInstruction(*allocaInstruction, "Couldn't replace alloca" + std::string(" in function '") + allocaInstruction->getFunction()->getName().str() + "' because it is not a byte-aligned integer type", 1);
             continue;
+        }
 
         uint64_t allocaSize = 0;
         if (!TryGetAllocaTotalSize(allocaInstruction, module->getDataLayout(), allocaSize))
         {
+            m_Logger.LogInstruction(*allocaInstruction, "Couldn't replace alloca" + std::string(" in function '") + allocaInstruction->getFunction()->getName().str() + "' because could not get total size", 1);
             continue;
         }
         if (allocaSize < 2 || allocaSize > 8)
         {
+            m_Logger.LogInstruction(*allocaInstruction, "Couldn't replace alloca" + std::string(" in function '") + allocaInstruction->getFunction()->getName().str() + "' because its size is not between 2 and 8 bytes (" + std::to_string(allocaSize) + " bytes)", 1);
             continue;
         }
         
@@ -74,24 +87,34 @@ void LeetObfuscator::VariableSplittingPass::ObfuscateFunction(llvm::Function* fu
         uint32_t pieceByteSize = ComputePartByteSize(allocaSize, attributes.variableSplittingCount);
         if (pieceByteSize >= allocaSize)
         {
+            m_Logger.LogInstruction(*allocaInstruction, "Couldn't replace alloca" + std::string(" in function '") + allocaInstruction->getFunction()->getName().str() + "' because computed piece byte size >= alloca size", 1);
             continue;
         }
 
+        m_Logger.LogInstruction(*allocaInstruction, "Replaced alloca" + std::string(" in function '") + allocaInstruction->getFunction()->getName().str() + "' with " + std::to_string(allocaSize / pieceByteSize) + " pieces of size " + std::to_string(pieceByteSize) + " bytes", 1);
+        m_Stats.replacedAllocas++;
         SplitAlloca(allocaInstruction, intType, allocaSize, pieceByteSize, splitContext);
     }
 
     llvm::ReversePostOrderTraversal<llvm::Function*> rpot(function);
 
-    std::vector<llvm::PHINode*> phiNodes;
+    // Collect everything first
+    std::vector<llvm::Instruction*> instructions;
     for (auto& block : rpot)
     {
         for (auto& instruction : *block)
         {
-            if (auto* phi = llvm::dyn_cast<llvm::PHINode>(&instruction))
-                phiNodes.push_back(phi);
-            else
-                RewriteInstruction(&instruction, splitContext);
+            instructions.push_back(&instruction);
         }
+    }
+
+    std::vector<llvm::PHINode*> phiNodes;
+    for (llvm::Instruction* instruction : instructions)
+    {
+        if (auto* phi = llvm::dyn_cast<llvm::PHINode>(instruction))
+            phiNodes.push_back(phi);
+        else
+            RewriteInstruction(instruction, splitContext);
     }
 
     for (llvm::PHINode* phi : phiNodes)
@@ -140,21 +163,31 @@ bool LeetObfuscator::VariableSplittingPass::IsAllocaSplittable(llvm::AllocaInst*
         if (auto* load = llvm::dyn_cast<llvm::LoadInst>(user))
         {
             if (load->isVolatile() || load->isAtomic())
+            {
+                m_Logger.LogInstruction(*allocaInstruciton, "Couldn't replace alloca" + std::string(" in function '") + allocaInstruciton->getFunction()->getName().str() + "' because it has a volatile/atomic load user", 1);
                 return false; // Don't touch anything that has to do with volatiles or atomics
+            }
             continue;
         }
         
         if (auto* store = llvm::dyn_cast<llvm::StoreInst>(user))
         {
             if (store->isVolatile() || store->isAtomic())
+            {
+                m_Logger.LogInstruction(*allocaInstruciton, "Couldn't replace alloca" + std::string(" in function '") + allocaInstruciton->getFunction()->getName().str() + "' because it has a volatile/atomic store user", 1);
                 return false; // Don't touch anything that has to do with volatiles or atomics
+            }
             if (store->getValueOperand() == allocaInstruciton)
+            {
+                m_Logger.LogInstruction(*allocaInstruciton, "Couldn't replace alloca" + std::string(" in function '") + allocaInstruciton->getFunction()->getName().str() + "' because its pointer is stored directly", 1);
                 return false; // Something is using pointer to this alloca, leave it alone
+            }
             continue;
         }
 
         // used as GEP, call, bitcast, ptrtoint select or fucking whatever, just don't touch it if it's not a normal computation value
         // There's really no point in obfuscating it in that case, tho it could be handled
+        m_Logger.LogInstruction(*allocaInstruciton, "Couldn't replace alloca" + std::string(" in function '") + allocaInstruciton->getFunction()->getName().str() + "' because it has an unhandled user type", 1);
         return false;
     }
     return true;
@@ -174,7 +207,7 @@ void LeetObfuscator::VariableSplittingPass::MaterializePhiOperands(llvm::PHINode
         llvm::BasicBlock* predBlock = phi->getIncomingBlock(i);
         llvm::IRBuilder<> builder(predBlock->getTerminator());
         auto* operandType = llvm::cast<llvm::IntegerType>(phi->getIncomingValue(i)->getType());
-        phi->setIncomingValue(i, MergeParts(builder, it->second, operandType));
+        phi->setIncomingValue(i, MergeParts(builder, it->second, operandType, SettingsParser::GetGenerator(*splitContext.attributes)));
     }
 }
 
@@ -185,9 +218,13 @@ void LeetObfuscator::VariableSplittingPass::SplitAlloca(llvm::AllocaInst* alloca
     llvm::IntegerType* pieceType = llvm::IntegerType::get(entryBuilder.getContext(), pieceByteSize * 8);
     uint32_t numPieces = uint32_t(byteSize / pieceByteSize);
 
-    llvm::ArrayType* splitArrayType = llvm::ArrayType::get(pieceType, numPieces);
-    llvm::AllocaInst* splitArray = entryBuilder.CreateAlloca(splitArrayType, nullptr, allocaInstruction->getName() + ".split");
-    splitArray->setAlignment(allocaInstruction->getAlign());
+    std::vector<llvm::AllocaInst*> pieceAllocas;
+    for (uint32_t i = 0; i < numPieces; i++)
+    {
+        llvm::AllocaInst* pieceAlloca = entryBuilder.CreateAlloca(pieceType, nullptr, allocaInstruction->getName() + ".split." + std::to_string(i));
+        pieceAlloca->setAlignment(llvm::Align(1));
+        pieceAllocas.push_back(pieceAlloca);
+    }
 
     std::vector<llvm::LoadInst*> loads;
     std::vector<llvm::StoreInst*> stores;
@@ -202,8 +239,7 @@ void LeetObfuscator::VariableSplittingPass::SplitAlloca(llvm::AllocaInst* alloca
 
     auto getPiecePtr = [&](llvm::IRBuilder<>& builder, uint32_t pieceIndex) -> llvm::Value*
     {
-        llvm::Value* index = builder.getInt32(pieceIndex);
-        return builder.CreateInBoundsGEP(splitArrayType, splitArray, {builder.getInt32(0), index});
+        return pieceAllocas[pieceIndex];
     };
 
     // Store individual pieces
@@ -241,7 +277,7 @@ void LeetObfuscator::VariableSplittingPass::SplitAlloca(llvm::AllocaInst* alloca
     }
 }
 
-llvm::Value* LeetObfuscator::VariableSplittingPass::MergeParts(llvm::IRBuilder<>& builder, const PartsInfo& info, llvm::IntegerType* type)
+llvm::Value* LeetObfuscator::VariableSplittingPass::MergeParts(llvm::IRBuilder<>& builder, const PartsInfo& info, llvm::IntegerType* type, std::shared_ptr<RandomNumberGenerator> generator)
 {
     if (info.parts.size() == 1 && info.parts[0]->getType() == type)
         return info.parts[0]; // Already correct size
@@ -251,7 +287,28 @@ llvm::Value* LeetObfuscator::VariableSplittingPass::MergeParts(llvm::IRBuilder<>
     for (size_t part = 0; part < info.parts.size(); part++)
     {
         llvm::Value* ext = builder.CreateZExt(info.parts[part], type);
-        accumulatedValue = builder.CreateOr(accumulatedValue, builder.CreateShl(ext, part * bitsPerPart));
+        
+        uint32_t choice = generator->DrawRange(0u, 1u);
+        llvm::Value* shiftedValue;
+        if (choice == 0)
+        {
+            shiftedValue = builder.CreateShl(ext, part * bitsPerPart);
+        }
+        else
+        {
+            uint64_t multiplier = 1ULL << (part * bitsPerPart);
+            shiftedValue = builder.CreateMul(ext, llvm::ConstantInt::get(type, multiplier));
+        }
+
+        choice = generator->DrawRange(0u, 1u);
+        if (choice == 0)
+        {
+            accumulatedValue = builder.CreateOr(accumulatedValue, shiftedValue);
+        }
+        else
+        {
+            accumulatedValue = builder.CreateAdd(accumulatedValue, shiftedValue);
+        }
     }
     return accumulatedValue;
 }
@@ -376,6 +433,7 @@ void LeetObfuscator::VariableSplittingPass::RewriteInstruction(llvm::Instruction
     }
 
     // Unhandled opcode, just merge the parts at this point
+    bool didMerge = false;
     for (uint32_t i = 0; i < instruction->getNumOperands(); ++i)
     {
         auto* opInst = llvm::dyn_cast<llvm::Instruction>(instruction->getOperand(i));
@@ -385,7 +443,12 @@ void LeetObfuscator::VariableSplittingPass::RewriteInstruction(llvm::Instruction
 
         llvm::IRBuilder<> builder(instruction);
         auto* operandType = llvm::cast<llvm::IntegerType>(instruction->getOperand(i)->getType());
-        instruction->setOperand(i, MergeParts(builder, it->second, operandType));
+        instruction->setOperand(i, MergeParts(builder, it->second, operandType, SettingsParser::GetGenerator(*splitContext.attributes)));
+        didMerge = true;
+    }
+    if (didMerge)
+    {
+        m_Logger.LogInstruction(*instruction, "Merged split parts back together in function '" + instruction->getFunction()->getName().str() + "' for unhandled instruction opcode", 1);
     }
 }
 
@@ -412,16 +475,28 @@ bool LeetObfuscator::VariableSplittingPass::TryRewriteAdd(llvm::Instruction* ins
         std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(*splitContext.attributes);
         if (generator->DrawRange(1u, 100u) > splitContext.attributes->variableSplittingProbability)
         {
+            m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because probability check failed", 1);
             return false;
         }
     }
 
-    if (!GetOperandAsParts(builder, instruction->getOperand(0), splitContext, lhs)) return false;
-    if (!GetOperandAsParts(builder, instruction->getOperand(1), splitContext, rhs)) return false;
+    if (!GetOperandAsParts(builder, instruction->getOperand(0), splitContext, lhs))
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because LHS could not be split", 1);
+        return false;
+    }
+    if (!GetOperandAsParts(builder, instruction->getOperand(1), splitContext, rhs))
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because RHS could not be split", 1);
+        return false;
+    }
 
     AlignPartsToCommonSize(builder, lhs, rhs);
     if (lhs.parts.size() != rhs.parts.size())
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because parts could not be aligned", 1);
         return false; // couldn't line the two operands up cleanly, fall back to the plain merge path
+    }
 
     uint32_t partBits = lhs.partByteSize * 8;
     llvm::Type* partTy = llvm::IntegerType::get(builder.getContext(), partBits);
@@ -440,6 +515,8 @@ bool LeetObfuscator::VariableSplittingPass::TryRewriteAdd(llvm::Instruction* ins
         result.parts[part] = builder.CreateTrunc(sum, partTy);
         carry = builder.CreateTrunc(builder.CreateLShr(sum, partBits), partTy);
     }
+    m_Logger.LogInstruction(*instruction, "Replaced Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' with " + std::to_string(lhs.parts.size()) + " split additions", 1);
+    m_Stats.replacedAdds++;
     splitContext.partsMap[instruction] = std::move(result);
     splitContext.toErase.push_back(instruction);
     return true;
@@ -455,16 +532,28 @@ bool LeetObfuscator::VariableSplittingPass::TryRewriteSub(llvm::Instruction* ins
         std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(*splitContext.attributes);
         if (generator->DrawRange(1u, 100u) > splitContext.attributes->variableSplittingProbability)
         {
+            m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because probability check failed", 1);
             return false;
         }
     }
 
-    if (!GetOperandAsParts(builder, instruction->getOperand(0), splitContext, lhs)) return false;
-    if (!GetOperandAsParts(builder, instruction->getOperand(1), splitContext, rhs)) return false;
+    if (!GetOperandAsParts(builder, instruction->getOperand(0), splitContext, lhs))
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because LHS could not be split", 1);
+        return false;
+    }
+    if (!GetOperandAsParts(builder, instruction->getOperand(1), splitContext, rhs))
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because RHS could not be split", 1);
+        return false;
+    }
 
     AlignPartsToCommonSize(builder, lhs, rhs);
     if (lhs.parts.size() != rhs.parts.size())
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because parts could not be aligned", 1);
         return false; // couldn't line the two operands up cleanly, fall back to the plain merge path
+    }
 
     uint32_t partBits = lhs.partByteSize * 8;
     llvm::Type* partTy = llvm::IntegerType::get(builder.getContext(), partBits);
@@ -485,6 +574,8 @@ bool LeetObfuscator::VariableSplittingPass::TryRewriteSub(llvm::Instruction* ins
         result.parts[part] = builder.CreateTrunc(sum, partTy);
         carry = builder.CreateTrunc(builder.CreateLShr(sum, partBits), partTy);
     }
+    m_Logger.LogInstruction(*instruction, "Replaced Sub instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' with " + std::to_string(lhs.parts.size()) + " split subtractions", 1);
+    m_Stats.replacedSubs++;
     splitContext.partsMap[instruction] = std::move(result);
     splitContext.toErase.push_back(instruction);
     return true;
@@ -500,29 +591,102 @@ bool LeetObfuscator::VariableSplittingPass::TryRewriteBitwise(llvm::Instruction*
         std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(*splitContext.attributes);
         if (generator->DrawRange(1u, 100u) > splitContext.attributes->variableSplittingProbability)
         {
+            m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because probability check failed", 1);
             return false;
         }
     }
 
-    if (!GetOperandAsParts(builder, instruction->getOperand(0), splitContext, lhs)) return false;
-    if (!GetOperandAsParts(builder, instruction->getOperand(1), splitContext, rhs)) return false;
+    if (!GetOperandAsParts(builder, instruction->getOperand(0), splitContext, lhs))
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because LHS could not be split", 1);
+        return false;
+    }
+    if (!GetOperandAsParts(builder, instruction->getOperand(1), splitContext, rhs))
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because RHS could not be split", 1);
+        return false;
+    }
 
     AlignPartsToCommonSize(builder, lhs, rhs);
     if (lhs.parts.size() != rhs.parts.size())
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace Add instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because parts could not be aligned", 1);
         return false; // couldn't line the two operands up cleanly, fall back to the plain merge path
+    }
 
     PartsInfo result;
     result.partByteSize = lhs.partByteSize;
     result.parts.resize(lhs.parts.size());
-    for (size_t part = 0; part < lhs.parts.size(); part++)
+    std::vector<size_t> indices(lhs.parts.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(*splitContext.attributes);
+    generator->Shuffle(indices.begin(), indices.end());
+
+    for (size_t part : indices)
     {
-        switch (instruction->getOpcode()) {
-            case llvm::Instruction::And: result.parts[part] = builder.CreateAnd(lhs.parts[part], rhs.parts[part]); break;
-            case llvm::Instruction::Or:  result.parts[part] = builder.CreateOr (lhs.parts[part], rhs.parts[part]); break;
-            case llvm::Instruction::Xor: result.parts[part] = builder.CreateXor(lhs.parts[part], rhs.parts[part]); break;
+        // Pseudo-random choice based on pointer value to avoid adding SplitContext here
+        uint32_t choice = generator->DrawRange(0u, 2u);
+        switch (instruction->getOpcode())
+        {
+            case llvm::Instruction::And:
+            {
+                if (generator->DrawRange(1u, 100u) > splitContext.attributes->variableSplittingMBAProbability)
+                {
+                    // No mba
+                    result.parts[part] = builder.CreateAnd(lhs.parts[part], rhs.parts[part]); break;
+                    continue;
+                }
+
+                // MBA
+                if (choice == 0) // a & b = (a | b) - (a ^ b)
+                    result.parts[part] = builder.CreateSub(builder.CreateOr(lhs.parts[part], rhs.parts[part]), builder.CreateXor(lhs.parts[part], rhs.parts[part]));
+                else if (choice == 1) // a & b = ~(~a | ~b)
+                    result.parts[part] = builder.CreateNot(builder.CreateOr(builder.CreateNot(lhs.parts[part]), builder.CreateNot(rhs.parts[part])));
+                else 
+                    result.parts[part] = builder.CreateAnd(lhs.parts[part], rhs.parts[part]);
+                break;
+            }
+            case llvm::Instruction::Or:
+            {
+                if (generator->DrawRange(1u, 100u) > splitContext.attributes->variableSplittingMBAProbability)
+                {
+                    // No mba
+                    result.parts[part] = builder.CreateOr(lhs.parts[part], rhs.parts[part]); break;
+                    continue;
+                }
+
+                // MBA
+                if (choice == 0) // a | b = (a & b) + (a ^ b)
+                    result.parts[part] = builder.CreateAdd(builder.CreateAnd(lhs.parts[part], rhs.parts[part]), builder.CreateXor(lhs.parts[part], rhs.parts[part]));
+                else if (choice == 1) // a | b = ~(~a & ~b)
+                    result.parts[part] = builder.CreateNot(builder.CreateAnd(builder.CreateNot(lhs.parts[part]), builder.CreateNot(rhs.parts[part])));
+                else
+                    result.parts[part] = builder.CreateOr (lhs.parts[part], rhs.parts[part]);
+                break;
+            }
+            case llvm::Instruction::Xor:
+            {
+                if (generator->DrawRange(1u, 100u) > splitContext.attributes->variableSplittingMBAProbability)
+                {
+                    // No mba
+                    result.parts[part] = builder.CreateXor(lhs.parts[part], rhs.parts[part]); break;
+                    continue;
+                }
+
+                // MBA
+                if (choice == 0) // a ^ b = (a | b) - (a & b)
+                    result.parts[part] = builder.CreateSub(builder.CreateOr(lhs.parts[part], rhs.parts[part]), builder.CreateAnd(lhs.parts[part], rhs.parts[part]));
+                else if (choice == 1) // a ^ b = (a & ~b) | (~a & b)
+                    result.parts[part] = builder.CreateOr(builder.CreateAnd(lhs.parts[part], builder.CreateNot(rhs.parts[part])), builder.CreateAnd(builder.CreateNot(lhs.parts[part]), rhs.parts[part]));
+                else
+                    result.parts[part] = builder.CreateXor(lhs.parts[part], rhs.parts[part]);
+                break;
+            }
             default: return false;
         }
     }
+    m_Logger.LogInstruction(*instruction, "Replaced Bitwise instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' with " + std::to_string(lhs.parts.size()) + " split bitwise operations", 1);
+    m_Stats.replacedBitwise++;
     splitContext.partsMap[instruction] = std::move(result);
     splitContext.toErase.push_back(instruction);
     return true;
@@ -533,34 +697,82 @@ bool LeetObfuscator::VariableSplittingPass::TryRewriteIcmpEq(llvm::Instruction* 
     auto* icmp = llvm::cast<llvm::ICmpInst>(instruction);
     if (icmp->getPredicate() != llvm::CmpInst::ICMP_EQ &&
         icmp->getPredicate() != llvm::CmpInst::ICMP_NE)
+    {
+        // Don't log this one, too noisy for all non-eq/ne icmps
         return false;
+    }
 
     if (!IsValueSplit(instruction->getOperand(0), splitContext) && !IsValueSplit(instruction->getOperand(1), splitContext))
     {
         std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(*splitContext.attributes);
         if (generator->DrawRange(1u, 100u) > splitContext.attributes->variableSplittingProbability)
         {
+            m_Logger.LogInstruction(*instruction, "Couldn't replace ICmp instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because probability check failed", 1);
             return false;
         }
     }
 
     llvm::IRBuilder<> builder(instruction);
     PartsInfo lhs, rhs;
-    if (!GetOperandAsParts(builder, instruction->getOperand(0), splitContext, lhs)) return false;
-    if (!GetOperandAsParts(builder, instruction->getOperand(1), splitContext, rhs)) return false;
+    if (!GetOperandAsParts(builder, instruction->getOperand(0), splitContext, lhs))
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace ICmp instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because LHS could not be split", 1);
+        return false;
+    }
+    if (!GetOperandAsParts(builder, instruction->getOperand(1), splitContext, rhs))
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace ICmp instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because RHS could not be split", 1);
+        return false;
+    }
 
     AlignPartsToCommonSize(builder, lhs, rhs);
     if (lhs.parts.size() != rhs.parts.size())
+    {
+        m_Logger.LogInstruction(*instruction, "Couldn't replace ICmp instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' because parts could not be aligned", 1);
         return false; // couldn't line the two operands up cleanly, fall back to the plain merge path
+    }
 
     llvm::Value* allEq = nullptr;
-    for (size_t part = 0; part < lhs.parts.size(); part++)
+    std::vector<size_t> indices(lhs.parts.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(*splitContext.attributes);
+    generator->Shuffle(indices.begin(), indices.end());
+
+    for (size_t part : indices)
     {
-        llvm::Value* eq = builder.CreateICmpEQ(lhs.parts[part], rhs.parts[part]);
-        allEq = allEq ? builder.CreateAnd(allEq, eq) : eq;
+        uint32_t choice = generator->DrawRange(0u, 2u);
+        llvm::Value* eq;
+        if (choice == 0)
+        {
+            eq = builder.CreateICmpEQ(lhs.parts[part], rhs.parts[part]);
+        }
+        else if (choice == 1)
+        {
+            eq = builder.CreateNot(builder.CreateICmpNE(lhs.parts[part], rhs.parts[part]));
+        }
+        else
+        {
+            llvm::Value* xorVal = builder.CreateXor(lhs.parts[part], rhs.parts[part]);
+            eq = builder.CreateICmpEQ(xorVal, llvm::ConstantInt::get(xorVal->getType(), 0));
+        }
+        
+        if (allEq)
+        {
+            uint32_t mergeChoice = generator->DrawRange(0u, 1u);
+            if (mergeChoice == 0)
+                allEq = builder.CreateAnd(allEq, eq);
+            else
+                allEq = builder.CreateNot(builder.CreateOr(builder.CreateNot(allEq), builder.CreateNot(eq)));
+        }
+        else
+        {
+            allEq = eq;
+        }
     }
     llvm::Value* result = icmp->getPredicate() == llvm::CmpInst::ICMP_EQ ? allEq : builder.CreateNot(allEq);
 
+    m_Logger.LogInstruction(*instruction, "Replaced ICmp instruction" + std::string(" in function '") + instruction->getFunction()->getName().str() + "' with " + std::to_string(lhs.parts.size()) + " split ICmps", 1);
+    m_Stats.replacedICmps++;
     instruction->replaceAllUsesWith(result);
     splitContext.toErase.push_back(instruction);
     return true;

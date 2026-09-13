@@ -35,14 +35,13 @@ namespace LeetObfuscator
         void ObfuscateFunction(llvm::Function* function);
         bool IsAllocaSplittable(llvm::AllocaInst* allocaInstruciton);
         void SplitAlloca(llvm::AllocaInst* allocaInstruction, llvm::IntegerType* intType, uint64_t byteSize, uint32_t pieceByteSize, SplitContext& splitContext);
-        llvm::Value* MergeParts(llvm::IRBuilder<>& builder, const PartsInfo& parts, llvm::IntegerType* type);
+        llvm::Value* MergeParts(llvm::IRBuilder<>& builder, const PartsInfo& parts, llvm::IntegerType* type, std::shared_ptr<RandomNumberGenerator> generator);
         std::vector<llvm::Value*> SplitValue(llvm::IRBuilder<>& builder, llvm::Value* value, uint32_t pieceByteSize);
         bool GetOperandAsParts(llvm::IRBuilder<>& builder, llvm::Value* operand, SplitContext& splitContext, PartsInfo& outParts);
         void RewriteInstruction(llvm::Instruction* instruction, SplitContext& splitContext);
         void MaterializePhiOperands(llvm::PHINode* phi, SplitContext& splitContext);
         bool IsValueSplit(llvm::Value* value, const LeetObfuscator::VariableSplittingPass::SplitContext& splitContext);
 
-        // Splitting-granularity / probability helpers
         uint32_t ComputePartByteSize(uint64_t totalByteSize, uint32_t splitCount);
         void AlignPartsToCommonSize(llvm::IRBuilder<>& builder, PartsInfo& lhs, PartsInfo& rhs);
 
@@ -53,5 +52,15 @@ namespace LeetObfuscator
 
         SettingsParser::PassArguments m_Arguments;
         Logger m_Logger;
+
+        struct Stats
+        {
+            uint32_t replacedAllocas = 0;
+            uint32_t replacedAdds = 0;
+            uint32_t replacedSubs = 0;
+            uint32_t replacedBitwise = 0;
+            uint32_t replacedICmps = 0;
+        } m_Stats;
+
     };
 }

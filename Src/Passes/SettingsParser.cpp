@@ -111,7 +111,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> stringEncryptionOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"probability", UnsignedOption(&FA::stringEncryptionProbability, 100u)},
         {"inlineProbability", UnsignedOption(&FA::stringDecryptInlineProbability, 100u)},
@@ -119,7 +119,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> mbaOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
         {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
@@ -131,7 +131,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> blockSplitterOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"probability", UnsignedOption(&FA::blockSplitterProbability, 100u)},
         {"blockSplitSize", UnsignedOption(&FA::blockSplitSize)},
@@ -139,7 +139,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> dispatcherOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
@@ -148,7 +148,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> antiAnalysisOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
         {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
@@ -168,7 +168,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> aambaOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"minBlockSize", UnsignedOption(&FunctionAttributes::minBlockSize)},
         {"maxBlockSize", UnsignedOption(&FunctionAttributes::maxBlockSize)},
@@ -179,7 +179,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> antiAliasingOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
@@ -188,7 +188,7 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> nanomitesOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
@@ -198,12 +198,13 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
     static const std::vector<Option> variableSplittingOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
         {"skip", BoolOption(&FA::skip)},
-        {"forcePass", BoolOption(&FA::skip)},
+        {"forcePass", BoolOption(&FA::force)},
         {"runtimeSeed", UnsignedOption(&FA::runtimeSeed)},
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"probability", UnsignedOption(&FA::variableSplittingProbability, 100u)},
         {"splitCount", UnsignedOption(&FA::variableSplittingCount, 100u)},
+        {"MBAProbability", UnsignedOption(&FA::variableSplittingMBAProbability, 100u)},
     };
     static const std::vector<Option> noOptions;
 
@@ -224,6 +225,9 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
 
 bool LeetObfuscator::SettingsParser::ShouldSkipFunction(llvm::Function *function, const FunctionAttributes& attributes)
 {
+    if (attributes.force)
+        return false;
+    
     size_t instructionCount = std::distance(llvm::inst_begin(function), llvm::inst_end(function));
     if (instructionCount == 0 ||
         (attributes.maxFunctionSize != 0 && instructionCount > attributes.maxFunctionSize) ||

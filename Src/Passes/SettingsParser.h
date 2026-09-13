@@ -51,6 +51,8 @@ namespace LeetObfuscator
         struct FunctionAttributes
         {
             bool skip = false;
+            bool force = false;
+            
             uint64_t runtimeSeed = 0;
             uint64_t minFunctionSize = 0;
             uint64_t maxFunctionSize = 0;
@@ -86,6 +88,7 @@ namespace LeetObfuscator
             uint32_t nanomitesTrampolineProbability = 50;
             uint32_t variableSplittingProbability = 100;
             uint32_t variableSplittingCount = 2;
+            uint32_t variableSplittingMBAProbability = 100;
         };
 
         static FunctionAttributes ParseFunctionAttributes(llvm::Function& function, PassType passType, const PassArguments& passArguments);
