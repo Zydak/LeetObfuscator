@@ -16,7 +16,7 @@ namespace LeetObfuscator
         llvm::PreservedAnalyses run(llvm::Module& module, llvm::ModuleAnalysisManager& mam);
 
     private:
-        void CreateDispatcherInAFunction(llvm::Function* function, llvm::ModuleAnalysisManager& mam);
+        void CreateDispatcherInAFunction(llvm::Function* function);
         SettingsParser::PassArguments m_Arguments;
         Logger m_Logger;
     };

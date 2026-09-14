@@ -78,6 +78,9 @@ namespace LeetObfuscator
             uint32_t antiAnalysisPIDRatio = 1;
             uint32_t antiAnalysisBlackListRatio = 1;
             bool antiAnalysisOnlyEntryBlock = false;
+            bool antiAnalysisDelayedPoisoning = true;
+            uint32_t antiAnalysisPoisonProbability = 50;
+            uint32_t antiAnalysisLocalPoisonProbability = 50;
 
             uint32_t antiAliasingProbability = 100;
 

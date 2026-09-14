@@ -164,6 +164,9 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"pidRatio", UnsignedOption(&FunctionAttributes::antiAnalysisPIDRatio)},
         {"blackListRatio", UnsignedOption(&FunctionAttributes::antiAnalysisBlackListRatio)},
         {"onlyEntryBlock", BoolOption(&FunctionAttributes::antiAnalysisOnlyEntryBlock)},
+        {"delayedPoisoning", BoolOption(&FunctionAttributes::antiAnalysisDelayedPoisoning)},
+        {"poisonProbability", UnsignedOption(&FunctionAttributes::antiAnalysisPoisonProbability, 100u)},
+        {"localPoisonProbability", UnsignedOption(&FunctionAttributes::antiAnalysisLocalPoisonProbability, 100u)},
     };
     static const std::vector<Option> aambaOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},

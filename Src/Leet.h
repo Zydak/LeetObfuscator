@@ -107,6 +107,16 @@ struct NanomiteEntry { uint32_t nanomiteId; void* functionAddress; };
 struct TableChunk { const NanomiteEntry* entries; uint32_t count; TableChunk* next; };
 
 extern "C" TableChunk* __nanomite_chunk_head = nullptr;
+extern "C" uint64_t __leet_poison_ring[8] = {
+    0x1020304050607080ULL,
+    0x2030405060708090ULL,
+    0x30405060708090A0ULL,
+    0x405060708090A0B0ULL,
+    0x5060708090A0B0C0ULL,
+    0x60708090A0B0C0D0ULL,
+    0x708090A0B0C0D0E0ULL,
+    0x1020304050607080ULL ^ 0x2030405060708090ULL ^ 0x30405060708090A0ULL ^ 0x405060708090A0B0ULL ^ 0x5060708090A0B0C0ULL ^ 0x60708090A0B0C0D0ULL ^ 0x708090A0B0C0D0E0ULL
+};
 
 #if defined(_WIN32)
 using leet_ctx_t = PCONTEXT;
@@ -154,7 +164,9 @@ LEET_ANTI_ANALYSIS_PID_RATIO(0)
 extern "C" inline void* __leet_exception_resolve_address(uint32_t nanomiteId)
 {
     using namespace LeetObfuscator;
-    const uint32_t searchKey = nanomiteId ^ kNanomiteTableMask;
+    const uint64_t ringSum = __leet_poison_ring[0] ^ __leet_poison_ring[1] ^ __leet_poison_ring[2] ^ __leet_poison_ring[3] ^
+                             __leet_poison_ring[4] ^ __leet_poison_ring[5] ^ __leet_poison_ring[6] ^ __leet_poison_ring[7];
+    const uint32_t searchKey = nanomiteId ^ (kNanomiteTableMask ^ (uint32_t)ringSum);
 
     for (TableChunk* c = __nanomite_chunk_head; c; c = c->next)
     {

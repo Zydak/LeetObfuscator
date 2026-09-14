@@ -1,6 +1,7 @@
 #pragma once
 
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/IRBuilder.h"
 #include "SettingsParser.h"
 #include "Logger.h"
 #include "llvm/IR/BasicBlock.h"
@@ -35,10 +36,22 @@ namespace LeetObfuscator
                 std::unique_ptr<llvm::Module> module = nullptr;
             };
 
+            struct DominatingPair
+            {
+                llvm::Value* first = nullptr;
+                llvm::Value* second = nullptr;
+            };
+
+            static llvm::GlobalVariable* GetOrEmitPoisonRingGlobal(llvm::Module& module, std::shared_ptr<RandomNumberGenerator> generator);
+            static void EmitRingStatePoisoning(llvm::IRBuilder<>& builder, llvm::Module& module, llvm::Value* detectedCondition, std::shared_ptr<RandomNumberGenerator> generator);
+            static bool EmitLocalStatePoisoning(llvm::IRBuilder<>& builder, llvm::BasicBlock* block, llvm::BasicBlock* newSplitBlock, llvm::Value* detectedCondition, DominatingPair inputPair, std::shared_ptr<RandomNumberGenerator> generator);
+            static llvm::Value* GenerateNonLinear2DMbaPredicate(llvm::IRBuilder<>& builder, llvm::Value* x, llvm::Value* y, std::shared_ptr<RandomNumberGenerator> generator);
+            static DominatingPair FindUsableInputPair(llvm::BasicBlock* block, llvm::BasicBlock::iterator insertIt, std::shared_ptr<RandomNumberGenerator> generator);
+
             static llvm::BasicBlock* CreateInvalidBogusBlock(llvm::Function* function, std::shared_ptr<RandomNumberGenerator> generator);
-            static llvm::BasicBlock* ChainBogusIntoBlock(llvm::BasicBlock* block, llvm::BasicBlock* bogusBlock, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator);
-            static llvm::BasicBlock* ChainBogusIntoBlockRdtsc(llvm::BasicBlock* block, llvm::BasicBlock* bogusBlock, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator);
-            static llvm::BasicBlock* ChainBogusIntoBlockAntiDebug(llvm::BasicBlock* block, llvm::BasicBlock* bogusBlock, AntiDebugType antiDebugType, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator, EmittedTemplate& templates);
+            static llvm::BasicBlock* ChainBogusIntoBlock(llvm::BasicBlock* block, llvm::BasicBlock* bogusBlock, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator, const SettingsParser::FunctionAttributes& attributes);
+            static llvm::BasicBlock* ChainBogusIntoBlockRdtsc(llvm::BasicBlock* block, llvm::BasicBlock* bogusBlock, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator, const SettingsParser::FunctionAttributes& attributes);
+            static llvm::BasicBlock* ChainBogusIntoBlockAntiDebug(llvm::BasicBlock* block, llvm::BasicBlock* bogusBlock, AntiDebugType antiDebugType, bool randomPos, std::shared_ptr<RandomNumberGenerator> generator, EmittedTemplate& templates, const SettingsParser::FunctionAttributes& attributes);
         private:
 
             void ObfuscateFunction(llvm::Function& function, EmittedTemplate& templates);
@@ -46,7 +59,6 @@ namespace LeetObfuscator
             bool LinkTemplateModule(llvm::Module& module, EmittedTemplate& templates);
             std::string ComputeUniqueModuleTag(llvm::Module& module);
             
-            static llvm::Value* FindUsableInput(llvm::DominatorTree& DT, llvm::BasicBlock* block, llvm::BasicBlock::iterator insertIt);
             static int RankValue(llvm::Value* value);
             static bool IsSafeToTimeAcross(llvm::Instruction &I);
             SettingsParser::PassArguments m_Arguments;

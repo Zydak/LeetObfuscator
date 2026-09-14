@@ -305,10 +305,48 @@ llvm::Function *LeetObfuscator::StringEncryptionPass::GetDecryptFunction(llvm::M
             }
         }
     }
+    llvm::GlobalVariable* ringVar = module.getGlobalVariable("__leet_poison_ring");
+    if (!ringVar)
+    {
+        llvm::ArrayType* ringType = llvm::ArrayType::get(llvm::Type::getInt64Ty(module.getContext()), 8);
+        std::vector<llvm::Constant*> initialValues;
+        uint64_t cumulativeXor = 0;
+        for (uint32_t i = 0; i < 7; i++)
+        {
+            uint64_t val = 0x1337C0DE00000000ULL | ((uint64_t)i * 0x10001ULL);
+            initialValues.push_back(llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), val));
+            cumulativeXor ^= val;
+        }
+        initialValues.push_back(llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), cumulativeXor));
+        llvm::Constant* ringInitializer = llvm::ConstantArray::get(ringType, initialValues);
+
+        ringVar = new llvm::GlobalVariable(
+            module,
+            ringType,
+            false,
+            llvm::GlobalValue::WeakAnyLinkage,
+            ringInitializer,
+            "__leet_poison_ring"
+        );
+    }
+
     for (auto* callInst : callsToReplace)
     {
         llvm::IRBuilder<> builder(callInst);
-        callInst->replaceAllUsesWith(builder.getInt32(key));
+        llvm::Value* ringXorSum = builder.getInt64(0);
+        for (uint32_t i = 0; i < 8; i++)
+        {
+            llvm::Value* slotPtr = builder.CreateInBoundsGEP(
+                ringVar->getValueType(),
+                ringVar,
+                { builder.getInt32(0), builder.getInt32(i) }
+            );
+            llvm::Value* slotVal = builder.CreateLoad(builder.getInt64Ty(), slotPtr);
+            ringXorSum = builder.CreateXor(ringXorSum, slotVal);
+        }
+        llvm::Value* poison32 = builder.CreateTrunc(ringXorSum, builder.getInt32Ty());
+        llvm::Value* effectiveKey = builder.CreateXor(builder.getInt32(key), poison32);
+        callInst->replaceAllUsesWith(effectiveKey);
         callInst->eraseFromParent();
     }
 

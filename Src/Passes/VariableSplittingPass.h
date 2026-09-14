@@ -26,6 +26,7 @@ namespace LeetObfuscator
         struct SplitContext
         {
             std::unordered_map<llvm::Instruction*, PartsInfo> partsMap;
+            std::unordered_map<llvm::Instruction*, llvm::Value*> mergedMap;
             std::vector<llvm::Instruction*> toErase;
             SettingsParser::FunctionAttributes* attributes;
         };
@@ -36,6 +37,7 @@ namespace LeetObfuscator
         bool IsAllocaSplittable(llvm::AllocaInst* allocaInstruciton);
         void SplitAlloca(llvm::AllocaInst* allocaInstruction, llvm::IntegerType* intType, uint64_t byteSize, uint32_t pieceByteSize, SplitContext& splitContext);
         llvm::Value* MergeParts(llvm::IRBuilder<>& builder, const PartsInfo& parts, llvm::IntegerType* type, std::shared_ptr<RandomNumberGenerator> generator);
+        llvm::Value* GetMergedValue(llvm::Instruction* instruction, llvm::IntegerType* type, SplitContext& splitContext);
         std::vector<llvm::Value*> SplitValue(llvm::IRBuilder<>& builder, llvm::Value* value, uint32_t pieceByteSize);
         bool GetOperandAsParts(llvm::IRBuilder<>& builder, llvm::Value* operand, SplitContext& splitContext, PartsInfo& outParts);
         void RewriteInstruction(llvm::Instruction* instruction, SplitContext& splitContext);

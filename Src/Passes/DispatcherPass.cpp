@@ -3,7 +3,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
-#include "llvm/Transforms/Scalar/Reg2Mem.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/IR/Verifier.h"
 #include <algorithm>
 #include <random>
@@ -39,6 +39,126 @@ void RemoveLifetimeIntrinsics(llvm::Function* function)
     }
     for (auto* call : lifetimeCalls)
         call->eraseFromParent();
+}
+
+void DemoteCrossBlockInstructions(llvm::Function* function)
+{
+    llvm::BasicBlock& entryBlock = function->getEntryBlock();
+    llvm::BasicBlock::iterator allocaInsertionPoint = entryBlock.begin();
+    const llvm::DataLayout& dataLayout = function->getParent()->getDataLayout();
+
+    std::vector<llvm::PHINode*> phiNodes;
+    for (llvm::BasicBlock& basicBlock : *function)
+    {
+        for (llvm::PHINode& phiNode : basicBlock.phis())
+        {
+            phiNodes.push_back(&phiNode);
+        }
+    }
+    for (llvm::PHINode* phiNode : phiNodes)
+    {
+        llvm::DemotePHIToStack(phiNode, allocaInsertionPoint);
+    }
+
+    std::vector<llvm::Instruction*> crossBlockInstructions;
+    for (llvm::BasicBlock& basicBlock : *function)
+    {
+        for (llvm::Instruction& instruction : basicBlock)
+        {
+            if (llvm::isa<llvm::AllocaInst>(&instruction))
+                continue;
+
+            if (!instruction.getType()->isSized())
+                continue;
+
+            bool escapes = false;
+            for (llvm::User* user : instruction.users())
+            {
+                if (llvm::Instruction* userInstruction = llvm::dyn_cast<llvm::Instruction>(user))
+                {
+                    if (userInstruction->getParent() != &basicBlock)
+                    {
+                        escapes = true;
+                        break;
+                    }
+                }
+            }
+
+            if (escapes)
+            {
+                crossBlockInstructions.push_back(&instruction);
+            }
+        }
+    }
+
+    for (llvm::Instruction* instruction : crossBlockInstructions)
+    {
+        llvm::BasicBlock* parentBlock = instruction->getParent();
+        llvm::AllocaInst* stackSlot = new llvm::AllocaInst(
+            instruction->getType(),
+            dataLayout.getAllocaAddrSpace(),
+            nullptr,
+            instruction->getName() + ".cross_block",
+            allocaInsertionPoint
+        );
+
+        if (!instruction->isTerminator())
+        {
+            llvm::BasicBlock::iterator insertionPoint = ++instruction->getIterator();
+            while (insertionPoint != parentBlock->end() && (llvm::isa<llvm::PHINode>(insertionPoint) || insertionPoint->isEHPad()))
+            {
+                insertionPoint++;
+            }
+            if (insertionPoint != parentBlock->end() && llvm::isa<llvm::CatchSwitchInst>(insertionPoint))
+            {
+                for (llvm::BasicBlock* handler : llvm::successors(&*insertionPoint))
+                {
+                    new llvm::StoreInst(instruction, stackSlot, handler->getFirstInsertionPt());
+                }
+            }
+            else
+            {
+                new llvm::StoreInst(instruction, stackSlot, insertionPoint);
+            }
+        }
+        else if (llvm::InvokeInst* invokeInstruction = llvm::dyn_cast<llvm::InvokeInst>(instruction))
+        {
+            new llvm::StoreInst(instruction, stackSlot, invokeInstruction->getNormalDest()->getFirstInsertionPt());
+        }
+        else if (llvm::CallBrInst* callBrInstruction = llvm::dyn_cast<llvm::CallBrInst>(instruction))
+        {
+            for (llvm::BasicBlock* successor : llvm::successors(callBrInstruction))
+            {
+                new llvm::StoreInst(callBrInstruction, stackSlot, successor->getFirstInsertionPt());
+            }
+        }
+
+        std::vector<std::pair<llvm::Instruction*, unsigned>> usesToReplace;
+        for (llvm::Use& use : instruction->uses())
+        {
+            if (llvm::Instruction* userInstruction = llvm::dyn_cast<llvm::Instruction>(use.getUser()))
+            {
+                if (userInstruction->getParent() != parentBlock)
+                {
+                    usesToReplace.push_back({userInstruction, use.getOperandNo()});
+                }
+            }
+        }
+
+        for (auto& pair : usesToReplace)
+        {
+            llvm::Instruction* userInstruction = pair.first;
+            unsigned operandIndex = pair.second;
+            llvm::LoadInst* reloadInstruction = new llvm::LoadInst(
+                instruction->getType(),
+                stackSlot,
+                instruction->getName() + ".reload",
+                false,
+                userInstruction->getIterator()
+            );
+            userInstruction->setOperand(operandIndex, reloadInstruction);
+        }
+    }
 }
 
 llvm::Function* CreateBarrierFunction(llvm::Module* module, llvm::LLVMContext& context, llvm::FunctionType* barrierFnType, const char* name)
@@ -249,7 +369,7 @@ llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module
     
     for (auto& function : functions)
     {
-        CreateDispatcherInAFunction(function, mam);
+        CreateDispatcherInAFunction(function);
     }
 
     return llvm::PreservedAnalyses::none();
@@ -272,7 +392,7 @@ void HoistAllocasToEntryBlock(llvm::Function* function)
         alloca->moveBefore(insertPt);
 }
 
-void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function *function, llvm::ModuleAnalysisManager &mam)
+void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function *function)
 {
     // Skip functions with exception handling
     if (function->hasPersonalityFn())
@@ -326,18 +446,12 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
 
     // Lifetime intrinsics require their pointer operand to trace directly to an
     // alloca. Once we demote across the dispatcher's shuffled blocks, that
-    // breaks since the RegToMem pass spills the alloca pointer itself into another
+    // breaks since the DemoteCrossBlockInstructions spills the alloca pointer itself into another
     // slot. And since it's an llvm instrisic used only for optimization, just purge
     // them from existence
     RemoveLifetimeIntrinsics(function);
 
-    // The code will technically be valid but the verifier will still complain about uses before initialization
-    // so demote everything to stack first. You could call MemToRegPass after everything is done but it will
-    // generate insane amount of instructions because blocks will be jumping between demoting to stack and promoting
-    // to registers on every entry, if you have a lot of blocks it's just bloat that doesn't do anything. So I just
-    // do RegToMem without promoting it back afterwards
-    auto &fam = mam.getResult<llvm::FunctionAnalysisManagerModuleProxy>(*module).getManager();
-    llvm::RegToMemPass().run(*function, fam);
+    DemoteCrossBlockInstructions(function);
 
     HoistAllocasToEntryBlock(function);
 
