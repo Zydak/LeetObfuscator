@@ -1,21 +1,18 @@
 #include "DispatcherPass.h"
 
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/IR/Verifier.h"
 #include <algorithm>
-#include <random>
+#include <iterator>
 #include "SettingsParser.h"
-#include "llvm/IR/NoFolder.h"
 #include "RandomNumberGenerator.h"
 
-#include <iostream>
-
-#include "llvm/IR/IntrinsicsX86.h"
-
-#include "PermutationHelper.h"
+#include "llvm/IR/InlineAsm.h"
 
 void RemoveLifetimeIntrinsics(llvm::Function* function)
 {
@@ -161,61 +158,68 @@ void DemoteCrossBlockInstructions(llvm::Function* function)
     }
 }
 
-llvm::Function* CreateBarrierFunction(llvm::Module* module, llvm::LLVMContext& context, llvm::FunctionType* barrierFnType, const char* name)
+void RewriteTerminatorToDispatcher(
+    llvm::Instruction* terminator,
+    llvm::Value* nextIndex,
+    llvm::AllocaInst* dispatcherState,
+    llvm::GlobalVariable* jumpTable,
+    uint32_t dispatcherIndex,
+    llvm::BasicBlock* dispatcherBlock
+)
 {
-    llvm::Function* barrierFn = llvm::Function::Create(barrierFnType, llvm::GlobalValue::InternalLinkage, name, module);
-    barrierFn->addFnAttr(llvm::Attribute::NoDuplicate);
-    barrierFn->addFnAttr(llvm::Attribute::Convergent);
-    barrierFn->addFnAttr(llvm::Attribute::NoInline);
-    barrierFn->addFnAttr(llvm::Attribute::OptimizeNone);
-
-    llvm::BasicBlock* barrierBlock = llvm::BasicBlock::Create(context, "__leet_dispatcher_barrier", barrierFn);
-    llvm::IRBuilder<> barrierBuilder(barrierBlock);
-    barrierBuilder.CreateRetVoid();
-
-    return barrierFn;
-}
-
-void RewriteTerminatorToDispatcher(llvm::Instruction* terminator, llvm::Value* nextIndex, llvm::AllocaInst* dispatcherState, llvm::ArrayType* jumpTableType, llvm::AllocaInst* jumpTable, llvm::Value* dispatcherBlockIndex, llvm::BasicBlock* dispatcherBlock, llvm::LLVMContext& context, llvm::Module* module, llvm::FunctionType* barrierFnType)
-{
-    llvm::Function* barrierFnBlock = CreateBarrierFunction(module, context, barrierFnType, "__leet_dispatcher_barrier");
-
     llvm::IRBuilder<> terminatorBuilder(terminator);
     terminatorBuilder.CreateStore(nextIndex, dispatcherState, true);
 
-    llvm::Value* dispatcherBlockGEP = terminatorBuilder.CreateInBoundsGEP(
-        jumpTableType,
-        jumpTable,
-        {terminatorBuilder.getInt32(0), dispatcherBlockIndex}
+    llvm::InlineAsm* asmBarrier = llvm::InlineAsm::get(
+        llvm::FunctionType::get(terminatorBuilder.getVoidTy(), false),
+        "",
+        "~{memory}",
+        true
     );
-    llvm::Value* dispatcherBlockAddress = terminatorBuilder.CreateLoad(terminatorBuilder.getPtrTy(), dispatcherBlockGEP, true);
 
-    terminatorBuilder.CreateCall(barrierFnBlock);
-    llvm::IndirectBrInst* indirectBr = terminatorBuilder.CreateIndirectBr(dispatcherBlockAddress, 1);
-    indirectBr->addDestination(dispatcherBlock);
+    terminatorBuilder.CreateCall(asmBarrier);
+
+    llvm::Type* intPtrType = jumpTable->getParent()->getDataLayout().getIntPtrType(jumpTable->getContext());
+    llvm::Value* dispatcherOffsetGEP = terminatorBuilder.CreateInBoundsGEP(
+        jumpTable->getValueType(),
+        jumpTable,
+        {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(dispatcherIndex)}
+    );
+    llvm::Value* dispatcherOffset32 = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), dispatcherOffsetGEP, true);
+    llvm::Value* dispatcherOffset = terminatorBuilder.CreateSExt(dispatcherOffset32, intPtrType);
+    llvm::Value* tableAddress = terminatorBuilder.CreatePtrToInt(jumpTable, intPtrType);
+    llvm::Value* dispatcherAddressInt = terminatorBuilder.CreateAdd(tableAddress, dispatcherOffset);
+    llvm::Value* dispatcherAddress = terminatorBuilder.CreateIntToPtr(dispatcherAddressInt, terminatorBuilder.getPtrTy());
+
+    llvm::IndirectBrInst* indirectBranchInstruction = terminatorBuilder.CreateIndirectBr(dispatcherAddress, 1);
+    indirectBranchInstruction->addDestination(dispatcherBlock);
 
     terminator->eraseFromParent();
 }
 
-void RewriteBranchTerminator(llvm::BranchInst* branch, std::vector<llvm::BasicBlock*>& basicBlocks, llvm::ArrayType* permutationTableType, llvm::AllocaInst* permutationTable, llvm::AllocaInst* dispatcherState, llvm::ArrayType* jumpTableType, llvm::AllocaInst* jumpTable, llvm::Value* dispatcherBlockIndex, llvm::BasicBlock* dispatcherBlock, llvm::LLVMContext& context, llvm::Module* module, llvm::FunctionType* barrierFnType)
+void RewriteBranchTerminator(
+    llvm::BranchInst* branch,
+    std::vector<llvm::BasicBlock*>& basicBlocks,
+    llvm::AllocaInst* dispatcherState,
+    llvm::GlobalVariable* jumpTable,
+    uint32_t dispatcherIndex,
+    llvm::BasicBlock* dispatcherBlock
+)
 {
     if (branch->isUnconditional())
     {
         llvm::BasicBlock* successor = branch->getSuccessor(0);
         auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
         if (it == basicBlocks.end())
+        {
             return;
+        }
 
         llvm::IRBuilder<> terminatorBuilder(branch);
-        uint32_t compileTimeIndex = it - basicBlocks.begin();
-        llvm::Value* realIndexGEP = terminatorBuilder.CreateInBoundsGEP(
-            permutationTableType,
-            permutationTable,
-            {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndex)}
-        );
-        llvm::Value* realIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), realIndexGEP);
+        uint32_t compileTimeIndex = (uint32_t)std::distance(basicBlocks.begin(), it);
+        llvm::Value* nextIndex = terminatorBuilder.getInt32(compileTimeIndex);
 
-        RewriteTerminatorToDispatcher(branch, realIndex, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+        RewriteTerminatorToDispatcher(branch, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
     }
     else if (branch->isConditional())
     {
@@ -224,92 +228,87 @@ void RewriteBranchTerminator(llvm::BranchInst* branch, std::vector<llvm::BasicBl
         auto itTrue = std::find(basicBlocks.begin(), basicBlocks.end(), trueSuccessor);
         auto itFalse = std::find(basicBlocks.begin(), basicBlocks.end(), falseSuccessor);
         if (itTrue == basicBlocks.end() || itFalse == basicBlocks.end())
+        {
             return;
+        }
 
         llvm::IRBuilder<> terminatorBuilder(branch);
-        uint32_t compileTimeIndexTrue = itTrue - basicBlocks.begin();
-        llvm::Value* realIndexTrueGEP = terminatorBuilder.CreateInBoundsGEP(
-            permutationTableType,
-            permutationTable,
-            {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndexTrue)}
-        );
-        llvm::Value* realIndexTrue = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), realIndexTrueGEP);
-        uint32_t compileTimeIndexFalse = itFalse - basicBlocks.begin();
-        llvm::Value* realIndexFalseGEP = terminatorBuilder.CreateInBoundsGEP(
-            permutationTableType,
-            permutationTable,
-            {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndexFalse)}
-        );
-        llvm::Value* realIndexFalse = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), realIndexFalseGEP);
+        uint32_t compileTimeIndexTrue = (uint32_t)std::distance(basicBlocks.begin(), itTrue);
+        uint32_t compileTimeIndexFalse = (uint32_t)std::distance(basicBlocks.begin(), itFalse);
 
         llvm::Value* nextIndex = terminatorBuilder.CreateSelect(
             branch->getCondition(),
-            realIndexTrue,
-            realIndexFalse
+            terminatorBuilder.getInt32(compileTimeIndexTrue),
+            terminatorBuilder.getInt32(compileTimeIndexFalse)
         );
 
-        RewriteTerminatorToDispatcher(branch, nextIndex, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+        RewriteTerminatorToDispatcher(branch, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
     }
 }
 
-void RewriteSwitchTerminator(llvm::SwitchInst* switchInst, std::vector<llvm::BasicBlock*>& basicBlocks, llvm::ArrayType* permutationTableType, llvm::AllocaInst* permutationTable, llvm::AllocaInst* dispatcherState, llvm::ArrayType* jumpTableType, llvm::AllocaInst* jumpTable, llvm::Value* dispatcherBlockIndex, llvm::BasicBlock* dispatcherBlock, llvm::LLVMContext& context, llvm::Module* module, llvm::FunctionType* barrierFnType)
+void RewriteSwitchTerminator(
+    llvm::SwitchInst* switchInstruction,
+    std::vector<llvm::BasicBlock*>& basicBlocks,
+    llvm::AllocaInst* dispatcherState,
+    llvm::GlobalVariable* jumpTable,
+    uint32_t dispatcherIndex,
+    llvm::BasicBlock* dispatcherBlock
+)
 {
-    llvm::BasicBlock* defaultDest = switchInst->getDefaultDest();
-    auto defaultIt = std::find(basicBlocks.begin(), basicBlocks.end(), defaultDest);
-    if (defaultIt == basicBlocks.end())
-        return;
-
-    llvm::IRBuilder<> terminatorBuilder(switchInst);
-    uint32_t compileTimeIndex = defaultIt - basicBlocks.begin();
-    llvm::Value* nextIndexGEP = terminatorBuilder.CreateInBoundsGEP(
-        permutationTableType,
-        permutationTable,
-        {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndex)}
-    );
-    llvm::Value* nextIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), nextIndexGEP);
-
-    for (auto caseIt = switchInst->case_begin(); caseIt != switchInst->case_end(); ++caseIt)
+    llvm::BasicBlock* defaultDestination = switchInstruction->getDefaultDest();
+    auto defaultIterator = std::find(basicBlocks.begin(), basicBlocks.end(), defaultDestination);
+    if (defaultIterator == basicBlocks.end())
     {
-        llvm::BasicBlock* caseSuccessor = caseIt->getCaseSuccessor();
-        auto caseSuccessorIt = std::find(basicBlocks.begin(), basicBlocks.end(), caseSuccessor);
-        if (caseSuccessorIt == basicBlocks.end())
-            continue;
+        return;
+    }
 
-        uint32_t compileTimeIndexCase = caseSuccessorIt - basicBlocks.begin();
-        llvm::Value* caseIndexGEP = terminatorBuilder.CreateInBoundsGEP(
-            permutationTableType,
-            permutationTable,
-            {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndexCase)}
-        );
-        llvm::Value* caseIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), caseIndexGEP);
+    llvm::IRBuilder<> terminatorBuilder(switchInstruction);
+    uint32_t defaultCompileTimeIndex = (uint32_t)std::distance(basicBlocks.begin(), defaultIterator);
+    llvm::Value* nextIndex = terminatorBuilder.getInt32(defaultCompileTimeIndex);
+
+    for (auto caseIterator = switchInstruction->case_begin(); caseIterator != switchInstruction->case_end(); caseIterator++)
+    {
+        llvm::BasicBlock* caseSuccessor = caseIterator->getCaseSuccessor();
+        auto caseSuccessorIterator = std::find(basicBlocks.begin(), basicBlocks.end(), caseSuccessor);
+        if (caseSuccessorIterator == basicBlocks.end())
+        {
+            continue;
+        }
+
+        uint32_t compileTimeIndexCase = (uint32_t)std::distance(basicBlocks.begin(), caseSuccessorIterator);
+        llvm::Value* caseIndex = terminatorBuilder.getInt32(compileTimeIndexCase);
         llvm::Value* condition = terminatorBuilder.CreateICmpEQ(
-            switchInst->getCondition(),
-            caseIt->getCaseValue()
+            switchInstruction->getCondition(),
+            caseIterator->getCaseValue()
         );
         nextIndex = terminatorBuilder.CreateSelect(condition, caseIndex, nextIndex);
     }
 
-    RewriteTerminatorToDispatcher(switchInst, nextIndex, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+    RewriteTerminatorToDispatcher(switchInstruction, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
 }
 
-void RewriteIndirectBrTerminator(llvm::IndirectBrInst* indirectBr, std::vector<llvm::BasicBlock*>& basicBlocks, llvm::ArrayType* permutationTableType, llvm::AllocaInst* permutationTable, llvm::AllocaInst* dispatcherState, llvm::ArrayType* jumpTableType, llvm::AllocaInst* jumpTable, llvm::Value* dispatcherBlockIndex, llvm::BasicBlock* dispatcherBlock, llvm::LLVMContext& context, llvm::Module* module, llvm::FunctionType* barrierFnType)
+void RewriteIndirectBrTerminator(
+    llvm::IndirectBrInst* indirectBranch,
+    std::vector<llvm::BasicBlock*>& basicBlocks,
+    llvm::AllocaInst* dispatcherState,
+    llvm::GlobalVariable* jumpTable,
+    uint32_t dispatcherIndex,
+    llvm::BasicBlock* dispatcherBlock
+)
 {
-    llvm::IRBuilder<> terminatorBuilder(indirectBr);
+    llvm::IRBuilder<> terminatorBuilder(indirectBranch);
     llvm::Value* nextIndex = nullptr;
-    for (unsigned i = 0; i < indirectBr->getNumSuccessors(); ++i)
+    for (unsigned int i = 0; i < indirectBranch->getNumSuccessors(); i++)
     {
-        llvm::BasicBlock* successor = indirectBr->getSuccessor(i);
+        llvm::BasicBlock* successor = indirectBranch->getSuccessor(i);
         auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
         if (it == basicBlocks.end())
+        {
             continue;
+        }
 
-        uint32_t compileTimeIndex = it - basicBlocks.begin();
-        llvm::Value* successorIndexGEP = terminatorBuilder.CreateInBoundsGEP(
-            permutationTableType,
-            permutationTable,
-            {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndex)}
-        );
-        llvm::Value* successorIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), successorIndexGEP);
+        uint32_t compileTimeIndex = (uint32_t)std::distance(basicBlocks.begin(), it);
+        llvm::Value* successorIndex = terminatorBuilder.getInt32(compileTimeIndex);
         if (!nextIndex)
         {
             nextIndex = successorIndex;
@@ -317,36 +316,44 @@ void RewriteIndirectBrTerminator(llvm::IndirectBrInst* indirectBr, std::vector<l
         }
 
         llvm::Value* condition = terminatorBuilder.CreateICmpEQ(
-            indirectBr->getAddress(),
+            indirectBranch->getAddress(),
             llvm::BlockAddress::get(successor)
         );
         nextIndex = terminatorBuilder.CreateSelect(condition, successorIndex, nextIndex);
     }
 
     if (nextIndex)
-        RewriteTerminatorToDispatcher(indirectBr, nextIndex, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+    {
+        RewriteTerminatorToDispatcher(indirectBranch, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+    }
 }
 
-void RewriteCallBrTerminator(llvm::CallBrInst* callBr, std::vector<llvm::BasicBlock*>& basicBlocks, llvm::ArrayType* permutationTableType, llvm::AllocaInst* permutationTable, llvm::AllocaInst* dispatcherState, llvm::ArrayType* jumpTableType, llvm::AllocaInst* jumpTable, llvm::Value* dispatcherBlockIndex, llvm::BasicBlock* dispatcherBlock, llvm::LLVMContext& context, llvm::Module* module, llvm::FunctionType* barrierFnType)
+void RewriteCallBrTerminator(
+    llvm::CallBrInst* callBranch,
+    std::vector<llvm::BasicBlock*>& basicBlocks,
+    llvm::AllocaInst* dispatcherState,
+    llvm::GlobalVariable* jumpTable,
+    uint32_t dispatcherIndex,
+    llvm::BasicBlock* dispatcherBlock
+)
 {
-    if (callBr->getNumSuccessors() != 1)
+    if (callBranch->getNumSuccessors() != 1)
+    {
         return;
+    }
 
-    llvm::BasicBlock* successor = callBr->getSuccessor(0);
+    llvm::BasicBlock* successor = callBranch->getSuccessor(0);
     auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
     if (it == basicBlocks.end())
+    {
         return;
+    }
 
-    llvm::IRBuilder<> terminatorBuilder(callBr);
-    uint32_t compileTimeIndex = it - basicBlocks.begin();
-    llvm::Value* nextIndexGEP = terminatorBuilder.CreateInBoundsGEP(
-        permutationTableType,
-        permutationTable,
-        {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(compileTimeIndex)}
-    );
-    llvm::Value* nextIndex = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), nextIndexGEP);
+    llvm::IRBuilder<> terminatorBuilder(callBranch);
+    uint32_t compileTimeIndex = (uint32_t)std::distance(basicBlocks.begin(), it);
+    llvm::Value* nextIndex = terminatorBuilder.getInt32(compileTimeIndex);
 
-    RewriteTerminatorToDispatcher(callBr, nextIndex, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+    RewriteTerminatorToDispatcher(callBranch, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
 }
 
 llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module, llvm::ModuleAnalysisManager& mam)
@@ -392,7 +399,7 @@ void HoistAllocasToEntryBlock(llvm::Function* function)
         alloca->moveBefore(insertPt);
 }
 
-void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function *function)
+void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function* function)
 {
     // Skip functions with exception handling
     if (function->hasPersonalityFn())
@@ -481,132 +488,118 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function 
 
     entryBlock->setName("leet.entry.block");
 
-    // shuffle the blocks so the table is less obvious
-    generator->Shuffle(basicBlocks.begin(), basicBlocks.end());
-    auto it = std::find(basicBlocks.begin(), basicBlocks.end(), bodyBlock);
-    uint32_t bodyIndex = it - basicBlocks.begin();
-
-    uint32_t tableSize = basicBlocks.size() + 1; // 1 for dispatcher
-
-    // allocate jump table and perm table
     llvm::IRBuilder<> entryBeginBuilder(entryBlock, entryBlock->begin());
-    llvm::ArrayType* jumpTableType = llvm::ArrayType::get(entryBeginBuilder.getPtrTy(), tableSize);
-    llvm::AllocaInst* jumpTable = entryBeginBuilder.CreateAlloca(jumpTableType);
-    llvm::ArrayType* permutationTableType = llvm::ArrayType::get(entryBeginBuilder.getInt32Ty(), tableSize);
-    llvm::AllocaInst* permutationTable = entryBeginBuilder.CreateAlloca(permutationTableType);
-
-    llvm::Function* permFunction = GetOrEmitLeetPermutationWithDeps(*module);
-
-    if (!permFunction)
-    {
-        llvm::errs() << "Can't find nor emit LLVM permutation func\n";
-        exit(1);
-    }
-
-    entryBeginBuilder.CreateCall(permFunction, {permutationTable, entryBeginBuilder.getInt32(tableSize)});
+    llvm::AllocaInst* dispatcherState = entryBeginBuilder.CreateAlloca(entryBeginBuilder.getInt32Ty());
 
     llvm::BasicBlock* dispatcherBlock = llvm::BasicBlock::Create(context, "leet.dispatcher.block", function);
+    basicBlocks.push_back(dispatcherBlock);
+    uint32_t dispatcherIndex = (uint32_t)(basicBlocks.size() - 1);
 
-    for (size_t i = 0; i < basicBlocks.size(); i++)
-    {
-        llvm::Value* blockIndexGEP = entryBeginBuilder.CreateInBoundsGEP(
-            permutationTableType,
-            permutationTable,
-            {entryBeginBuilder.getInt32(0), entryBeginBuilder.getInt32(i)}
-        );
-        llvm::Value* blockIndex = entryBeginBuilder.CreateLoad(entryBeginBuilder.getInt32Ty(), blockIndexGEP);
-
-        llvm::Value* blockAddress = entryBeginBuilder.CreateInBoundsGEP(
-            jumpTableType,
-            jumpTable,
-            {entryBeginBuilder.getInt32(0), blockIndex}
-        );
-
-        entryBeginBuilder.CreateStore(llvm::BlockAddress::get(basicBlocks[i]), blockAddress);
-    }
-
-    llvm::Value* dispatcherBlockIndexGEP = entryBeginBuilder.CreateInBoundsGEP(
-        permutationTableType,
-        permutationTable,
-        {entryBeginBuilder.getInt32(0), entryBeginBuilder.getInt32(tableSize - 1)} // Dispatcher is always last
-    );
-    llvm::Value* dispatcherBlockIndex = entryBeginBuilder.CreateLoad(entryBeginBuilder.getInt32Ty(), dispatcherBlockIndexGEP);
-    llvm::Value* dispatcherBlockAddress = entryBeginBuilder.CreateInBoundsGEP(
+    llvm::Type* int32Type = llvm::Type::getInt32Ty(context);
+    llvm::Type* intPtrType = function->getParent()->getDataLayout().getIntPtrType(context);
+    llvm::ArrayType* jumpTableType = llvm::ArrayType::get(int32Type, basicBlocks.size());
+    std::string tableName = "leetJumpTable." + function->getName().str();
+    llvm::GlobalVariable* jumpTable = new llvm::GlobalVariable(
+        *function->getParent(),
         jumpTableType,
-        jumpTable,
-        {entryBeginBuilder.getInt32(0), dispatcherBlockIndex}
+        false,
+        llvm::GlobalValue::InternalLinkage,
+        nullptr,
+        tableName
     );
-    entryBeginBuilder.CreateStore(llvm::BlockAddress::get(dispatcherBlock), dispatcherBlockAddress);
 
-    llvm::AllocaInst* dispatcherState = entryBeginBuilder.CreateAlloca(entryBeginBuilder.getInt32Ty());
-    entryBlock->getTerminator()->eraseFromParent();
-    llvm::IRBuilder<> entryEndBuilder(entryBlock, entryBlock->end());
-    llvm::Value* bodyBlockIndexGEP = entryEndBuilder.CreateInBoundsGEP(
-        permutationTableType,
-        permutationTable,
-        {entryEndBuilder.getInt32(0), entryEndBuilder.getInt32(bodyIndex)}
-    );
-    llvm::Value* bodyBlockIndex = entryEndBuilder.CreateLoad(entryEndBuilder.getInt32Ty(), bodyBlockIndexGEP);
-    entryEndBuilder.CreateStore(bodyBlockIndex, dispatcherState);
-
+    if (function->hasComdat())
     {
-        llvm::Value* dispatcherBlockGEP = entryEndBuilder.CreateInBoundsGEP(
-            jumpTableType,
-            jumpTable,
-            {entryEndBuilder.getInt32(0), dispatcherBlockIndex}
-        );
-        llvm::Value* dispatcherBlockAddress = entryEndBuilder.CreateLoad(entryEndBuilder.getPtrTy(), dispatcherBlockGEP, true);
-
-        llvm::IndirectBrInst* entryEndIndirectBr = entryEndBuilder.CreateIndirectBr(dispatcherBlockAddress, 1);
-        entryEndIndirectBr->addDestination(dispatcherBlock);
+        jumpTable->setComdat(function->getComdat());
+        jumpTable->setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
+        jumpTable->setVisibility(llvm::GlobalValue::HiddenVisibility);
     }
+
+    std::vector<llvm::Constant*> blockAddresses;
+    for (llvm::BasicBlock* basicBlock : basicBlocks)
+    {
+        llvm::Constant* blockAddress = llvm::ConstantExpr::getPtrToInt(llvm::BlockAddress::get(basicBlock), intPtrType);
+        llvm::Constant* tableAddress = llvm::ConstantExpr::getPtrToInt(jumpTable, intPtrType);
+        llvm::Constant* relativeOffset64 = llvm::ConstantExpr::getSub(blockAddress, tableAddress);
+        llvm::Constant* relativeOffset32 = llvm::ConstantExpr::getTrunc(relativeOffset64, int32Type);
+
+        blockAddresses.push_back(relativeOffset32);
+    }
+    llvm::Constant* initializer = llvm::ConstantArray::get(jumpTableType, blockAddresses);
+    jumpTable->setInitializer(initializer);
+
+    RewriteTerminatorToDispatcher(
+        entryBlock->getTerminator(),
+        entryBeginBuilder.getInt32(0),
+        dispatcherState,
+        jumpTable,
+        dispatcherIndex,
+        dispatcherBlock
+    );
 
     llvm::IRBuilder<> dispatcherBuilder(dispatcherBlock);
-    llvm::FunctionType* barrierFnType = llvm::FunctionType::get(dispatcherBuilder.getVoidTy(), false);
-    llvm::Function* barrierFn = CreateBarrierFunction(module, context, barrierFnType, "__leet_dispatcher_barrier");
 
-    dispatcherBuilder.CreateCall(barrierFn);
+    llvm::InlineAsm* asmBarrier = llvm::InlineAsm::get(
+        llvm::FunctionType::get(dispatcherBuilder.getVoidTy(), false),
+        "",
+        "~{memory}",
+        true
+    );
+
+    dispatcherBuilder.CreateCall(asmBarrier);
 
     llvm::Value* dispatcherStateLoad = dispatcherBuilder.CreateLoad(dispatcherBuilder.getInt32Ty(), dispatcherState, true);
-    llvm::Value* nextBlockGEP = dispatcherBuilder.CreateInBoundsGEP(
-        jumpTableType,
+    llvm::Value* relativeOffsetGEP = dispatcherBuilder.CreateInBoundsGEP(
+        jumpTable->getValueType(),
         jumpTable,
         {dispatcherBuilder.getInt32(0), dispatcherStateLoad}
     );
-    llvm::Value* nextBlockAddress = dispatcherBuilder.CreateLoad(dispatcherBuilder.getPtrTy(), nextBlockGEP, true);
-    llvm::IndirectBrInst* indirectBr = dispatcherBuilder.CreateIndirectBr(nextBlockAddress, basicBlocks.size());
-    for (auto* basicBlock : basicBlocks)
+    llvm::Value* relativeOffset32 = dispatcherBuilder.CreateLoad(int32Type, relativeOffsetGEP, true);
+    llvm::Value* relativeOffset = dispatcherBuilder.CreateSExt(relativeOffset32, intPtrType);
+    llvm::Value* tableAddress = dispatcherBuilder.CreatePtrToInt(jumpTable, intPtrType);
+    llvm::Value* targetAddressInt = dispatcherBuilder.CreateAdd(tableAddress, relativeOffset);
+    llvm::Value* nextBlockAddress = dispatcherBuilder.CreateIntToPtr(targetAddressInt, dispatcherBuilder.getPtrTy());
+
+    llvm::IndirectBrInst* indirectBranchInstruction = dispatcherBuilder.CreateIndirectBr(nextBlockAddress, basicBlocks.size());
+    for (llvm::BasicBlock* basicBlock : basicBlocks)
     {
-        indirectBr->addDestination(basicBlock);
+        indirectBranchInstruction->addDestination(basicBlock);
     }
 
-    for (auto* basicBlock : basicBlocks)
+    for (llvm::BasicBlock* basicBlock : basicBlocks)
     {
+        if (basicBlock == dispatcherBlock)
+        {
+            continue;
+        }
+
         llvm::Instruction* terminator = basicBlock->getTerminator();
         if (!terminator)
+        {
             continue;
+        }
 
         if (auto* branch = llvm::dyn_cast<llvm::BranchInst>(terminator))
         {
-            RewriteBranchTerminator(branch, basicBlocks, permutationTableType, permutationTable, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+            RewriteBranchTerminator(branch, basicBlocks, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
             continue;
         }
 
-        if (auto* switchInst = llvm::dyn_cast<llvm::SwitchInst>(terminator))
+        if (auto* switchInstruction = llvm::dyn_cast<llvm::SwitchInst>(terminator))
         {
-            RewriteSwitchTerminator(switchInst, basicBlocks, permutationTableType, permutationTable, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+            RewriteSwitchTerminator(switchInstruction, basicBlocks, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
             continue;
         }
 
-        if (auto* indirectBr = llvm::dyn_cast<llvm::IndirectBrInst>(terminator))
+        if (auto* indirectBranch = llvm::dyn_cast<llvm::IndirectBrInst>(terminator))
         {
-            RewriteIndirectBrTerminator(indirectBr, basicBlocks, permutationTableType, permutationTable, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+            RewriteIndirectBrTerminator(indirectBranch, basicBlocks, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
             continue;
         }
 
-        if (auto* callBr = llvm::dyn_cast<llvm::CallBrInst>(terminator))
+        if (auto* callBranch = llvm::dyn_cast<llvm::CallBrInst>(terminator))
         {
-            RewriteCallBrTerminator(callBr, basicBlocks, permutationTableType, permutationTable, dispatcherState, jumpTableType, jumpTable, dispatcherBlockIndex, dispatcherBlock, context, module, barrierFnType);
+            RewriteCallBrTerminator(callBranch, basicBlocks, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
             continue;
         }
     }
