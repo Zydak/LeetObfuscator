@@ -644,7 +644,7 @@ llvm::BasicBlock* LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlock(llvm::Ba
     DominatingPair inputPair = FindUsableInputPair(block, insertPoint, generator);
 
     const uint32_t stepSize = 4;
-    const uint32_t maxSteps = 5;
+    const uint32_t maxSteps = 100;
     uint32_t stepsTaken = 0;
 
     while (!inputPair.first && insertPoint != termIt && stepsTaken < maxSteps)
@@ -873,7 +873,7 @@ llvm::BasicBlock *LeetObfuscator::AntiAnalysisPass::ChainBogusIntoBlockAntiDebug
         instructionCount++;
     }
 
-    if (randomPos)
+    if(randomPos)
     {
         uint32_t t = generator->DrawRange(0u, (uint32_t)std::max(int(instructionCount) - 1, 0));
         std::advance(insertPoint, t);

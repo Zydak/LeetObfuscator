@@ -6,37 +6,47 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Verifier.h"
 
-#include "PermutationHelper.h"
 #include "SettingsParser.h"
 
 #include <vector>
+#include <map>
 #include <algorithm>
 
 constexpr uint64_t s_MinCandidateSize = 1;
-constexpr uint64_t s_MaxCandidateSize = 8; // Don't store any complex types, 8 bytes for a 64bit is enoguh
+constexpr uint64_t s_MaxCandidateSize = 64;
 
-constexpr uint32_t s_MinSlotsToBother = 2; // doing 1 slot is completely pointless
+constexpr uint32_t s_MinSlotsToBother = 2;
 
 bool TryGetAllocaTotalSize(llvm::AllocaInst* allocaInst, const llvm::DataLayout& dataLayout, uint64_t& outSize)
 {
     if (!allocaInst->isStaticAlloca())
+    {
         return false;
+    }
 
     llvm::Type* allocatedType = allocaInst->getAllocatedType();
     if (!allocatedType->isSized())
+    {
         return false;
+    }
 
     llvm::TypeSize elemSize = dataLayout.getTypeAllocSize(allocatedType);
     if (elemSize.isScalable())
-        return false; // scalable vectors have no fixed byte size
+    {
+        return false;
+    }
 
     auto* arraySizeCint = llvm::dyn_cast<llvm::ConstantInt>(allocaInst->getArraySize());
     if (!arraySizeCint)
+    {
         return false;
+    }
 
     uint64_t arraySize = arraySizeCint->getZExtValue();
     if (arraySize == 0)
+    {
         return false;
+    }
 
     outSize = elemSize.getFixedValue() * arraySize;
     return true;
@@ -44,28 +54,25 @@ bool TryGetAllocaTotalSize(llvm::AllocaInst* allocaInst, const llvm::DataLayout&
 
 bool IsEligibleAlloca(llvm::AllocaInst* allocaInst, const llvm::DataLayout& dataLayout)
 {
-    // skip leet allocas
     if (allocaInst->getName().starts_with("leet."))
+    {
         return false;
+    }
 
-    // auto* type = allocaInst->getAllocatedType();
-    // if (llvm::dyn_cast<llvm::StructType>(type) != nullptr)
-    // {
-    //     llvm::errs() << "SKIPPING STRUCT\n";
-    //     return false;
-    // }
-
-    uint64_t fixedSize;
+    uint64_t fixedSize = 0;
     if (!TryGetAllocaTotalSize(allocaInst, dataLayout, fixedSize))
+    {
         return false;
+    }
 
     if (fixedSize < s_MinCandidateSize || fixedSize > s_MaxCandidateSize)
+    {
         return false;
+    }
 
     return true;
 }
 
-// Throw these bitches out again same as in the dispatcher pass, it's just a debug info for LLVM and it will be invalid after this pass
 void StripDebugAndLifetimeUsers(llvm::AllocaInst* allocaInst)
 {
     std::vector<llvm::Instruction*> toErase;
@@ -73,31 +80,32 @@ void StripDebugAndLifetimeUsers(llvm::AllocaInst* allocaInst)
     {
         if (auto* intrinsicInst = llvm::dyn_cast<llvm::IntrinsicInst>(user))
         {
-            if (intrinsicInst->getIntrinsicID() == llvm::Intrinsic::lifetime_start ||
-                intrinsicInst->getIntrinsicID() == llvm::Intrinsic::lifetime_end)
+            llvm::Intrinsic::ID intrinsicId = intrinsicInst->getIntrinsicID();
+            if (intrinsicId == llvm::Intrinsic::lifetime_start ||
+                intrinsicId == llvm::Intrinsic::lifetime_end ||
+                intrinsicId == llvm::Intrinsic::dbg_declare ||
+                intrinsicId == llvm::Intrinsic::dbg_value ||
+                intrinsicId == llvm::Intrinsic::dbg_assign ||
+                intrinsicId == llvm::Intrinsic::dbg_label)
             {
                 toErase.push_back(intrinsicInst);
             }
         }
     }
     for (llvm::Instruction* inst : toErase)
+    {
         inst->eraseFromParent();
+    }
 }
 
-llvm::PreservedAnalyses LeetObfuscator::AntiAliasingPass::run(llvm::Module &module, llvm::ModuleAnalysisManager&)
+llvm::PreservedAnalyses LeetObfuscator::AntiAliasingPass::run(llvm::Module& module, llvm::ModuleAnalysisManager&)
 {
     llvm::errs() << "Running AntiAliasingPass\n";
     m_Logger.LogModule(module, "Starting pass", 0);
 
-    for (llvm::Function &function : module)
+    for (llvm::Function& function : module)
     {
         if (function.isDeclaration())
-        {
-            continue;
-        }
-
-        // don't obfuscate our own runtime helper, this would create infinite recursion
-        if (function.getName() == "__leet_permutation" || function.getName() == "__leet_split_mix_64")
         {
             continue;
         }
@@ -108,12 +116,12 @@ llvm::PreservedAnalyses LeetObfuscator::AntiAliasingPass::run(llvm::Module &modu
     return llvm::PreservedAnalyses::none();
 }
 
-void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &function)
+void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function& function)
 {
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(
         function, SettingsParser::PassType::AntiAliasingPass, m_Arguments
     );
-    
+
     if (SettingsParser::ShouldSkipFunction(&function, attributes))
     {
         m_Logger.LogFunction(function, "Skipping function due to settings", 1);
@@ -122,23 +130,16 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
 
     m_Logger.LogFunction(function, "Processing function", 1);
 
-    if (function.getName().find("__leet_exception") != std::string::npos || function.getName().find("__leet_dispatcher_barrier") != std::string::npos)
-    {
-        return;
-    }
-
     std::shared_ptr<RandomNumberGenerator> generator = SettingsParser::GetGenerator(attributes);
 
-    llvm::Module* module = function.getParent();
-
-    llvm::Function* permFunction = GetOrEmitLeetPermutationWithDeps(*module);
-    if (!permFunction)
+    if (generator->DrawRange(1u, 100u) > attributes.antiAliasingProbability)
     {
-        llvm::errs() << "Failed to emit permutation func\n";
+        m_Logger.LogFunction(function, "Skipping function due to probability roll", 2);
         return;
     }
 
     llvm::BasicBlock& entryBlock = function.getEntryBlock();
+    llvm::Module* module = function.getParent();
     const llvm::DataLayout& dataLayout = module->getDataLayout();
 
     std::vector<llvm::AllocaInst*> candidates;
@@ -146,11 +147,10 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
     {
         if (auto* allocaInst = llvm::dyn_cast<llvm::AllocaInst>(&inst))
         {
-            if (generator->DrawRange(1u, 100u) > attributes.antiAliasingProbability)
-                continue;
-            
             if (IsEligibleAlloca(allocaInst, dataLayout))
+            {
                 candidates.push_back(allocaInst);
+            }
         }
     }
 
@@ -162,61 +162,101 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
 
     m_Logger.LogFunction(function, "Creating aliasing obfuscation state", 2);
 
-    uint32_t numSlots = uint32_t(candidates.size());
+    uint32_t numSlots = (uint32_t)candidates.size();
 
-    uint64_t maxSize = 0;
+    generator->Shuffle(candidates.begin(), candidates.end());
+
+    // Calculate byte offsets with random decoy padding
+    uint64_t currentOffset = (uint64_t)generator->DrawRange(0u, 16u);
     llvm::Align maxAlign(1);
-    for (llvm::AllocaInst* allocaInst : candidates)
-    {
-        uint64_t size;
-        if (!TryGetAllocaTotalSize(allocaInst, dataLayout, size))
-            continue;
 
-        maxSize = std::max(maxSize, size);
+    std::vector<uint64_t> candidateOffsets(numSlots, 0);
+    for (uint32_t i = 0; i < numSlots; i++)
+    {
+        llvm::AllocaInst* allocaInst = candidates[i];
+        uint64_t size = 0;
+        TryGetAllocaTotalSize(allocaInst, dataLayout, size);
         llvm::Align typeAlign = dataLayout.getPrefTypeAlign(allocaInst->getAllocatedType());
-        maxAlign = std::max(maxAlign, std::max(allocaInst->getAlign(), typeAlign));
-        
-        // allocaInst->getAllocatedType()->print(llvm::errs());
-        // llvm::errs() << "\n";
+        llvm::Align reqAlign = std::max(allocaInst->getAlign(), typeAlign);
+        maxAlign = std::max(maxAlign, reqAlign);
+
+        currentOffset = llvm::alignTo(currentOffset, reqAlign.value());
+        candidateOffsets[i] = currentOffset;
+        currentOffset += size;
+
+        uint64_t decoyPadding = (uint64_t)generator->DrawRange(4u, 16u);
+        currentOffset += decoyPadding;
     }
 
-    uint64_t slotSize = llvm::alignTo(maxSize, maxAlign.value());
-    uint64_t totalBytes = slotSize * uint64_t(numSlots);
-    m_Logger.LogFunction(function, "Allocating obfuscation buffer and permutation table", 3);
+    uint64_t totalBytes = llvm::alignTo(currentOffset, maxAlign.value());
+    if (totalBytes == 0)
+    {
+        totalBytes = 16;
+    }
 
-    // create the buffer and permutation table
+    // Expanded table size with decoy entries
+    uint32_t tableSize = std::max(numSlots * 2, 8u);
+
+    std::vector<uint32_t> availableSlots(tableSize);
+    for (uint32_t i = 0; i < tableSize; i++)
+    {
+        availableSlots[i] = i;
+    }
+    generator->Shuffle(availableSlots.begin(), availableSlots.end());
+
+    std::vector<uint32_t> tableSlotForCandidate(numSlots);
+    for (uint32_t i = 0; i < numSlots; i++)
+    {
+        tableSlotForCandidate[i] = availableSlots[i];
+    }
+
+    std::vector<uint32_t> tableValues(tableSize, 0);
+    for (uint32_t i = 0; i < numSlots; i++)
+    {
+        tableValues[tableSlotForCandidate[i]] = (uint32_t)candidateOffsets[i];
+    }
+    for (uint32_t i = numSlots; i < tableSize; i++)
+    {
+        uint32_t dummyOffset = (uint32_t)generator->DrawRange(0u, (uint32_t)totalBytes - 1);
+        tableValues[availableSlots[i]] = dummyOffset;
+    }
+
+    m_Logger.LogFunction(function, "Allocating obfuscation buffer and masked table", 3);
+
     llvm::IRBuilder<> entryBuilder(&entryBlock, entryBlock.begin());
 
     llvm::ArrayType* bufferType = llvm::ArrayType::get(entryBuilder.getInt8Ty(), totalBytes);
     llvm::AllocaInst* leetBuffer = entryBuilder.CreateAlloca(bufferType, nullptr, "leet.buf");
     leetBuffer->setAlignment(maxAlign);
 
-    llvm::ArrayType* permutationTableType = llvm::ArrayType::get(entryBuilder.getInt32Ty(), numSlots);
+    llvm::ArrayType* permutationTableType = llvm::ArrayType::get(entryBuilder.getInt32Ty(), tableSize);
     llvm::AllocaInst* leetPermTable = entryBuilder.CreateAlloca(permutationTableType, nullptr, "leet.perm");
     leetPermTable->setAlignment(llvm::Align(4));
 
-    for (uint32_t i = 0; i < numSlots; ++i)
+    // Dynamic stack mask
+    llvm::Value* ptrInt = entryBuilder.CreatePtrToInt(leetBuffer, entryBuilder.getInt64Ty(), "leet.buf.ptr.int");
+    llvm::Value* ptrShift = entryBuilder.CreateLShr(ptrInt, entryBuilder.getInt64(4), "leet.buf.entropy");
+    llvm::Value* ptrTrunc = entryBuilder.CreateTrunc(ptrShift, entryBuilder.getInt32Ty(), "leet.buf.entropy.32");
+    uint32_t compileTimeSalt = generator->DrawRange(0x10000000u, 0xEFFFFFFFu);
+    llvm::Value* runtimeMask = entryBuilder.CreateXor(ptrTrunc, entryBuilder.getInt32(compileTimeSalt), "leet.runtime.mask");
+
+    // Initialize the expanded masked table in the entry block
+    for (uint32_t s = 0; s < tableSize; s++)
     {
+        llvm::Value* maskedVal = entryBuilder.CreateXor(runtimeMask, entryBuilder.getInt32(tableValues[s]), "leet.table.init.val");
         llvm::Value* slotPtr = entryBuilder.CreateInBoundsGEP(
             permutationTableType, leetPermTable,
-            {entryBuilder.getInt32(0), entryBuilder.getInt32(i)}, "leet.perm.init.ptr"
+            {entryBuilder.getInt32(0), entryBuilder.getInt32(s)}, "leet.table.init.ptr"
         );
-        entryBuilder.CreateStore(entryBuilder.getInt32(i), slotPtr);
+        entryBuilder.CreateStore(maskedVal, slotPtr);
     }
-
-    llvm::Value* permPtr = entryBuilder.CreateInBoundsGEP(
-        permutationTableType, leetPermTable,
-        {entryBuilder.getInt32(0), entryBuilder.getInt32(0)}, "leet.perm.ptr"
-    );
-
-    entryBuilder.CreateCall(permFunction, {permPtr, entryBuilder.getInt32(numSlots)});
 
     llvm::Value* bufferBase = entryBuilder.CreateInBoundsGEP(
         bufferType, leetBuffer,
         {entryBuilder.getInt32(0), entryBuilder.getInt32(0)}, "leet.buf.base"
     );
 
-    for (uint32_t canonicalSlot = 0; canonicalSlot < numSlots; ++canonicalSlot)
+    for (uint32_t canonicalSlot = 0; canonicalSlot < numSlots; canonicalSlot++)
     {
         llvm::AllocaInst* allocaInst = candidates[canonicalSlot];
 
@@ -233,46 +273,192 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function &functio
             usesToPatch.push_back(&use);
         }
 
+        uint32_t tableSlotIndex = tableSlotForCandidate[canonicalSlot];
+        uint32_t decoySlot = (canonicalSlot + 1) % numSlots;
+        uint32_t decoyTableSlotIndex = tableSlotForCandidate[decoySlot];
+
+        // Group uses by insertion basic block
+        std::map<llvm::BasicBlock*, std::vector<llvm::Use*>> usesByBlock;
         for (llvm::Use* use : usesToPatch)
         {
-            // All users of an alloca should be instructions i think? dunno
             llvm::Instruction* userInst = llvm::dyn_cast<llvm::Instruction>(use->getUser());
             if (!userInst)
             {
-                llvm::errs() << "Alloca user is not an instruction?\n";
                 continue;
             }
 
-            llvm::IRBuilder<> builder(userInst);
+            llvm::BasicBlock* targetBlock = nullptr;
+            if (auto* phi = llvm::dyn_cast<llvm::PHINode>(userInst))
+            {
+                targetBlock = phi->getIncomingBlock(*use);
+            }
+            else
+            {
+                targetBlock = userInst->getParent();
+            }
+            usesByBlock[targetBlock].push_back(use);
+        }
 
-            // If the user is a PHI node, we must insert the calculation at the end
-            // of the incoming block (before its terminator), not before the PHI.
+        auto GetInsertionInstruction = [](llvm::Use* use) -> llvm::Instruction*
+        {
+            auto* userInst = llvm::dyn_cast<llvm::Instruction>(use->getUser());
             if (auto* phi = llvm::dyn_cast<llvm::PHINode>(userInst))
             {
                 llvm::BasicBlock* incomingBlock = phi->getIncomingBlock(*use);
-                builder.SetInsertPoint(incomingBlock->getTerminator());
+                return incomingBlock->getTerminator();
             }
+            return userInst;
+        };
 
-            // Recompute the permutation slot lookup dynamically
+        auto ComputeFreshAddress = [&](llvm::IRBuilder<>& builder) -> llvm::Value*
+        {
+            // Real address computation with dynamic unmasking
             llvm::Value* permSlotPtr = builder.CreateInBoundsGEP(
                 permutationTableType,
                 leetPermTable,
-                {builder.getInt32(0), builder.getInt32(canonicalSlot)},
+                {builder.getInt32(0), builder.getInt32(tableSlotIndex)},
                 "leet.permslot.ptr"
             );
-            llvm::Value* physSlot = builder.CreateLoad(builder.getInt32Ty(), permSlotPtr, "leet.physslot");
-            llvm::Value* byteOffset = builder.CreateMul(physSlot, builder.getInt32(slotSize), "leet.byteoff");
+            llvm::Value* maskedOffset = builder.CreateLoad(builder.getInt32Ty(), permSlotPtr, "leet.masked.offset");
+            llvm::Value* realByteOffset = builder.CreateXor(maskedOffset, runtimeMask, "leet.real.offset");
+            llvm::Value* realByteOffset64 = builder.CreateZExt(realByteOffset, builder.getInt64Ty(), "leet.real.offset.64");
+            llvm::Value* realElementAddress = builder.CreateInBoundsGEP(builder.getInt8Ty(), bufferBase, realByteOffset64, "leet.real.addr");
 
-            llvm::Value* elementAddress = builder.CreateInBoundsGEP(builder.getInt8Ty(), bufferBase, byteOffset, "leet.addr");
+            // Probability based decision to apply opaque predicate
+            if (generator->DrawRange(1u, 100u) > attributes.antiAliasingOpaqueProbability)
+            {
+                return realElementAddress;
+            }
 
-            // TODO: just calculate offset with a correct type and delete this?
-            llvm::Value* typedAddress = builder.CreateBitCast(elementAddress, allocaInst->getType(), "leet.typed");
+            // Decoy address computation to create static alias ambiguity
+            llvm::Value* decoyPermSlotPtr = builder.CreateInBoundsGEP(
+                permutationTableType,
+                leetPermTable,
+                {builder.getInt32(0), builder.getInt32(decoyTableSlotIndex)},
+                "leet.decoy.permslot.ptr"
+            );
+            llvm::Value* decoyMaskedOffset = builder.CreateLoad(builder.getInt32Ty(), decoyPermSlotPtr, "leet.decoy.masked.offset");
+            llvm::Value* decoyByteOffset = builder.CreateXor(decoyMaskedOffset, runtimeMask, "leet.decoy.offset");
+            llvm::Value* decoyByteOffset64 = builder.CreateZExt(decoyByteOffset, builder.getInt64Ty(), "leet.decoy.offset.64");
+            llvm::Value* decoyElementAddress = builder.CreateInBoundsGEP(builder.getInt8Ty(), bufferBase, decoyByteOffset64, "leet.decoy.addr");
 
-            use->set(typedAddress);
+            // Diverse opaque predicates with alternating truth values
+            uint32_t variant = generator->DrawRange(0u, 7u);
+            llvm::Value* condition = nullptr;
+            bool isTrueCondition = true;
+
+            if (variant == 0)
+            {
+                // Variant 0 (Evaluates to True): v * (v + 1) is always even -> ((v * (v + 1)) & 1) == 0
+                llvm::Value* vPlus1 = builder.CreateAdd(realByteOffset, builder.getInt32(1), "leet.v.plus1");
+                llvm::Value* vProd = builder.CreateMul(realByteOffset, vPlus1, "leet.v.prod");
+                llvm::Value* vLsb = builder.CreateAnd(vProd, builder.getInt32(1), "leet.v.lsb");
+                condition = builder.CreateICmpEQ(vLsb, builder.getInt32(0), "leet.opaque.cond");
+                isTrueCondition = true;
+            }
+            else if (variant == 1)
+            {
+                // Variant 1 (Evaluates to False): v * (v + 1) is always even -> ((v * (v + 1)) & 1) == 1 is never true
+                llvm::Value* vPlus1 = builder.CreateAdd(realByteOffset, builder.getInt32(1), "leet.v.plus1");
+                llvm::Value* vProd = builder.CreateMul(realByteOffset, vPlus1, "leet.v.prod");
+                llvm::Value* vLsb = builder.CreateAnd(vProd, builder.getInt32(1), "leet.v.lsb");
+                condition = builder.CreateICmpEQ(vLsb, builder.getInt32(1), "leet.opaque.cond");
+                isTrueCondition = false;
+            }
+            else if (variant == 2)
+            {
+                // Variant 2 (Evaluates to True): (v ^ (v + 1)) has LSB 1 -> ((v ^ (v + 1)) & 1) == 1
+                llvm::Value* vPlus1 = builder.CreateAdd(realByteOffset, builder.getInt32(1), "leet.v.plus1");
+                llvm::Value* vXor = builder.CreateXor(realByteOffset, vPlus1, "leet.v.xor");
+                llvm::Value* vLsb = builder.CreateAnd(vXor, builder.getInt32(1), "leet.v.lsb");
+                condition = builder.CreateICmpEQ(vLsb, builder.getInt32(1), "leet.opaque.cond");
+                isTrueCondition = true;
+            }
+            else if (variant == 3)
+            {
+                // Variant 3 (Evaluates to False): (v ^ (v + 1)) has LSB 1 -> ((v ^ (v + 1)) & 1) == 0 is never true
+                llvm::Value* vPlus1 = builder.CreateAdd(realByteOffset, builder.getInt32(1), "leet.v.plus1");
+                llvm::Value* vXor = builder.CreateXor(realByteOffset, vPlus1, "leet.v.xor");
+                llvm::Value* vLsb = builder.CreateAnd(vXor, builder.getInt32(1), "leet.v.lsb");
+                condition = builder.CreateICmpEQ(vLsb, builder.getInt32(0), "leet.opaque.cond");
+                isTrueCondition = false;
+            }
+            else if (variant == 4)
+            {
+                // Variant 4 (Evaluates to True): (v | 1) != 0 is always true
+                llvm::Value* vOr = builder.CreateOr(realByteOffset, builder.getInt32(1), "leet.v.or");
+                condition = builder.CreateICmpNE(vOr, builder.getInt32(0), "leet.opaque.cond");
+                isTrueCondition = true;
+            }
+            else if (variant == 5)
+            {
+                // Variant 5 (Evaluates to False): (v | 1) == 0 is never true
+                llvm::Value* vOr = builder.CreateOr(realByteOffset, builder.getInt32(1), "leet.v.or");
+                condition = builder.CreateICmpEQ(vOr, builder.getInt32(0), "leet.opaque.cond");
+                isTrueCondition = false;
+            }
+            else if (variant == 6)
+            {
+                // Variant 6 (Evaluates to True): (v & ~v) == 0 is always true
+                llvm::Value* notV = builder.CreateXor(realByteOffset, builder.getInt32(0xFFFFFFFFu), "leet.v.not");
+                llvm::Value* vAnd = builder.CreateAnd(realByteOffset, notV, "leet.v.and");
+                condition = builder.CreateICmpEQ(vAnd, builder.getInt32(0), "leet.opaque.cond");
+                isTrueCondition = true;
+            }
+            else
+            {
+                // Variant 7 (Evaluates to False): (v & ~v) != 0 is never true
+                llvm::Value* notV = builder.CreateXor(realByteOffset, builder.getInt32(0xFFFFFFFFu), "leet.v.not");
+                llvm::Value* vAnd = builder.CreateAnd(realByteOffset, notV, "leet.v.and");
+                condition = builder.CreateICmpNE(vAnd, builder.getInt32(0), "leet.opaque.cond");
+                isTrueCondition = false;
+            }
+
+            llvm::Value* trueVal = isTrueCondition ? realElementAddress : decoyElementAddress;
+            llvm::Value* falseVal = isTrueCondition ? decoyElementAddress : realElementAddress;
+
+            return builder.CreateSelect(condition, trueVal, falseVal, "leet.chosen.addr");
+        };
+
+        for (auto& pair : usesByBlock)
+        {
+            std::vector<llvm::Use*>& blockUses = pair.second;
+
+            // Sort uses in program order within this basic block
+            std::sort(blockUses.begin(), blockUses.end(), [&](llvm::Use* useA, llvm::Use* useB)
+            {
+                llvm::Instruction* instA = GetInsertionInstruction(useA);
+                llvm::Instruction* instB = GetInsertionInstruction(useB);
+                if (instA == instB)
+                {
+                    return useA < useB;
+                }
+                return instA->comesBefore(instB);
+            });
+
+            llvm::Value* currentAddress = nullptr;
+            for (llvm::Use* use : blockUses)
+            {
+                llvm::Instruction* insertInst = GetInsertionInstruction(use);
+                llvm::IRBuilder<> builder(insertInst);
+
+                bool shouldReuse = (currentAddress != nullptr) && (generator->DrawRange(1u, 100u) <= attributes.antiAliasingReuseProbability);
+
+                if (shouldReuse)
+                {
+                    use->set(currentAddress);
+                }
+                else
+                {
+                    currentAddress = ComputeFreshAddress(builder);
+                    use->set(currentAddress);
+                }
+            }
         }
 
         allocaInst->eraseFromParent();
     }
+
 
     if (llvm::verifyFunction(function, &llvm::errs()))
     {

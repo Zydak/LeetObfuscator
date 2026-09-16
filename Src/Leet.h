@@ -19,6 +19,8 @@
 #define LEET_ANTI_ANALYSIS_BLACK_LIST_RATIO(value) __attribute__((annotate("leet.AntiAnalysisPass.blackListRatio=" #value)))
 
 #define LEET_ANTI_ALIASING_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.probability=" #value)))
+#define LEET_ANTI_ALIASING_OPAQUE_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.opaqueProbability=" #value)))
+#define LEET_ANTI_ALIASING_REUSE_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.reuseProbability=" #value)))
 
 #define LEET_AAMBA_PROBABILITY(value) __attribute__((annotate("leet.AAMBAPass.probability=" #value)))
 #define LEET_AAMBA_TARGET_OPS(values) __attribute__((annotate("leet.AAMBAPass.targetOps=" values)))

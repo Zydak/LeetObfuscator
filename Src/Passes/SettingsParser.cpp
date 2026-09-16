@@ -187,6 +187,8 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"probability", UnsignedOption(&FA::antiAliasingProbability, 100u)},
+        {"opaqueProbability", UnsignedOption(&FA::antiAliasingOpaqueProbability, 100u)},
+        {"reuseProbability", UnsignedOption(&FA::antiAliasingReuseProbability, 100u)},
     };
     static const std::vector<Option> nanomitesOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
