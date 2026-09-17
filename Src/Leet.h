@@ -21,6 +21,13 @@
 #define LEET_ANTI_ALIASING_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.probability=" #value)))
 #define LEET_ANTI_ALIASING_OPAQUE_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.opaqueProbability=" #value)))
 #define LEET_ANTI_ALIASING_REUSE_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.reuseProbability=" #value)))
+#define LEET_ANTI_ALIASING_MBA_PROBABILITY(value) __attribute__((annotate("leet.AntiAliasingPass.MBAProbability=" #value)))
+#define LEET_ANTI_ALIASING_MAX_CANDIDATES(value) __attribute__((annotate("leet.AntiAliasingPass.maxCandidates=" #value)))
+#define LEET_ANTI_ALIASING_SLOTS_PER_CANDIDATE(value) __attribute__((annotate("leet.AntiAliasingPass.slotsPerCandidate=" #value)))
+#define LEET_ANTI_ALIASING_MAX_TABLE_SIZE(value) __attribute__((annotate("leet.AntiAliasingPass.maxTableSize=" #value)))
+#define LEET_ANTI_ALIASING_MIN_CANDIDATE_SIZE(value) __attribute__((annotate("leet.AntiAliasingPass.minCandidateSize=" #value)))
+#define LEET_ANTI_ALIASING_MAX_CANDIDATE_SIZE(value) __attribute__((annotate("leet.AntiAliasingPass.maxCandidateSize=" #value)))
+#define LEET_ANTI_ALIASING_MIN_CANDIDATES(value) __attribute__((annotate("leet.AntiAliasingPass.minCandidates=" #value)))
 
 #define LEET_AAMBA_PROBABILITY(value) __attribute__((annotate("leet.AAMBAPass.probability=" #value)))
 #define LEET_AAMBA_TARGET_OPS(values) __attribute__((annotate("leet.AAMBAPass.targetOps=" values)))

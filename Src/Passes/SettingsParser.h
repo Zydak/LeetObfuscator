@@ -85,6 +85,13 @@ namespace LeetObfuscator
             uint32_t antiAliasingProbability = 100;
             uint32_t antiAliasingOpaqueProbability = 50;
             uint32_t antiAliasingReuseProbability = 70;
+            uint32_t antiAliasingMBAProbability = 100;
+            uint32_t antiAliasingMaxCandidates = 64;
+            uint32_t antiAliasingSlotsPerCandidate = 3;
+            uint32_t antiAliasingMaxTableSize = 256;
+            uint32_t antiAliasingMinCandidateSize = 1;
+            uint32_t antiAliasingMaxCandidateSize = 64;
+            uint32_t antiAliasingMinCandidates = 2;
 
             uint32_t aambaProbability = 100;
             std::vector<std::string> aambaTargetOps;

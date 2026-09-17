@@ -365,12 +365,7 @@ llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module
 
     for (auto& function : module)
     {
-        if (function.getName() != "__leet_split_mix_64" && function.getName() != "__leet_permutation" &&
-            function.getName().find("__leet_exception") == std::string::npos
-        )
-        {
-            functions.push_back(&function);
-        }
+        functions.push_back(&function);
     }
 
     

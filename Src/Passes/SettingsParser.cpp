@@ -189,6 +189,13 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"probability", UnsignedOption(&FA::antiAliasingProbability, 100u)},
         {"opaqueProbability", UnsignedOption(&FA::antiAliasingOpaqueProbability, 100u)},
         {"reuseProbability", UnsignedOption(&FA::antiAliasingReuseProbability, 100u)},
+        {"MBAProbability", UnsignedOption(&FA::antiAliasingMBAProbability, 100u)},
+        {"maxCandidates", UnsignedOption(&FA::antiAliasingMaxCandidates)},
+        {"slotsPerCandidate", UnsignedOption(&FA::antiAliasingSlotsPerCandidate)},
+        {"maxTableSize", UnsignedOption(&FA::antiAliasingMaxTableSize)},
+        {"minCandidateSize", UnsignedOption(&FA::antiAliasingMinCandidateSize)},
+        {"maxCandidateSize", UnsignedOption(&FA::antiAliasingMaxCandidateSize)},
+        {"minCandidates", UnsignedOption(&FA::antiAliasingMinCandidates)},
     };
     static const std::vector<Option> nanomitesOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},
@@ -379,7 +386,16 @@ std::shared_ptr<LeetObfuscator::SettingsParser::GlobalAttributes> LeetObfuscator
 #   Performance impact: low to mild
 #
 #   Attributes:
-#   probability (0-100): Chance to apply anti aliasing to a function.
+#   probability (0 to 100): Chance to apply anti aliasing to a function.
+#   MBAProbability (0 to 100): Chance to apply Mixed Boolean Arithmetic to address calculations.
+#   opaqueProbability (0 to 100): Chance to emit opaque predicates with decoy addresses.
+#   reuseProbability (0 to 100): Chance to reuse computed address within a basic block.
+#   maxCandidates: Maximum candidate variables to alias per function (0 for unlimited).
+#   slotsPerCandidate: Number of table slots allocated per candidate variable.
+#   maxTableSize: Maximum permutation table size (0 for unlimited).
+#   minCandidateSize: Minimum variable byte size to alias.
+#   maxCandidateSize: Maximum variable byte size to alias (0 for unlimited).
+#   minCandidates: Minimum candidate variables required to obfuscate a function.
 #
 # AAMBAPass (Architectural Hardening MBA):
 #   Performance impact: Mild
