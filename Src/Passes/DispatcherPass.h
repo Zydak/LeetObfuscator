@@ -19,5 +19,9 @@ namespace LeetObfuscator
         void CreateDispatcherInAFunction(llvm::Function* function);
         SettingsParser::PassArguments m_Arguments;
         Logger m_Logger;
+        uint32_t m_ProcessedFunctions = 0;
+        uint32_t m_TotalJumpTableEntries = 0;
+        uint32_t m_TotalDestinations = 0;
+        uint32_t m_TotalDecoys = 0;
     };
 }

@@ -161,12 +161,8 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
 
     std::vector<llvm::CallInst*> callInstructions;
 
-    // Don't obfuscate exception stuff because it will break, also skip dispatcher barriers because there's too
-    // many of them and it will be slow, they're also empty calls so what's the point
-    if (function->getName().find("__leet_dispatcher_barrier") != std::string::npos ||
-        function->getName().find("__leet_exception") != std::string::npos ||
+    if (function->getName().find("__leet_exception") != std::string::npos ||
         function->getName().find("__leet_forward") != std::string::npos ||
-        function->getName().find("__leet_split_mix_64") != std::string::npos ||
         function->getName().find("__leet_nanomite_marker") != std::string::npos ||
         function->getName().find("sigemptyset") != std::string::npos ||
         function->getName().find("sigaction") != std::string::npos ||
@@ -213,11 +209,9 @@ void LeetObfuscator::NanomitesPass::ObfuscateFunction(llvm::Function *function, 
                 
                 // Again, skip llvm and our own stuff
                 if (calledFunction->getName().find("llvm.") == std::string::npos &&
-                    calledFunction->getName().find("__leet_dispatcher_barrier") == std::string::npos &&
                     calledFunction->getName().find("__leet_exception") == std::string::npos &&
                     calledFunction->getName().find("__leet_trampoline") == std::string::npos &&
                     calledFunction->getName().find("__leet_forward") == std::string::npos &&
-                    calledFunction->getName().find("__leet_split_mix_64") == std::string::npos &&
                     calledFunction->getName().find("sigemptyset") == std::string::npos &&
                     calledFunction->getName().find("sigaction") == std::string::npos
                 )

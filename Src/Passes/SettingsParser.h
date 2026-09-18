@@ -70,6 +70,14 @@ namespace LeetObfuscator
             uint32_t blockSplitSize = 50;
 
             uint32_t dispatcherProbability = 100;
+            uint32_t dispatcherJumpTableSlotsPerBlock = 2;
+            uint32_t dispatcherJumpTableDispatcherSlots = 4;
+            uint32_t dispatcherJumpTableMaxBlocksForMultiSlot = 256;
+            uint32_t dispatcherJumpTableMinSize = 16;
+            uint32_t dispatcherJumpTableMaxSize = 0;
+            uint32_t dispatcherJumpTablePadding = 5;
+            uint32_t dispatcherMBAProbability = 100;
+            bool dispatcherStateHardening = true;
 
             uint32_t antiAnalysisProbability = 100;
             BogusInsertPosition antiAnalysisInsertPosition = BogusInsertPosition::Random;
@@ -86,15 +94,15 @@ namespace LeetObfuscator
             uint32_t antiAliasingOpaqueProbability = 50;
             uint32_t antiAliasingReuseProbability = 70;
             uint32_t antiAliasingMBAProbability = 100;
-            uint32_t antiAliasingMaxCandidates = 64;
+            uint32_t antiAliasingMaxCandidates = 128;
             uint32_t antiAliasingSlotsPerCandidate = 3;
-            uint32_t antiAliasingMaxTableSize = 256;
+            uint32_t antiAliasingMaxTableSize = 512;
             uint32_t antiAliasingMinCandidateSize = 1;
             uint32_t antiAliasingMaxCandidateSize = 64;
             uint32_t antiAliasingMinCandidates = 2;
 
             uint32_t aambaProbability = 100;
-            std::vector<std::string> aambaTargetOps;
+            std::vector<std::string> aambaTargetOps; // unused
 
             uint32_t nanomitesProbability = 100;
             uint32_t nanomitesTrampolineProbability = 50;

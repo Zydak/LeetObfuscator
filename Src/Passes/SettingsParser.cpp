@@ -144,6 +144,14 @@ const std::vector<LeetObfuscator::SettingsParser::Option>& LeetObfuscator::Setti
         {"minFunctionSize", UnsignedOption(&FunctionAttributes::minFunctionSize)},
         {"maxFunctionSize", UnsignedOption(&FunctionAttributes::maxFunctionSize)},
         {"probability", UnsignedOption(&FA::dispatcherProbability, 100u)},
+        {"jumpTableSlotsPerBlock", UnsignedOption(&FA::dispatcherJumpTableSlotsPerBlock)},
+        {"jumpTableDispatcherSlots", UnsignedOption(&FA::dispatcherJumpTableDispatcherSlots)},
+        {"jumpTableMaxBlocksForMultiSlot", UnsignedOption(&FA::dispatcherJumpTableMaxBlocksForMultiSlot)},
+        {"jumpTableMinSize", UnsignedOption(&FA::dispatcherJumpTableMinSize)},
+        {"jumpTableMaxSize", UnsignedOption(&FA::dispatcherJumpTableMaxSize)},
+        {"jumpTablePadding", UnsignedOption(&FA::dispatcherJumpTablePadding)},
+        {"MBAProbability", UnsignedOption(&FA::dispatcherMBAProbability, 100u)},
+        {"stateHardening", BoolOption(&FA::dispatcherStateHardening)},
     };
     static const std::vector<Option> antiAnalysisOptions = {
         {"defaultParseMode", EnumOption<bool>(&FA::skip, {{"all", false}, {"none", true}}, "expected all or none")},

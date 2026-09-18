@@ -346,6 +346,54 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function& functio
     llvm::Value* ptrTrunc = entryBuilder.CreateTrunc(ptrShift, entryBuilder.getInt32Ty(), "leet.buf.entropy.32");
     llvm::Value* slotJitter = entryBuilder.CreateAnd(ptrTrunc, entryBuilder.getInt32(jitterMask), "leet.slot.jitter");
 
+    auto SynthesizeShiftedSlot = [&](llvm::IRBuilder<>& builder, uint32_t slotIndex) -> llvm::Value*
+    {
+        uint32_t synthesisChoice = generator->DrawRange(0u, 3u);
+        uint32_t randomMultiple = generator->DrawRange(1u, 15u);
+        uint32_t expandedTarget = slotIndex + (randomMultiple * tableSize);
+
+        llvm::Value* actualSlot = nullptr;
+        if (synthesisChoice == 0)
+        {
+            uint32_t randomSplit = generator->DrawRange(1u, 0x7FFFFFFFu);
+            uint32_t remainderSplit = expandedTarget - randomSplit;
+
+            llvm::Value* stageOne = builder.CreateAdd(slotJitter, builder.getInt32(randomSplit), "leet.slot.stage1");
+            llvm::Value* maskedStageOne = builder.CreateAnd(stageOne, builder.getInt32(jitterMask), "leet.slot.masked1");
+            llvm::Value* stageTwo = builder.CreateAdd(maskedStageOne, builder.getInt32(remainderSplit), "leet.slot.stage2");
+            actualSlot = builder.CreateAnd(stageTwo, builder.getInt32(jitterMask), "leet.target.actual.slot");
+        }
+        else if (synthesisChoice == 1)
+        {
+            uint32_t randomSplit = generator->DrawRange(1u, 0x7FFFFFFFu);
+            uint32_t remainderSplit = expandedTarget + randomSplit;
+
+            llvm::Value* stageOne = builder.CreateSub(slotJitter, builder.getInt32(randomSplit), "leet.slot.stage1");
+            llvm::Value* maskedStageOne = builder.CreateAnd(stageOne, builder.getInt32(jitterMask), "leet.slot.masked1");
+            llvm::Value* stageTwo = builder.CreateAdd(maskedStageOne, builder.getInt32(remainderSplit), "leet.slot.stage2");
+            actualSlot = builder.CreateAnd(stageTwo, builder.getInt32(jitterMask), "leet.target.actual.slot");
+        }
+        else if (synthesisChoice == 2)
+        {
+            llvm::Value* expandedVal = builder.getInt32(expandedTarget);
+            llvm::Value* xorVal = builder.CreateXor(slotJitter, expandedVal, "leet.slot.xor");
+            llvm::Value* andVal = builder.CreateAnd(slotJitter, expandedVal, "leet.slot.and");
+            llvm::Value* shlVal = builder.CreateShl(andVal, builder.getInt32(1), "leet.slot.shl");
+            llvm::Value* sumVal = builder.CreateAdd(xorVal, shlVal, "leet.slot.sum");
+            actualSlot = builder.CreateAnd(sumVal, builder.getInt32(jitterMask), "leet.target.actual.slot");
+        }
+        else
+        {
+            llvm::Value* expandedVal = builder.getInt32(expandedTarget);
+            llvm::Value* orVal = builder.CreateOr(slotJitter, expandedVal, "leet.slot.or");
+            llvm::Value* andVal = builder.CreateAnd(slotJitter, expandedVal, "leet.slot.and");
+            llvm::Value* sumVal = builder.CreateAdd(orVal, andVal, "leet.slot.sum");
+            actualSlot = builder.CreateAnd(sumVal, builder.getInt32(jitterMask), "leet.target.actual.slot");
+        }
+
+        return actualSlot;
+    };
+
     // Initialize the expanded masked table in the entry block
     for (uint32_t s = 0; s < tableSize; s++)
     {
@@ -354,9 +402,10 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function& functio
         llvm::Value* withTableVal = entryBuilder.CreateAdd(slotKey, entryBuilder.getInt32(tableValues[s]), "leet.with.val");
         llvm::Value* maskedVal = entryBuilder.CreateXor(withTableVal, entryBuilder.getInt32(slotXorSalts[s]), "leet.table.init.val");
 
-        llvm::Value* sVal = entryBuilder.getInt32(s);
-        llvm::Value* shiftedSlot = entryBuilder.CreateAdd(sVal, slotJitter, "leet.shifted.slot");
-        llvm::Value* actualSlot = entryBuilder.CreateAnd(shiftedSlot, entryBuilder.getInt32(jitterMask), "leet.actual.slot");
+        //llvm::Value* sVal = entryBuilder.getInt32(s);
+        //llvm::Value* shiftedSlot = entryBuilder.CreateAdd(sVal, slotJitter, "leet.shifted.slot");
+        //llvm::Value* actualSlot = entryBuilder.CreateAnd(shiftedSlot, entryBuilder.getInt32(jitterMask), "leet.actual.slot");
+        llvm::Value* actualSlot = SynthesizeShiftedSlot(entryBuilder, s);
 
         llvm::Value* slotPtr = entryBuilder.CreateInBoundsGEP(
             permutationTableType, leetPermTable,
@@ -426,9 +475,10 @@ void LeetObfuscator::AntiAliasingPass::ObfuscateFunction(llvm::Function& functio
 
         auto DecodeOffset = [&](llvm::IRBuilder<>& builder, uint32_t targetSlotIndex) -> llvm::Value*
         {
-            llvm::Value* targetSlotConst = builder.getInt32(targetSlotIndex);
-            llvm::Value* shiftedSlot = builder.CreateAdd(targetSlotConst, slotJitter, "leet.target.shifted.slot");
-            llvm::Value* actualSlot = builder.CreateAnd(shiftedSlot, builder.getInt32(jitterMask), "leet.target.actual.slot");
+            // llvm::Value* targetSlotConst = builder.getInt32(targetSlotIndex);
+            // llvm::Value* shiftedSlot = builder.CreateAdd(targetSlotConst, slotJitter, "leet.target.shifted.slot");
+            // llvm::Value* actualSlot = builder.CreateAnd(shiftedSlot, builder.getInt32(jitterMask), "leet.target.actual.slot");
+            llvm::Value* actualSlot = SynthesizeShiftedSlot(builder, targetSlotIndex);
 
             llvm::Value* permSlotPtr = builder.CreateInBoundsGEP(
                 permutationTableType,

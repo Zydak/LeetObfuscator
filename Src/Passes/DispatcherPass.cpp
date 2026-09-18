@@ -158,37 +158,128 @@ void DemoteCrossBlockInstructions(llvm::Function* function)
     }
 }
 
+struct DispatcherMapping
+{
+    uint32_t tableSize = 0;
+    uint32_t tableMask = 0;
+    uint32_t multiplierA = 0;
+    uint32_t inverseMultiplierA = 0;
+    uint32_t addendB = 0;
+    uint32_t xorKey = 0;
+    bool useMBA = true;
+    bool stateHardening = true;
+    std::vector<uint32_t> dispatcherSlots;
+    std::vector<std::vector<uint32_t>> blockSlots;
+};
+
+static uint32_t ComputeModularInverse32(uint32_t value)
+{
+    uint32_t inverse = value;
+    inverse = inverse * (2u - value * inverse);
+    inverse = inverse * (2u - value * inverse);
+    inverse = inverse * (2u - value * inverse);
+    inverse = inverse * (2u - value * inverse);
+    return inverse;
+}
+
+static uint32_t GenerateStateForSlot(
+    uint32_t targetSlot,
+    const DispatcherMapping& mapping,
+    LeetObfuscator::RandomNumberGenerator& generator
+)
+{
+    uint32_t targetLower = (mapping.inverseMultiplierA * (targetSlot - mapping.addendB)) & mapping.tableMask;
+    uint32_t randomUpper = generator.DrawRange(0x10000000u, 0xEFFFFFFFu) & ~mapping.tableMask;
+    uint32_t rawState = randomUpper | targetLower;
+    uint32_t finalState = rawState ^ mapping.xorKey;
+    return finalState;
+}
+
+static constexpr const char* ARITHMETIC_TAG = "obfuscator.arithmetic";
+
+static llvm::Value* TagArithmeticValue(llvm::Value* value)
+{
+    if (llvm::Instruction* instruction = llvm::dyn_cast<llvm::Instruction>(value))
+    {
+        instruction->setMetadata(ARITHMETIC_TAG, llvm::MDNode::get(instruction->getContext(), {}));
+    }
+    return value;
+}
+
+static llvm::Value* EmitOpaqueBarrier(llvm::IRBuilder<>& builder, llvm::Value* value)
+{
+    llvm::InlineAsm* asmOpaque = llvm::InlineAsm::get(
+        llvm::FunctionType::get(value->getType(), {value->getType()}, false),
+        "",
+        "=r,0",
+        false
+    );
+    return builder.CreateCall(asmOpaque, {value});
+}
+
+static llvm::Value* EmitHardenedState(
+    llvm::IRBuilder<>& builder,
+    uint32_t rawState,
+    LeetObfuscator::RandomNumberGenerator& generator,
+    bool stateHardening = true
+)
+{
+    if (!stateHardening)
+    {
+        return builder.getInt32(rawState);
+    }
+
+    uint32_t share1 = generator.DrawRange(0x10000000u, 0xEFFFFFFFu);
+    uint32_t share2 = rawState ^ share1;
+
+    llvm::Value* share1Val = EmitOpaqueBarrier(builder, builder.getInt32(share1));
+    llvm::Value* share2Val = builder.getInt32(share2);
+    llvm::Value* combinedState = TagArithmeticValue(builder.CreateXor(share1Val, share2Val, "leet.disp.split.state"));
+
+    return combinedState;
+}
+
 void RewriteTerminatorToDispatcher(
     llvm::Instruction* terminator,
-    llvm::Value* nextIndex,
+    llvm::Value* nextStateValue,
     llvm::AllocaInst* dispatcherState,
     llvm::GlobalVariable* jumpTable,
-    uint32_t dispatcherIndex,
-    llvm::BasicBlock* dispatcherBlock
+    uint32_t dispatcherSlot,
+    llvm::BasicBlock* dispatcherBlock,
+    bool useMBA = true
 )
 {
     llvm::IRBuilder<> terminatorBuilder(terminator);
-    terminatorBuilder.CreateStore(nextIndex, dispatcherState, true);
 
-    llvm::InlineAsm* asmBarrier = llvm::InlineAsm::get(
-        llvm::FunctionType::get(terminatorBuilder.getVoidTy(), false),
-        "",
-        "~{memory}",
-        true
-    );
-
-    terminatorBuilder.CreateCall(asmBarrier);
+    terminatorBuilder.CreateStore(nextStateValue, dispatcherState, true);
 
     llvm::Type* intPtrType = jumpTable->getParent()->getDataLayout().getIntPtrType(jumpTable->getContext());
+
+    llvm::Value* opaqueSlot = EmitOpaqueBarrier(terminatorBuilder, terminatorBuilder.getInt32(dispatcherSlot));
+
     llvm::Value* dispatcherOffsetGEP = terminatorBuilder.CreateInBoundsGEP(
         jumpTable->getValueType(),
         jumpTable,
-        {terminatorBuilder.getInt32(0), terminatorBuilder.getInt32(dispatcherIndex)}
+        {terminatorBuilder.getInt32(0), opaqueSlot}
     );
     llvm::Value* dispatcherOffset32 = terminatorBuilder.CreateLoad(terminatorBuilder.getInt32Ty(), dispatcherOffsetGEP, true);
     llvm::Value* dispatcherOffset = terminatorBuilder.CreateSExt(dispatcherOffset32, intPtrType);
     llvm::Value* tableAddress = terminatorBuilder.CreatePtrToInt(jumpTable, intPtrType);
-    llvm::Value* dispatcherAddressInt = terminatorBuilder.CreateAdd(tableAddress, dispatcherOffset);
+
+    llvm::Value* dispatcherAddressInt = nullptr;
+    if (useMBA)
+    {
+        llvm::Value* oneConstant = llvm::ConstantInt::get(intPtrType, 1);
+        llvm::Value* xorAddr = TagArithmeticValue(terminatorBuilder.CreateXor(tableAddress, dispatcherOffset, "leet.disp.mba.xor"));
+        llvm::Value* andAddr = TagArithmeticValue(terminatorBuilder.CreateAnd(tableAddress, dispatcherOffset, "leet.disp.mba.and"));
+        llvm::Value* shlAddr = TagArithmeticValue(terminatorBuilder.CreateShl(andAddr, oneConstant, "leet.disp.mba.shl"));
+        dispatcherAddressInt = TagArithmeticValue(terminatorBuilder.CreateAdd(xorAddr, shlAddr, "leet.disp.mba.addr"));
+    }
+    else
+    {
+        dispatcherAddressInt = TagArithmeticValue(terminatorBuilder.CreateAdd(tableAddress, dispatcherOffset, "leet.disp.addr"));
+    }
+
     llvm::Value* dispatcherAddress = terminatorBuilder.CreateIntToPtr(dispatcherAddressInt, terminatorBuilder.getPtrTy());
 
     llvm::IndirectBrInst* indirectBranchInstruction = terminatorBuilder.CreateIndirectBr(dispatcherAddress, 1);
@@ -199,60 +290,97 @@ void RewriteTerminatorToDispatcher(
 
 void RewriteBranchTerminator(
     llvm::BranchInst* branch,
-    std::vector<llvm::BasicBlock*>& basicBlocks,
+    const std::vector<llvm::BasicBlock*>& basicBlocks,
+    const DispatcherMapping& mapping,
     llvm::AllocaInst* dispatcherState,
     llvm::GlobalVariable* jumpTable,
-    uint32_t dispatcherIndex,
-    llvm::BasicBlock* dispatcherBlock
+    llvm::BasicBlock* dispatcherBlock,
+    LeetObfuscator::RandomNumberGenerator& generator
 )
 {
     if (branch->isUnconditional())
     {
         llvm::BasicBlock* successor = branch->getSuccessor(0);
-        auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
-        if (it == basicBlocks.end())
+        auto iterator = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
+        if (iterator == basicBlocks.end())
         {
             return;
         }
 
-        llvm::IRBuilder<> terminatorBuilder(branch);
-        uint32_t compileTimeIndex = (uint32_t)std::distance(basicBlocks.begin(), it);
-        llvm::Value* nextIndex = terminatorBuilder.getInt32(compileTimeIndex);
+        uint32_t blockIndex = (uint32_t)std::distance(basicBlocks.begin(), iterator);
+        const std::vector<uint32_t>& slots = mapping.blockSlots[blockIndex];
+        uint32_t chosenSlot = slots[generator.DrawRange(0u, (uint32_t)slots.size() - 1)];
+        uint32_t nextState = GenerateStateForSlot(chosenSlot, mapping, generator);
 
-        RewriteTerminatorToDispatcher(branch, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+        llvm::IRBuilder<> terminatorBuilder(branch);
+        llvm::Value* nextStateValue = EmitHardenedState(terminatorBuilder, nextState, generator, mapping.stateHardening);
+
+        uint32_t chosenDispatcherSlot = mapping.dispatcherSlots[generator.DrawRange(0u, (uint32_t)mapping.dispatcherSlots.size() - 1)];
+        RewriteTerminatorToDispatcher(branch, nextStateValue, dispatcherState, jumpTable, chosenDispatcherSlot, dispatcherBlock, mapping.useMBA);
     }
     else if (branch->isConditional())
     {
         llvm::BasicBlock* trueSuccessor = branch->getSuccessor(0);
         llvm::BasicBlock* falseSuccessor = branch->getSuccessor(1);
-        auto itTrue = std::find(basicBlocks.begin(), basicBlocks.end(), trueSuccessor);
-        auto itFalse = std::find(basicBlocks.begin(), basicBlocks.end(), falseSuccessor);
-        if (itTrue == basicBlocks.end() || itFalse == basicBlocks.end())
+        auto trueIterator = std::find(basicBlocks.begin(), basicBlocks.end(), trueSuccessor);
+        auto falseIterator = std::find(basicBlocks.begin(), basicBlocks.end(), falseSuccessor);
+        if (trueIterator == basicBlocks.end() || falseIterator == basicBlocks.end())
         {
             return;
         }
 
+        uint32_t trueBlockIndex = (uint32_t)std::distance(basicBlocks.begin(), trueIterator);
+        uint32_t falseBlockIndex = (uint32_t)std::distance(basicBlocks.begin(), falseIterator);
+
+        const std::vector<uint32_t>& trueSlots = mapping.blockSlots[trueBlockIndex];
+        const std::vector<uint32_t>& falseSlots = mapping.blockSlots[falseBlockIndex];
+
+        uint32_t chosenTrueSlot = trueSlots[generator.DrawRange(0u, (uint32_t)trueSlots.size() - 1)];
+        uint32_t chosenFalseSlot = falseSlots[generator.DrawRange(0u, (uint32_t)falseSlots.size() - 1)];
+
+        uint32_t stateTrue = GenerateStateForSlot(chosenTrueSlot, mapping, generator);
+        uint32_t stateFalse = GenerateStateForSlot(chosenFalseSlot, mapping, generator);
+
         llvm::IRBuilder<> terminatorBuilder(branch);
-        uint32_t compileTimeIndexTrue = (uint32_t)std::distance(basicBlocks.begin(), itTrue);
-        uint32_t compileTimeIndexFalse = (uint32_t)std::distance(basicBlocks.begin(), itFalse);
 
-        llvm::Value* nextIndex = terminatorBuilder.CreateSelect(
-            branch->getCondition(),
-            terminatorBuilder.getInt32(compileTimeIndexTrue),
-            terminatorBuilder.getInt32(compileTimeIndexFalse)
-        );
+        llvm::Value* nextStateValue = nullptr;
+        if (mapping.stateHardening)
+        {
+            llvm::Value* conditionExt = terminatorBuilder.CreateZExt(branch->getCondition(), terminatorBuilder.getInt32Ty(), "leet.disp.cond.ext");
+            llvm::Value* conditionMask = TagArithmeticValue(terminatorBuilder.CreateNeg(conditionExt, "leet.disp.cond.mask"));
+            uint32_t stateDifference = stateTrue ^ stateFalse;
+            llvm::Value* opaqueDiff = EmitOpaqueBarrier(terminatorBuilder, terminatorBuilder.getInt32(stateDifference));
+            llvm::Value* maskedDifference = TagArithmeticValue(terminatorBuilder.CreateAnd(conditionMask, opaqueDiff, "leet.disp.diff.masked"));
 
-        RewriteTerminatorToDispatcher(branch, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+            uint32_t falseShare1 = generator.DrawRange(0x10000000u, 0xEFFFFFFFu);
+            uint32_t falseShare2 = stateFalse ^ falseShare1;
+            llvm::Value* opaqueFalseShare1 = EmitOpaqueBarrier(terminatorBuilder, terminatorBuilder.getInt32(falseShare1));
+            llvm::Value* baseFalseState = TagArithmeticValue(terminatorBuilder.CreateXor(opaqueFalseShare1, terminatorBuilder.getInt32(falseShare2), "leet.disp.base.false"));
+
+            nextStateValue = TagArithmeticValue(terminatorBuilder.CreateXor(maskedDifference, baseFalseState, "leet.disp.next.state"));
+        }
+        else
+        {
+            llvm::Value* conditionExt = terminatorBuilder.CreateZExt(branch->getCondition(), terminatorBuilder.getInt32Ty(), "leet.disp.cond.ext");
+            llvm::Value* conditionMask = TagArithmeticValue(terminatorBuilder.CreateNeg(conditionExt, "leet.disp.cond.mask"));
+            uint32_t stateDifference = stateTrue ^ stateFalse;
+            llvm::Value* maskedDifference = TagArithmeticValue(terminatorBuilder.CreateAnd(conditionMask, terminatorBuilder.getInt32(stateDifference), "leet.disp.diff.masked"));
+            nextStateValue = TagArithmeticValue(terminatorBuilder.CreateXor(maskedDifference, terminatorBuilder.getInt32(stateFalse), "leet.disp.next.state"));
+        }
+
+        uint32_t chosenDispatcherSlot = mapping.dispatcherSlots[generator.DrawRange(0u, (uint32_t)mapping.dispatcherSlots.size() - 1)];
+        RewriteTerminatorToDispatcher(branch, nextStateValue, dispatcherState, jumpTable, chosenDispatcherSlot, dispatcherBlock, mapping.useMBA);
     }
 }
 
 void RewriteSwitchTerminator(
     llvm::SwitchInst* switchInstruction,
-    std::vector<llvm::BasicBlock*>& basicBlocks,
+    const std::vector<llvm::BasicBlock*>& basicBlocks,
+    const DispatcherMapping& mapping,
     llvm::AllocaInst* dispatcherState,
     llvm::GlobalVariable* jumpTable,
-    uint32_t dispatcherIndex,
-    llvm::BasicBlock* dispatcherBlock
+    llvm::BasicBlock* dispatcherBlock,
+    LeetObfuscator::RandomNumberGenerator& generator
 )
 {
     llvm::BasicBlock* defaultDestination = switchInstruction->getDefaultDest();
@@ -262,9 +390,13 @@ void RewriteSwitchTerminator(
         return;
     }
 
+    uint32_t defaultBlockIndex = (uint32_t)std::distance(basicBlocks.begin(), defaultIterator);
+    const std::vector<uint32_t>& defaultSlots = mapping.blockSlots[defaultBlockIndex];
+    uint32_t chosenDefaultSlot = defaultSlots[generator.DrawRange(0u, (uint32_t)defaultSlots.size() - 1)];
+    uint32_t defaultState = GenerateStateForSlot(chosenDefaultSlot, mapping, generator);
+
     llvm::IRBuilder<> terminatorBuilder(switchInstruction);
-    uint32_t defaultCompileTimeIndex = (uint32_t)std::distance(basicBlocks.begin(), defaultIterator);
-    llvm::Value* nextIndex = terminatorBuilder.getInt32(defaultCompileTimeIndex);
+    llvm::Value* nextStateValue = EmitHardenedState(terminatorBuilder, defaultState, generator, mapping.stateHardening);
 
     for (auto caseIterator = switchInstruction->case_begin(); caseIterator != switchInstruction->case_end(); caseIterator++)
     {
@@ -275,66 +407,91 @@ void RewriteSwitchTerminator(
             continue;
         }
 
-        uint32_t compileTimeIndexCase = (uint32_t)std::distance(basicBlocks.begin(), caseSuccessorIterator);
-        llvm::Value* caseIndex = terminatorBuilder.getInt32(compileTimeIndexCase);
+        uint32_t caseBlockIndex = (uint32_t)std::distance(basicBlocks.begin(), caseSuccessorIterator);
+        const std::vector<uint32_t>& caseSlots = mapping.blockSlots[caseBlockIndex];
+        uint32_t chosenCaseSlot = caseSlots[generator.DrawRange(0u, (uint32_t)caseSlots.size() - 1)];
+        uint32_t caseState = GenerateStateForSlot(chosenCaseSlot, mapping, generator);
+
         llvm::Value* condition = terminatorBuilder.CreateICmpEQ(
             switchInstruction->getCondition(),
-            caseIterator->getCaseValue()
+            caseIterator->getCaseValue(),
+            "leet.disp.case.cond"
         );
-        nextIndex = terminatorBuilder.CreateSelect(condition, caseIndex, nextIndex);
+
+        llvm::Value* conditionExt = terminatorBuilder.CreateZExt(condition, terminatorBuilder.getInt32Ty(), "leet.disp.case.ext");
+        llvm::Value* conditionMask = TagArithmeticValue(terminatorBuilder.CreateNeg(conditionExt, "leet.disp.case.mask"));
+        llvm::Value* caseStateValue = EmitHardenedState(terminatorBuilder, caseState, generator, mapping.stateHardening);
+        llvm::Value* difference = TagArithmeticValue(terminatorBuilder.CreateXor(caseStateValue, nextStateValue, "leet.disp.case.diff"));
+        llvm::Value* maskedDifference = TagArithmeticValue(terminatorBuilder.CreateAnd(conditionMask, difference, "leet.disp.case.masked"));
+        nextStateValue = TagArithmeticValue(terminatorBuilder.CreateXor(nextStateValue, maskedDifference, "leet.disp.case.state"));
     }
 
-    RewriteTerminatorToDispatcher(switchInstruction, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+    uint32_t chosenDispatcherSlot = mapping.dispatcherSlots[generator.DrawRange(0u, (uint32_t)mapping.dispatcherSlots.size() - 1)];
+    RewriteTerminatorToDispatcher(switchInstruction, nextStateValue, dispatcherState, jumpTable, chosenDispatcherSlot, dispatcherBlock, mapping.useMBA);
 }
 
 void RewriteIndirectBrTerminator(
     llvm::IndirectBrInst* indirectBranch,
-    std::vector<llvm::BasicBlock*>& basicBlocks,
+    const std::vector<llvm::BasicBlock*>& basicBlocks,
+    const DispatcherMapping& mapping,
     llvm::AllocaInst* dispatcherState,
     llvm::GlobalVariable* jumpTable,
-    uint32_t dispatcherIndex,
-    llvm::BasicBlock* dispatcherBlock
+    llvm::BasicBlock* dispatcherBlock,
+    LeetObfuscator::RandomNumberGenerator& generator
 )
 {
     llvm::IRBuilder<> terminatorBuilder(indirectBranch);
-    llvm::Value* nextIndex = nullptr;
+    llvm::Value* nextStateValue = nullptr;
+
     for (unsigned int i = 0; i < indirectBranch->getNumSuccessors(); i++)
     {
         llvm::BasicBlock* successor = indirectBranch->getSuccessor(i);
-        auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
-        if (it == basicBlocks.end())
+        auto iterator = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
+        if (iterator == basicBlocks.end())
         {
             continue;
         }
 
-        uint32_t compileTimeIndex = (uint32_t)std::distance(basicBlocks.begin(), it);
-        llvm::Value* successorIndex = terminatorBuilder.getInt32(compileTimeIndex);
-        if (!nextIndex)
+        uint32_t blockIndex = (uint32_t)std::distance(basicBlocks.begin(), iterator);
+        const std::vector<uint32_t>& slots = mapping.blockSlots[blockIndex];
+        uint32_t chosenSlot = slots[generator.DrawRange(0u, (uint32_t)slots.size() - 1)];
+        uint32_t successorState = GenerateStateForSlot(chosenSlot, mapping, generator);
+        llvm::Value* successorStateValue = EmitHardenedState(terminatorBuilder, successorState, generator, mapping.stateHardening);
+
+        if (!nextStateValue)
         {
-            nextIndex = successorIndex;
+            nextStateValue = successorStateValue;
             continue;
         }
 
         llvm::Value* condition = terminatorBuilder.CreateICmpEQ(
             indirectBranch->getAddress(),
-            llvm::BlockAddress::get(successor)
+            llvm::BlockAddress::get(successor),
+            "leet.disp.indirect.cond"
         );
-        nextIndex = terminatorBuilder.CreateSelect(condition, successorIndex, nextIndex);
+
+        llvm::Value* conditionExt = terminatorBuilder.CreateZExt(condition, terminatorBuilder.getInt32Ty(), "leet.disp.indirect.ext");
+        llvm::Value* conditionMask = TagArithmeticValue(terminatorBuilder.CreateNeg(conditionExt, "leet.disp.indirect.mask"));
+        llvm::Value* difference = TagArithmeticValue(terminatorBuilder.CreateXor(successorStateValue, nextStateValue, "leet.disp.indirect.diff"));
+        llvm::Value* maskedDifference = TagArithmeticValue(terminatorBuilder.CreateAnd(conditionMask, difference, "leet.disp.indirect.masked"));
+        nextStateValue = TagArithmeticValue(terminatorBuilder.CreateXor(nextStateValue, maskedDifference, "leet.disp.indirect.state"));
     }
 
-    if (nextIndex)
+    if (nextStateValue)
     {
-        RewriteTerminatorToDispatcher(indirectBranch, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+        uint32_t chosenDispatcherSlot = mapping.dispatcherSlots[generator.DrawRange(0u, (uint32_t)mapping.dispatcherSlots.size() - 1)];
+        RewriteTerminatorToDispatcher(indirectBranch, nextStateValue, dispatcherState, jumpTable, chosenDispatcherSlot, dispatcherBlock, mapping.useMBA);
     }
 }
 
 void RewriteCallBrTerminator(
     llvm::CallBrInst* callBranch,
-    std::vector<llvm::BasicBlock*>& basicBlocks,
+    const std::vector<llvm::BasicBlock*>& basicBlocks,
+    const DispatcherMapping& mapping,
     llvm::AllocaInst* dispatcherState,
     llvm::GlobalVariable* jumpTable,
-    uint32_t dispatcherIndex,
-    llvm::BasicBlock* dispatcherBlock
+    llvm::BasicBlock* dispatcherBlock,
+    LeetObfuscator::RandomNumberGenerator& generator
 )
 {
     if (callBranch->getNumSuccessors() != 1)
@@ -343,23 +500,33 @@ void RewriteCallBrTerminator(
     }
 
     llvm::BasicBlock* successor = callBranch->getSuccessor(0);
-    auto it = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
-    if (it == basicBlocks.end())
+    auto iterator = std::find(basicBlocks.begin(), basicBlocks.end(), successor);
+    if (iterator == basicBlocks.end())
     {
         return;
     }
 
-    llvm::IRBuilder<> terminatorBuilder(callBranch);
-    uint32_t compileTimeIndex = (uint32_t)std::distance(basicBlocks.begin(), it);
-    llvm::Value* nextIndex = terminatorBuilder.getInt32(compileTimeIndex);
+    uint32_t blockIndex = (uint32_t)std::distance(basicBlocks.begin(), iterator);
+    const std::vector<uint32_t>& slots = mapping.blockSlots[blockIndex];
+    uint32_t chosenSlot = slots[generator.DrawRange(0u, (uint32_t)slots.size() - 1)];
+    uint32_t nextState = GenerateStateForSlot(chosenSlot, mapping, generator);
 
-    RewriteTerminatorToDispatcher(callBranch, nextIndex, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+    llvm::IRBuilder<> terminatorBuilder(callBranch);
+    llvm::Value* nextStateValue = EmitHardenedState(terminatorBuilder, nextState, generator, mapping.stateHardening);
+
+    uint32_t chosenDispatcherSlot = mapping.dispatcherSlots[generator.DrawRange(0u, (uint32_t)mapping.dispatcherSlots.size() - 1)];
+    RewriteTerminatorToDispatcher(callBranch, nextStateValue, dispatcherState, jumpTable, chosenDispatcherSlot, dispatcherBlock, mapping.useMBA);
 }
 
 llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module, llvm::ModuleAnalysisManager& mam)
 {
     llvm::errs() << "Running DispatcherPass\n";
     m_Logger.LogModule(module, "Starting pass", 0);
+
+    m_ProcessedFunctions = 0;
+    m_TotalJumpTableEntries = 0;
+    m_TotalDestinations = 0;
+    m_TotalDecoys = 0;
 
     std::vector<llvm::Function*> functions;
 
@@ -373,6 +540,15 @@ llvm::PreservedAnalyses LeetObfuscator::DispatcherPass::run(llvm::Module &module
     {
         CreateDispatcherInAFunction(function);
     }
+
+    m_Logger.LogModule(
+        module,
+        "DispatcherPass summary: processed " + std::to_string(m_ProcessedFunctions) +
+        " functions with " + std::to_string(m_TotalJumpTableEntries) +
+        " total jump table entries across " + std::to_string(m_TotalDestinations) +
+        " destinations and " + std::to_string(m_TotalDecoys) + " decoys",
+        0
+    );
 
     return llvm::PreservedAnalyses::none();
 }
@@ -396,6 +572,11 @@ void HoistAllocasToEntryBlock(llvm::Function* function)
 
 void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function* function)
 {
+    if (function->isDeclaration())
+    {
+        return;
+    }
+
     // Skip functions with exception handling
     if (function->hasPersonalityFn())
     {
@@ -421,7 +602,8 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function*
     }
     if (!hasAnyBlocks)
     {
-        return; // nothing to do
+        m_Logger.LogFunction(*function, "Skipping function: only contains entry block", 1);
+        return;
     }
 
     SettingsParser::FunctionAttributes attributes = SettingsParser::ParseFunctionAttributes(*function, SettingsParser::PassType::DispatcherPass, m_Arguments);
@@ -441,8 +623,6 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function*
         m_Logger.LogFunction(*function, "Skipping dispatcher insertion due to probability", 2);
         return;
     }
-
-    m_Logger.LogFunction(*function, "Creating dispatcher in function", 2);
 
     llvm::Module* module = function->getParent();
 
@@ -468,14 +648,17 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function*
     }
 
     if (basicBlocks.empty())
-        return; // nothing to do
+    {
+        m_Logger.LogFunction(*function, "Skipping function: only contains entry block", 1);
+        return;
+    }
 
     // split the entry block so the dispatcher owns the flow
     llvm::BasicBlock* entryBlock = &function->getEntryBlock();
     llvm::Instruction* firstNonAlloca = llvm::dyn_cast<llvm::Instruction>(entryBlock->getFirstNonPHIOrDbgOrAlloca());
     if (!firstNonAlloca)
     {
-        llvm::errs() << "ERROR: Function '" << function->getName() << "' has no non-alloca instructions in the entry block, skipping.\n";
+        llvm::errs() << "ERROR: Function '" << function->getName() << "' has no non alloca instructions in the entry block, skipping.\n";
         return;
     }
     llvm::BasicBlock* bodyBlock = entryBlock->splitBasicBlock(firstNonAlloca);
@@ -487,12 +670,122 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function*
     llvm::AllocaInst* dispatcherState = entryBeginBuilder.CreateAlloca(entryBeginBuilder.getInt32Ty());
 
     llvm::BasicBlock* dispatcherBlock = llvm::BasicBlock::Create(context, "leet.dispatcher.block", function);
-    basicBlocks.push_back(dispatcherBlock);
-    uint32_t dispatcherIndex = (uint32_t)(basicBlocks.size() - 1);
+
+    uint32_t numBlocks = (uint32_t)basicBlocks.size();
+    uint32_t slotsPerBlock = attributes.dispatcherJumpTableSlotsPerBlock;
+    if (slotsPerBlock == 0)
+    {
+        slotsPerBlock = 1;
+    }
+    if (attributes.dispatcherJumpTableMaxBlocksForMultiSlot > 0 && numBlocks > attributes.dispatcherJumpTableMaxBlocksForMultiSlot)
+    {
+        slotsPerBlock = 1;
+    }
+
+    uint32_t numDispatcherSlots = attributes.dispatcherJumpTableDispatcherSlots;
+    if (numDispatcherSlots == 0)
+    {
+        numDispatcherSlots = 1;
+    }
+
+    uint32_t minTableSize = attributes.dispatcherJumpTableMinSize;
+    if (minTableSize < 4)
+    {
+        minTableSize = 4;
+    }
+
+    uint32_t rawTableSize = numBlocks * slotsPerBlock + numDispatcherSlots + attributes.dispatcherJumpTablePadding;
+    uint32_t tableSize = minTableSize;
+    while (tableSize < rawTableSize)
+    {
+        tableSize <<= 1;
+    }
+
+    if (attributes.dispatcherJumpTableMaxSize != 0 && tableSize > attributes.dispatcherJumpTableMaxSize)
+    {
+        uint32_t requiredSlots = numBlocks + numDispatcherSlots;
+        uint32_t cappedSize = std::max(attributes.dispatcherJumpTableMaxSize, requiredSlots);
+        uint32_t pow2 = 1;
+        while (pow2 < cappedSize)
+        {
+            pow2 <<= 1;
+        }
+        tableSize = pow2;
+    }
+
+    std::vector<uint32_t> availableSlots(tableSize);
+    for (uint32_t i = 0; i < tableSize; i++)
+    {
+        availableSlots[i] = i;
+    }
+    generator->Shuffle(availableSlots.begin(), availableSlots.end());
+
+    DispatcherMapping mapping;
+    mapping.tableSize = tableSize;
+    mapping.tableMask = tableSize - 1;
+    mapping.useMBA = (generator->DrawRange(1u, 100u) <= attributes.dispatcherMBAProbability);
+    mapping.stateHardening = attributes.dispatcherStateHardening;
+
+    for (uint32_t d = 0; d < numDispatcherSlots && !availableSlots.empty(); d++)
+    {
+        mapping.dispatcherSlots.push_back(availableSlots.back());
+        availableSlots.pop_back();
+    }
+
+    mapping.blockSlots.resize(numBlocks);
+    for (uint32_t i = 0; i < numBlocks; i++)
+    {
+        for (uint32_t s = 0; s < slotsPerBlock; s++)
+        {
+            mapping.blockSlots[i].push_back(availableSlots.back());
+            availableSlots.pop_back();
+        }
+    }
+
+    mapping.multiplierA = generator->DrawRange(0x10000000u, 0xEFFFFFFFu) | 1u;
+    mapping.inverseMultiplierA = ComputeModularInverse32(mapping.multiplierA);
+    mapping.addendB = generator->DrawRange(0x10000000u, 0xEFFFFFFFu);
+    mapping.xorKey = generator->DrawRange(0x10000000u, 0xEFFFFFFFu);
+
+    std::vector<llvm::BasicBlock*> tableBlockTarget(tableSize, nullptr);
+    for (uint32_t dispSlot : mapping.dispatcherSlots)
+    {
+        tableBlockTarget[dispSlot] = dispatcherBlock;
+    }
+
+    for (uint32_t i = 0; i < numBlocks; i++)
+    {
+        for (uint32_t slot : mapping.blockSlots[i])
+        {
+            tableBlockTarget[slot] = basicBlocks[i];
+        }
+    }
+
+    for (uint32_t decoySlot : availableSlots)
+    {
+        uint32_t randomBlockIndex = generator->DrawRange(0u, numBlocks - 1);
+        tableBlockTarget[decoySlot] = basicBlocks[randomBlockIndex];
+    }
+
+    uint32_t decoySlotsCount = (uint32_t)availableSlots.size();
+    m_Logger.LogFunction(
+        *function,
+        "Creating dispatcher with jump table of size " + std::to_string(tableSize) +
+        " (" + std::to_string(numBlocks) + " destinations, " +
+        std::to_string(slotsPerBlock) + " duplicates per block, " +
+        std::to_string(numDispatcherSlots) + " dispatcher slots, " +
+        std::to_string(decoySlotsCount) + " decoys)",
+        2
+    );
+
+    m_ProcessedFunctions++;
+    m_TotalJumpTableEntries += tableSize;
+    m_TotalDestinations += numBlocks;
+    m_TotalDecoys += decoySlotsCount;
 
     llvm::Type* int32Type = llvm::Type::getInt32Ty(context);
     llvm::Type* intPtrType = function->getParent()->getDataLayout().getIntPtrType(context);
-    llvm::ArrayType* jumpTableType = llvm::ArrayType::get(int32Type, basicBlocks.size());
+    llvm::ArrayType* jumpTableType = llvm::ArrayType::get(int32Type, tableSize);
     std::string tableName = "leetJumpTable." + function->getName().str();
     llvm::GlobalVariable* jumpTable = new llvm::GlobalVariable(
         *function->getParent(),
@@ -511,9 +804,10 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function*
     }
 
     std::vector<llvm::Constant*> blockAddresses;
-    for (llvm::BasicBlock* basicBlock : basicBlocks)
+    for (uint32_t s = 0; s < tableSize; s++)
     {
-        llvm::Constant* blockAddress = llvm::ConstantExpr::getPtrToInt(llvm::BlockAddress::get(basicBlock), intPtrType);
+        llvm::BasicBlock* targetBlock = tableBlockTarget[s];
+        llvm::Constant* blockAddress = llvm::ConstantExpr::getPtrToInt(llvm::BlockAddress::get(targetBlock), intPtrType);
         llvm::Constant* tableAddress = llvm::ConstantExpr::getPtrToInt(jumpTable, intPtrType);
         llvm::Constant* relativeOffset64 = llvm::ConstantExpr::getSub(blockAddress, tableAddress);
         llvm::Constant* relativeOffset32 = llvm::ConstantExpr::getTrunc(relativeOffset64, int32Type);
@@ -523,13 +817,21 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function*
     llvm::Constant* initializer = llvm::ConstantArray::get(jumpTableType, blockAddresses);
     jumpTable->setInitializer(initializer);
 
+    uint32_t bodySlot = mapping.blockSlots[0][generator->DrawRange(0u, (uint32_t)mapping.blockSlots[0].size() - 1)];
+    uint32_t initialBodyState = GenerateStateForSlot(bodySlot, mapping, *generator);
+
+    llvm::IRBuilder<> entryTermBuilder(entryBlock->getTerminator());
+    llvm::Value* initialHardenedState = EmitHardenedState(entryTermBuilder, initialBodyState, *generator, mapping.stateHardening);
+    uint32_t chosenEntryDispSlot = mapping.dispatcherSlots[generator->DrawRange(0u, (uint32_t)mapping.dispatcherSlots.size() - 1)];
+
     RewriteTerminatorToDispatcher(
         entryBlock->getTerminator(),
-        entryBeginBuilder.getInt32(0),
+        initialHardenedState,
         dispatcherState,
         jumpTable,
-        dispatcherIndex,
-        dispatcherBlock
+        chosenEntryDispSlot,
+        dispatcherBlock,
+        mapping.useMBA
     );
 
     llvm::IRBuilder<> dispatcherBuilder(dispatcherBlock);
@@ -544,22 +846,74 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function*
     dispatcherBuilder.CreateCall(asmBarrier);
 
     llvm::Value* dispatcherStateLoad = dispatcherBuilder.CreateLoad(dispatcherBuilder.getInt32Ty(), dispatcherState, true);
+
+    llvm::Value* unmaskedState = nullptr;
+    if (mapping.useMBA)
+    {
+        uint32_t xorChoice = generator->DrawRange(0u, 2u);
+        llvm::Value* xorKeyVal = dispatcherBuilder.getInt32(mapping.xorKey);
+        if (xorChoice == 0)
+        {
+            llvm::Value* orVal = TagArithmeticValue(dispatcherBuilder.CreateOr(dispatcherStateLoad, xorKeyVal, "leet.disp.xor.or"));
+            llvm::Value* andVal = TagArithmeticValue(dispatcherBuilder.CreateAnd(dispatcherStateLoad, xorKeyVal, "leet.disp.xor.and"));
+            unmaskedState = TagArithmeticValue(dispatcherBuilder.CreateSub(orVal, andVal, "leet.disp.unmask"));
+        }
+        else if (xorChoice == 1)
+        {
+            llvm::Value* notKey = TagArithmeticValue(dispatcherBuilder.CreateNot(xorKeyVal, "leet.disp.not.key"));
+            llvm::Value* notState = TagArithmeticValue(dispatcherBuilder.CreateNot(dispatcherStateLoad, "leet.disp.not.state"));
+            llvm::Value* stateAndNotKey = TagArithmeticValue(dispatcherBuilder.CreateAnd(dispatcherStateLoad, notKey, "leet.disp.s.notk"));
+            llvm::Value* notStateAndKey = TagArithmeticValue(dispatcherBuilder.CreateAnd(notState, xorKeyVal, "leet.disp.nots.k"));
+            unmaskedState = TagArithmeticValue(dispatcherBuilder.CreateOr(stateAndNotKey, notStateAndKey, "leet.disp.unmask"));
+        }
+        else
+        {
+            llvm::Value* addVal = TagArithmeticValue(dispatcherBuilder.CreateAdd(dispatcherStateLoad, xorKeyVal, "leet.disp.xor.add"));
+            llvm::Value* andVal = TagArithmeticValue(dispatcherBuilder.CreateAnd(dispatcherStateLoad, xorKeyVal, "leet.disp.xor.and"));
+            llvm::Value* mulVal = TagArithmeticValue(dispatcherBuilder.CreateMul(andVal, dispatcherBuilder.getInt32(2), "leet.disp.xor.mul"));
+            unmaskedState = TagArithmeticValue(dispatcherBuilder.CreateSub(addVal, mulVal, "leet.disp.unmask"));
+        }
+    }
+    else
+    {
+        unmaskedState = TagArithmeticValue(dispatcherBuilder.CreateXor(dispatcherStateLoad, dispatcherBuilder.getInt32(mapping.xorKey), "leet.disp.unmask"));
+    }
+
+    llvm::Value* stateMul = TagArithmeticValue(dispatcherBuilder.CreateMul(
+        unmaskedState,
+        dispatcherBuilder.getInt32(mapping.multiplierA),
+        "leet.disp.mul"
+    ));
+
+    llvm::Value* stateAdd = TagArithmeticValue(dispatcherBuilder.CreateAdd(
+        stateMul,
+        dispatcherBuilder.getInt32(mapping.addendB),
+        "leet.disp.add"
+    ));
+
+    llvm::Value* decodedSlot = TagArithmeticValue(dispatcherBuilder.CreateAnd(
+        stateAdd,
+        dispatcherBuilder.getInt32(mapping.tableMask),
+        "leet.disp.slot"
+    ));
+
     llvm::Value* relativeOffsetGEP = dispatcherBuilder.CreateInBoundsGEP(
         jumpTable->getValueType(),
         jumpTable,
-        {dispatcherBuilder.getInt32(0), dispatcherStateLoad}
+        {dispatcherBuilder.getInt32(0), decodedSlot}
     );
     llvm::Value* relativeOffset32 = dispatcherBuilder.CreateLoad(int32Type, relativeOffsetGEP, true);
     llvm::Value* relativeOffset = dispatcherBuilder.CreateSExt(relativeOffset32, intPtrType);
     llvm::Value* tableAddress = dispatcherBuilder.CreatePtrToInt(jumpTable, intPtrType);
-    llvm::Value* targetAddressInt = dispatcherBuilder.CreateAdd(tableAddress, relativeOffset);
+    llvm::Value* targetAddressInt = TagArithmeticValue(dispatcherBuilder.CreateAdd(tableAddress, relativeOffset));
     llvm::Value* nextBlockAddress = dispatcherBuilder.CreateIntToPtr(targetAddressInt, dispatcherBuilder.getPtrTy());
 
-    llvm::IndirectBrInst* indirectBranchInstruction = dispatcherBuilder.CreateIndirectBr(nextBlockAddress, basicBlocks.size());
+    llvm::IndirectBrInst* indirectBranchInstruction = dispatcherBuilder.CreateIndirectBr(nextBlockAddress, basicBlocks.size() + 1);
     for (llvm::BasicBlock* basicBlock : basicBlocks)
     {
         indirectBranchInstruction->addDestination(basicBlock);
     }
+    indirectBranchInstruction->addDestination(dispatcherBlock);
 
     for (llvm::BasicBlock* basicBlock : basicBlocks)
     {
@@ -576,25 +930,25 @@ void LeetObfuscator::DispatcherPass::CreateDispatcherInAFunction(llvm::Function*
 
         if (auto* branch = llvm::dyn_cast<llvm::BranchInst>(terminator))
         {
-            RewriteBranchTerminator(branch, basicBlocks, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+            RewriteBranchTerminator(branch, basicBlocks, mapping, dispatcherState, jumpTable, dispatcherBlock, *generator);
             continue;
         }
 
         if (auto* switchInstruction = llvm::dyn_cast<llvm::SwitchInst>(terminator))
         {
-            RewriteSwitchTerminator(switchInstruction, basicBlocks, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+            RewriteSwitchTerminator(switchInstruction, basicBlocks, mapping, dispatcherState, jumpTable, dispatcherBlock, *generator);
             continue;
         }
 
         if (auto* indirectBranch = llvm::dyn_cast<llvm::IndirectBrInst>(terminator))
         {
-            RewriteIndirectBrTerminator(indirectBranch, basicBlocks, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+            RewriteIndirectBrTerminator(indirectBranch, basicBlocks, mapping, dispatcherState, jumpTable, dispatcherBlock, *generator);
             continue;
         }
 
         if (auto* callBranch = llvm::dyn_cast<llvm::CallBrInst>(terminator))
         {
-            RewriteCallBrTerminator(callBranch, basicBlocks, dispatcherState, jumpTable, dispatcherIndex, dispatcherBlock);
+            RewriteCallBrTerminator(callBranch, basicBlocks, mapping, dispatcherState, jumpTable, dispatcherBlock, *generator);
             continue;
         }
     }
